@@ -4,6 +4,7 @@ import ChatLayout from "./layouts/ChatLayout";
 import SettingsLayout from "./layouts/SettingsLayout";
 import LoginPage from "./pages/auth/LoginPage";
 import SignupPage from "./pages/auth/SignupPage";
+import ProjectPage from "./pages/ProjectPage";
 import AccessibilityPage from "./pages/settings/AccessibilityPage";
 import ComingSoonPage from "./pages/settings/ComingSoonPage";
 import ServerDetailPage from "./pages/settings/ServerDetailPage";
@@ -28,6 +29,15 @@ export default function App() {
         element={
           <ProtectedRoute>
             <ChatLayout />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/projects/:id"
+        element={
+          <ProtectedRoute>
+            <ProjectPage />
           </ProtectedRoute>
         }
       />

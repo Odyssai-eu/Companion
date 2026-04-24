@@ -54,6 +54,33 @@ export const servers = pgTable(
   }),
 );
 
+export const projects = pgTable(
+  "projects",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    category: text("category").notNull().default("general"),
+    icon: text("icon"),
+    systemPrompt: text("system_prompt"),
+    instructions: text("instructions"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userUpdatedIdx: index("projects_user_updated_idx").on(
+      t.userId,
+      t.updatedAt,
+    ),
+  }),
+);
+
 export const conversations = pgTable(
   "conversations",
   {
@@ -62,6 +89,9 @@ export const conversations = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     serverId: uuid("server_id").references(() => servers.id, {
+      onDelete: "set null",
+    }),
+    projectId: uuid("project_id").references(() => projects.id, {
       onDelete: "set null",
     }),
     title: text("title").notNull().default("New conversation"),
@@ -78,6 +108,7 @@ export const conversations = pgTable(
       t.userId,
       t.updatedAt,
     ),
+    projectIdx: index("conversations_project_idx").on(t.projectId),
   }),
 );
 
@@ -126,6 +157,8 @@ export type Server = typeof servers.$inferSelect;
 export type Endpoint = typeof endpoints.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+export type Project = typeof projects.$inferSelect;
+export type NewProject = typeof projects.$inferInsert;
 export type NewServer = typeof servers.$inferInsert;
 export type NewEndpoint = typeof endpoints.$inferInsert;
 export type NewMessage = typeof messages.$inferInsert;

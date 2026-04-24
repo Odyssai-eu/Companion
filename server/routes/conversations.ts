@@ -10,6 +10,7 @@ const conversationsRoute = new Hono();
 const createSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   serverId: z.string().uuid().optional(),
+  projectId: z.string().uuid().optional(),
   model: z.string().max(200).optional(),
 });
 
@@ -47,6 +48,7 @@ conversationsRoute.post(
         userId,
         title: data.title ?? "New conversation",
         serverId: data.serverId,
+        projectId: data.projectId,
         model: data.model,
       })
       .returning();

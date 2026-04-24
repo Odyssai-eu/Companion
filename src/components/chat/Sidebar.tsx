@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { useAuth } from "~/hooks/useAuth";
-import { api, type ApiConversation } from "~/lib/api";
+import { api, type ApiConversation, type ApiProject } from "~/lib/api";
 import Wordmark from "../Wordmark";
 
 type Props = {
@@ -10,16 +10,25 @@ type Props = {
 
 export default function Sidebar({ activeConversationId }: Props) {
   const [conversations, setConversations] = useState<ApiConversation[]>([]);
+  const [projectsList, setProjectsList] = useState<ApiProject[]>([]);
   const navigate = useNavigate();
+  const params = useParams<{ projectId?: string }>();
+  const activeProjectId = params.projectId ?? null;
 
   useEffect(() => {
     let cancelled = false;
     async function refresh() {
       try {
-        const { conversations } = await api.listConversations();
-        if (!cancelled) setConversations(conversations);
+        const [{ conversations }, { projects }] = await Promise.all([
+          api.listConversations(),
+          api.listProjects(),
+        ]);
+        if (!cancelled) {
+          setConversations(conversations);
+          setProjectsList(projects);
+        }
       } catch {
-        // ignore; empty list is fine for the shell
+        // ignore; empty lists are fine for the shell
       }
     }
     refresh();
@@ -54,6 +63,35 @@ export default function Sidebar({ activeConversationId }: Props) {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 pb-4">
+        <Section
+          title="Projects"
+          trailing={
+            <Link
+              to="/projects/new"
+              aria-label="New project"
+              className="flex h-5 w-5 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-ink"
+            >
+              <PlusIcon />
+            </Link>
+          }
+        >
+          {projectsList.map((p) => (
+            <ProjectRow
+              key={p.id}
+              project={p}
+              conversationCount={
+                conversations.filter((c) => c.projectId === p.id).length
+              }
+              active={p.id === activeProjectId}
+            />
+          ))}
+          {projectsList.length === 0 && (
+            <span className="px-2 py-1 text-[11px] text-gray-400">
+              No projects yet.
+            </span>
+          )}
+        </Section>
+
         {groups.map((g) => (
           <Section key={g.title} title={g.title}>
             {g.items.map((c) => (
@@ -106,20 +144,75 @@ function groupByBucket(convos: ApiConversation[]) {
 
 function Section({
   title,
+  trailing,
   children,
 }: {
   title: string;
+  trailing?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="mb-5">
-      <div className="mb-2 px-2">
+      <div className="mb-2 flex items-center justify-between px-2">
         <span className="font-sans text-[11px] font-medium tracking-[0.08em] text-gray-400 uppercase">
           {title}
         </span>
+        {trailing}
       </div>
       <div className="flex flex-col gap-0.5">{children}</div>
     </div>
+  );
+}
+
+function ProjectRow({
+  project,
+  conversationCount,
+  active,
+}: {
+  project: ApiProject;
+  conversationCount: number;
+  active: boolean;
+}) {
+  return (
+    <Link
+      to={`/projects/${project.id}`}
+      className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left transition-colors ${
+        active
+          ? "bg-[rgba(79,179,217,0.12)] text-navy"
+          : "text-ink hover:bg-gray-50"
+      }`}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="text-[13px]">{project.icon ?? "📁"}</span>
+        <span
+          className={`truncate text-[13px] ${active ? "font-medium" : "font-normal"}`}
+        >
+          {project.name}
+        </span>
+      </span>
+      {conversationCount > 0 && (
+        <span className="font-mono text-[11px] text-gray-400">
+          {conversationCount}
+        </span>
+      )}
+    </Link>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 5v14M5 12h14" />
+    </svg>
   );
 }
 
@@ -273,23 +366,6 @@ function SearchIcon() {
     >
       <circle cx="11" cy="11" r="8" />
       <path d="m21 21-4.3-4.3" />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 5v14M5 12h14" />
     </svg>
   );
 }

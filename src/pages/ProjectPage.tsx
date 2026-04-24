@@ -1,0 +1,320 @@
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router";
+import IconRail from "~/components/settings/IconRail";
+import {
+  api,
+  type ApiConversation,
+  type ApiProject,
+  type ApiProjectCategory,
+} from "~/lib/api";
+
+export default function ProjectPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const isNew = id === "new";
+  const [project, setProject] = useState<ApiProject | null>(null);
+  const [conversations, setConversations] = useState<ApiConversation[]>([]);
+  const [categories, setCategories] = useState<ApiProjectCategory[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("general");
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    api
+      .listProjectCategories()
+      .then((r) => setCategories(r.categories))
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (isNew) {
+      setProject(null);
+      setName("");
+      setCategory("general");
+      setSystemPrompt("");
+      setInstructions("");
+      return;
+    }
+    if (!id) return;
+    setError(null);
+    Promise.all([api.getProject(id), api.listConversations()])
+      .then(([p, c]) => {
+        setProject(p.project);
+        setName(p.project.name);
+        setCategory(p.project.category);
+        setSystemPrompt(p.project.systemPrompt ?? "");
+        setInstructions(p.project.instructions ?? "");
+        setConversations(c.conversations.filter((x) => x.projectId === id));
+      })
+      .catch((e) => setError((e as Error).message));
+  }, [id, isNew]);
+
+  function applyCategoryPreset(newCategory: string) {
+    setCategory(newCategory);
+    const preset = categories.find((c) => c.id === newCategory);
+    if (preset && (!systemPrompt || isPresetContent(systemPrompt))) {
+      setSystemPrompt(preset.systemPrompt);
+    }
+  }
+
+  function isPresetContent(text: string): boolean {
+    return categories.some((c) => c.systemPrompt === text);
+  }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSubmitting(true);
+    try {
+      if (isNew) {
+        const { project } = await api.createProject({
+          name: name.trim(),
+          category,
+          systemPrompt,
+          instructions,
+        });
+        navigate(`/projects/${project.id}`, { replace: true });
+      } else if (id) {
+        const { project } = await api.updateProject(id, {
+          name: name.trim(),
+          category,
+          systemPrompt,
+          instructions,
+        });
+        setProject(project);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function startNewChat() {
+    if (!project) return;
+    try {
+      const servers = await api.listServers();
+      const first = servers.servers[0];
+      if (!first) {
+        setError("Add a server in Settings first.");
+        return;
+      }
+      const { conversation } = await api.createConversation({
+        serverId: first.id,
+        projectId: project.id,
+        title: "New conversation",
+      });
+      navigate(`/c/${conversation.id}`);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function remove() {
+    if (!project) return;
+    if (!confirm(`Delete project "${project.name}"?`)) return;
+    try {
+      await api.deleteProject(project.id);
+      navigate("/", { replace: true });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  return (
+    <div className="flex h-screen w-screen overflow-hidden bg-gray-50">
+      <IconRail />
+      <main className="flex-1 overflow-y-auto">
+        <div className="mx-auto flex max-w-[820px] flex-col gap-10 px-14 py-16">
+          <header className="flex items-start justify-between gap-6">
+            <div className="flex flex-col gap-2">
+              <Link
+                to="/"
+                className="flex items-center gap-1.5 text-[13px] text-gray-500 hover:text-ink"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+                Back to chat
+              </Link>
+              <span className="font-sans text-[13px] font-medium tracking-[0.08em] text-cyan uppercase">
+                Project
+              </span>
+              <h1 className="flex items-center gap-3 font-display text-[40px] leading-[48px] font-light text-navy">
+                <span>{categoryIcon(categories, category)}</span>
+                {isNew ? "New project." : `${project?.name ?? "…"}.`}
+              </h1>
+            </div>
+            {!isNew && project && (
+              <div className="flex flex-shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={startNewChat}
+                  className="flex h-9 items-center gap-2 rounded-lg bg-navy px-4 text-[13px] font-medium text-white hover:opacity-95"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.75"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                  New chat in project
+                </button>
+              </div>
+            )}
+          </header>
+
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 font-mono text-[12px] text-red-700">
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={save} className="flex flex-col gap-5">
+            <Field label="Name">
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Q3 strategy, thesis research, …"
+                required
+                className="w-full rounded-lg border border-gray-200 bg-white px-3.5 py-2.5 text-[14px] text-ink outline-none focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
+              />
+            </Field>
+
+            <Field label="Category">
+              <div className="grid grid-cols-5 gap-2">
+                {categories.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => applyCategoryPreset(cat.id)}
+                    className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-3 text-[12px] transition-colors ${
+                      category === cat.id
+                        ? "border-cyan bg-[rgba(79,179,217,0.08)] text-navy"
+                        : "border-gray-200 bg-white text-gray-600 hover:border-gray-300"
+                    }`}
+                  >
+                    <span className="text-[20px]">{cat.icon}</span>
+                    <span className="font-medium">{cat.name}</span>
+                  </button>
+                ))}
+              </div>
+            </Field>
+
+            <Field
+              label="System prompt"
+              hint="Sent as the first system message in every conversation in this project."
+            >
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                rows={6}
+                className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3.5 py-2.5 text-[13px] leading-[20px] text-ink outline-none focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
+              />
+            </Field>
+
+            <Field
+              label="Instructions"
+              hint="Private notes — for you, not sent to the engine."
+            >
+              <textarea
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                rows={3}
+                placeholder="Anything you want to remember about how you're using this project."
+                className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3.5 py-2.5 text-[13px] leading-[20px] text-ink outline-none placeholder:text-gray-400 focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
+              />
+            </Field>
+
+            <div className="flex items-center justify-between gap-3 pt-2">
+              {!isNew && (
+                <button
+                  type="button"
+                  onClick={remove}
+                  className="flex h-9 items-center rounded-lg border border-red-200 bg-white px-4 text-[13px] font-medium text-red-600 hover:bg-red-50"
+                >
+                  Delete project
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={submitting || !name.trim()}
+                className="ml-auto flex h-9 items-center rounded-lg bg-navy px-4 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
+              >
+                {submitting ? "Saving…" : isNew ? "Create project" : "Save changes"}
+              </button>
+            </div>
+          </form>
+
+          {!isNew && conversations.length > 0 && (
+            <section className="flex flex-col gap-3">
+              <h2 className="font-display text-[20px] font-light text-navy">
+                Conversations
+              </h2>
+              <div className="flex flex-col gap-2">
+                {conversations.map((c) => (
+                  <Link
+                    key={c.id}
+                    to={`/c/${c.id}`}
+                    className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-white px-4 py-3 hover:border-cyan"
+                  >
+                    <span className="truncate text-[13px] text-ink">
+                      {c.title}
+                    </span>
+                    <span className="font-mono text-[11px] text-gray-400">
+                      {new Date(c.updatedAt).toLocaleDateString()}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-[13px] font-medium text-ink">{label}</span>
+      {children}
+      {hint && <span className="text-[12px] text-gray-400">{hint}</span>}
+    </label>
+  );
+}
+
+function categoryIcon(
+  cats: ApiProjectCategory[],
+  id: string,
+): string {
+  return cats.find((c) => c.id === id)?.icon ?? "📁";
+}

@@ -13,6 +13,7 @@ import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
 import licenseRoute from "./routes/license";
+import projectsRoute from "./routes/projects";
 import serversRoute from "./routes/servers";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -45,10 +46,12 @@ app.route("/api/license", licenseRoute);
 app.use("/api/servers/*", licenseGate, requireUser);
 app.use("/api/conversations/*", licenseGate, requireUser);
 app.use("/api/chat/*", licenseGate, requireUser);
+app.use("/api/projects/*", licenseGate, requireUser);
 
 app.route("/api/servers", serversRoute);
 app.route("/api/conversations", conversationsRoute);
 app.route("/api/chat", chatRoute);
+app.route("/api/projects", projectsRoute);
 
 if (process.env.NODE_ENV === "production") {
   app.use("/*", serveStatic({ root: "./dist/client" }));

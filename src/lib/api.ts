@@ -22,10 +22,30 @@ export type ApiConversation = {
   id: string;
   userId: string;
   serverId: string | null;
+  projectId: string | null;
   title: string;
   model: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ApiProject = {
+  id: string;
+  userId: string;
+  name: string;
+  category: string;
+  icon: string | null;
+  systemPrompt: string | null;
+  instructions: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ApiProjectCategory = {
+  id: string;
+  name: string;
+  icon: string;
+  systemPrompt: string;
 };
 
 export type ApiMessage = {
@@ -182,6 +202,7 @@ export const api = {
   createConversation: (body: {
     title?: string;
     serverId?: string;
+    projectId?: string;
     model?: string;
   }) =>
     request<{ conversation: ApiConversation }>("/api/conversations", {
@@ -208,6 +229,39 @@ export const api = {
       `/api/conversations/${conversationId}/messages`,
       { method: "POST", body: JSON.stringify(body) },
     ),
+
+  // Projects
+  listProjects: () =>
+    request<{ projects: ApiProject[] }>("/api/projects"),
+  getProject: (id: string) =>
+    request<{ project: ApiProject }>(`/api/projects/${id}`),
+  listProjectCategories: () =>
+    request<{ categories: ApiProjectCategory[] }>("/api/projects/categories"),
+  createProject: (body: {
+    name: string;
+    category?: string;
+    systemPrompt?: string;
+    instructions?: string;
+  }) =>
+    request<{ project: ApiProject }>("/api/projects", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateProject: (
+    id: string,
+    body: Partial<{
+      name: string;
+      category: string;
+      systemPrompt: string | null;
+      instructions: string | null;
+    }>,
+  ) =>
+    request<{ project: ApiProject }>(`/api/projects/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteProject: (id: string) =>
+    request<void>(`/api/projects/${id}`, { method: "DELETE" }),
 
   // Auth
   me: () => request<{ user: AuthUser | null }>("/api/auth/me"),

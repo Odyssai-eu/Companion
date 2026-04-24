@@ -4,6 +4,7 @@ import {
   api,
   type ApiConversation,
   type ApiMessage,
+  type ApiProject,
   type ApiServer,
 } from "~/lib/api";
 import { streamChat, type ChatMessage } from "~/lib/chat-stream";
@@ -74,6 +75,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   const [conversation, setConversation] = useState<ApiConversation | null>(
     null,
   );
+  const [project, setProject] = useState<ApiProject | null>(null);
   const [model, setModel] = useState<string>(() => {
     if (typeof window === "undefined") return "auto";
     return window.localStorage.getItem("thecompai:model") ?? "auto";
@@ -141,6 +143,14 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         setConversation(conversation);
         setMessages(msgs.map(toUIMessage));
         if (conversation.serverId) setActiveServerId(conversation.serverId);
+        if (conversation.projectId) {
+          api
+            .getProject(conversation.projectId)
+            .then((r) => setProject(r.project))
+            .catch(() => setProject(null));
+        } else {
+          setProject(null);
+        }
       })
       .catch((e) => setError(e.message));
   }, [conversationId]);
@@ -207,11 +217,18 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       const controller = new AbortController();
       abortRef.current = controller;
 
+      // If the conversation belongs to a project, its system prompt takes
+      // precedence over the user's inference-panel one.
+      const effectiveInference = inferenceToPayload(inference);
+      if (project?.systemPrompt && project.systemPrompt.trim()) {
+        effectiveInference.system_prompt = project.systemPrompt;
+      }
+
       const result = await streamChat({
         serverId: activeServer.id,
         messages: convoForModel,
         model: model === "auto" ? undefined : model,
-        inference: inferenceToPayload(inference),
+        inference: effectiveInference,
         signal: controller.signal,
         onDelta: (delta) => {
           setMessages((prev) =>
@@ -290,6 +307,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       messages,
       model,
       navigate,
+      project,
       sending,
     ],
   );
@@ -310,6 +328,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     servers,
     setActiveServerId,
     conversation,
+    project,
     model,
     setModel: setModelAndPersist,
     inference,
