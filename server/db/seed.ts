@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { hashPassword } from "../auth/password";
 import { db } from "./index";
 import { endpoints, servers, users } from "./schema";
 
@@ -15,11 +16,14 @@ export async function seedIfEmpty() {
 
   console.log("→ seeding empty DB with dev data");
 
+  // Dev account — Sophie logs in with `dev` initially, can change via API.
+  const passwordHash = await hashPassword("dev");
   const [sophie] = await db
     .insert(users)
     .values({
       email: "d.sophie27@gmail.com",
       name: "Sophie",
+      passwordHash,
     })
     .returning();
 

@@ -1,20 +1,10 @@
 import { asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db/index";
-import { endpoints, servers, users } from "../db/schema";
+import { endpoints, servers } from "../db/schema";
 import { handleAnthropicChat } from "./chat-anthropic";
 
 const chatRoute = new Hono();
-
-async function currentUserId() {
-  const [row] = await db
-    .select({ id: users.id })
-    .from(users)
-    .orderBy(asc(users.createdAt))
-    .limit(1);
-  if (!row) throw new Error("No user seeded yet");
-  return row.id;
-}
 
 chatRoute.post("/completions", async (c) => {
   const body = await c.req.json().catch(() => null);
@@ -54,7 +44,7 @@ chatRoute.post("/completions", async (c) => {
     return c.json({ error: "missing_serverId_or_messages" }, 400);
   }
 
-  const userId = await currentUserId();
+  const userId = c.get("userId");
   const [server] = await db
     .select()
     .from(servers)

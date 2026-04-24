@@ -3,7 +3,7 @@ import { asc, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
-import { conversations, messages, users } from "../db/schema";
+import { conversations, messages } from "../db/schema";
 
 const conversationsRoute = new Hono();
 
@@ -25,18 +25,8 @@ const updateSchema = z.object({
   model: z.string().max(200).optional(),
 });
 
-async function currentUserId() {
-  const [row] = await db
-    .select({ id: users.id })
-    .from(users)
-    .orderBy(asc(users.createdAt))
-    .limit(1);
-  if (!row) throw new Error("No user seeded yet");
-  return row.id;
-}
-
 conversationsRoute.get("/", async (c) => {
-  const userId = await currentUserId();
+  const userId = c.get("userId");
   const rows = await db
     .select()
     .from(conversations)
@@ -49,7 +39,7 @@ conversationsRoute.post(
   "/",
   zValidator("json", createSchema),
   async (c) => {
-    const userId = await currentUserId();
+    const userId = c.get("userId");
     const data = c.req.valid("json");
     const [row] = await db
       .insert(conversations)
@@ -65,7 +55,7 @@ conversationsRoute.post(
 );
 
 conversationsRoute.get("/:id", async (c) => {
-  const userId = await currentUserId();
+  const userId = c.get("userId");
   const id = c.req.param("id");
   const [conversation] = await db
     .select()
@@ -87,7 +77,7 @@ conversationsRoute.patch(
   "/:id",
   zValidator("json", updateSchema),
   async (c) => {
-    const userId = await currentUserId();
+    const userId = c.get("userId");
     const id = c.req.param("id");
     const data = c.req.valid("json");
     const [existing] = await db
@@ -108,7 +98,7 @@ conversationsRoute.patch(
 );
 
 conversationsRoute.delete("/:id", async (c) => {
-  const userId = await currentUserId();
+  const userId = c.get("userId");
   const id = c.req.param("id");
   const rows = await db
     .delete(conversations)
@@ -125,7 +115,7 @@ conversationsRoute.post(
   "/:id/messages",
   zValidator("json", appendMessageSchema),
   async (c) => {
-    const userId = await currentUserId();
+    const userId = c.get("userId");
     const id = c.req.param("id");
     const [conversation] = await db
       .select()

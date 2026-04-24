@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
+import { useAuth } from "~/hooks/useAuth";
 import { api, type ApiConversation } from "~/lib/api";
 import Wordmark from "../Wordmark";
 
@@ -169,15 +170,27 @@ function SearchInput() {
 }
 
 function UserFooter() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const initial = (user?.name ?? user?.email ?? "?").trim().charAt(0).toUpperCase();
+  const displayName = user?.name ?? user?.email?.split("@")[0] ?? "Guest";
+
+  async function onLogout() {
+    await logout();
+    navigate("/login", { replace: true });
+  }
+
   return (
     <div className="flex items-center justify-between gap-2 border-t border-gray-200 px-3 py-3">
       <div className="flex min-w-0 items-center gap-2.5">
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-navy">
-          <span className="font-mono text-xs font-medium text-white">S</span>
+          <span className="font-mono text-xs font-medium text-white">
+            {initial}
+          </span>
         </div>
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-[13px] font-medium text-ink">
-            Sophie
+            {displayName}
           </span>
           <span className="flex items-center gap-1 font-mono text-[11px] text-gray-400">
             <SyncIcon />
@@ -185,14 +198,44 @@ function UserFooter() {
           </span>
         </div>
       </div>
-      <Link
-        to="/settings/servers"
-        aria-label="Settings"
-        className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-gray-50 hover:text-ink"
-      >
-        <SettingsIcon />
-      </Link>
+      <div className="flex items-center gap-0.5">
+        <button
+          type="button"
+          onClick={onLogout}
+          aria-label="Sign out"
+          title="Sign out"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-gray-50 hover:text-ink"
+        >
+          <LogoutIcon />
+        </button>
+        <Link
+          to="/settings/servers"
+          aria-label="Settings"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-gray-50 hover:text-ink"
+        >
+          <SettingsIcon />
+        </Link>
+      </div>
     </div>
+  );
+}
+
+function LogoutIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
   );
 }
 

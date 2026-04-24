@@ -1,6 +1,9 @@
 import { Navigate, Route, Routes } from "react-router";
+import ProtectedRoute from "./components/ProtectedRoute";
 import ChatLayout from "./layouts/ChatLayout";
 import SettingsLayout from "./layouts/SettingsLayout";
+import LoginPage from "./pages/auth/LoginPage";
+import SignupPage from "./pages/auth/SignupPage";
 import AccessibilityPage from "./pages/settings/AccessibilityPage";
 import ComingSoonPage from "./pages/settings/ComingSoonPage";
 import ServerDetailPage from "./pages/settings/ServerDetailPage";
@@ -9,10 +12,34 @@ import ServersPage from "./pages/settings/ServersPage";
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<ChatLayout />} />
-      <Route path="/c/:id" element={<ChatLayout />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupPage />} />
 
-      <Route path="/settings" element={<SettingsLayout />}>
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <ChatLayout />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/c/:id"
+        element={
+          <ProtectedRoute>
+            <ChatLayout />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/settings"
+        element={
+          <ProtectedRoute>
+            <SettingsLayout />
+          </ProtectedRoute>
+        }
+      >
         <Route index element={<Navigate to="/settings/servers" replace />} />
         <Route path="servers" element={<ServersPage />} />
         <Route path="servers/:id" element={<ServerDetailPage />} />

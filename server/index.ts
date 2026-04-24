@@ -7,7 +7,9 @@ import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { runMigrations } from "./db/migrate";
 import { seedIfEmpty } from "./db/seed";
+import { requireUser, sessionLoader } from "./middleware/auth";
 import { licenseGate } from "./middleware/license";
+import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
 import licenseRoute from "./routes/license";
@@ -23,6 +25,10 @@ const app = new Hono();
 
 app.use("*", logger());
 
+// Read the session cookie on every request so downstream code can decide
+// whether to require auth. Silent on missing / invalid.
+app.use("*", sessionLoader);
+
 app.get("/api/health", (c) =>
   c.json({
     status: "ok" as const,
@@ -31,13 +37,14 @@ app.get("/api/health", (c) =>
   }),
 );
 
-// Open endpoints (no license required)
+// Auth routes are always open (they're how you get a session)
+app.route("/api/auth", authRoute);
 app.route("/api/license", licenseRoute);
 
-// Everything else behind the license gate
-app.use("/api/servers/*", licenseGate);
-app.use("/api/conversations/*", licenseGate);
-app.use("/api/chat/*", licenseGate);
+// License gate + user gate on everything else
+app.use("/api/servers/*", licenseGate, requireUser);
+app.use("/api/conversations/*", licenseGate, requireUser);
+app.use("/api/chat/*", licenseGate, requireUser);
 
 app.route("/api/servers", serversRoute);
 app.route("/api/conversations", conversationsRoute);

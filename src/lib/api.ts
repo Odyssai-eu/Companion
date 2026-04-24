@@ -51,21 +51,46 @@ export type ApiEndpoint = {
   createdAt: string;
 };
 
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText}: ${text}`);
+    let detail = "";
+    let code: string | undefined;
+    try {
+      const body = await res.json();
+      detail = body.detail ?? body.error ?? JSON.stringify(body);
+      code = body.error;
+    } catch {
+      detail = await res.text().catch(() => "");
+    }
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${detail}`, code);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  name: string | null;
+};
 
 export const api = {
   listServers: () => request<{ servers: ApiServer[] }>("/api/servers"),
@@ -164,4 +189,19 @@ export const api = {
       `/api/conversations/${conversationId}/messages`,
       { method: "POST", body: JSON.stringify(body) },
     ),
+
+  // Auth
+  me: () => request<{ user: AuthUser | null }>("/api/auth/me"),
+  login: (body: { email: string; password: string }) =>
+    request<{ user: AuthUser }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  signup: (body: { email: string; password: string; name?: string }) =>
+    request<{ user: AuthUser }>("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  logout: () =>
+    request<void>("/api/auth/logout", { method: "POST" }),
 };

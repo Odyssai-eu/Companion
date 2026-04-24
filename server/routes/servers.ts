@@ -3,7 +3,7 @@ import { asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
-import { endpoints, servers, users } from "../db/schema";
+import { endpoints, servers } from "../db/schema";
 import type { Endpoint } from "../db/schema";
 
 const serversRoute = new Hono();
@@ -24,19 +24,8 @@ const createEndpointSchema = z.object({
   port: z.number().int().min(1).max(65535),
 });
 
-async function currentUserId() {
-  // Stub until auth lands: every call resolves to the seeded `sophie` user.
-  const [row] = await db
-    .select({ id: users.id })
-    .from(users)
-    .orderBy(asc(users.createdAt))
-    .limit(1);
-  if (!row) throw new Error("No user seeded yet");
-  return row.id;
-}
-
 serversRoute.get("/", async (c) => {
-  const userId = await currentUserId();
+  const userId = c.get("userId");
   const rows = await db
     .select()
     .from(servers)
@@ -46,7 +35,7 @@ serversRoute.get("/", async (c) => {
 });
 
 serversRoute.post("/", zValidator("json", createServerSchema), async (c) => {
-  const userId = await currentUserId();
+  const userId = c.get("userId");
   const { name, ip, port, hint, description } = c.req.valid("json");
 
   const url = `http://${ip}:${port}`;
@@ -71,7 +60,7 @@ serversRoute.post("/", zValidator("json", createServerSchema), async (c) => {
 });
 
 serversRoute.get("/:id", async (c) => {
-  const userId = await currentUserId();
+  const userId = c.get("userId");
   const id = c.req.param("id");
   const [server] = await db
     .select()
@@ -101,7 +90,7 @@ serversRoute.patch(
   "/:id",
   zValidator("json", updateServerSchema),
   async (c) => {
-    const userId = await currentUserId();
+    const userId = c.get("userId");
     const id = c.req.param("id");
     const [existing] = await db
       .select({ userId: servers.userId })
@@ -133,7 +122,7 @@ serversRoute.patch(
 );
 
 serversRoute.delete("/:id", async (c) => {
-  const userId = await currentUserId();
+  const userId = c.get("userId");
   const id = c.req.param("id");
   const result = await db
     .delete(servers)
@@ -150,7 +139,7 @@ serversRoute.post(
   "/:id/endpoints",
   zValidator("json", createEndpointSchema),
   async (c) => {
-    const userId = await currentUserId();
+    const userId = c.get("userId");
     const id = c.req.param("id");
     const [server] = await db
       .select({ id: servers.id, userId: servers.userId })
@@ -200,7 +189,7 @@ async function pingAndUpdate(ep: Endpoint) {
 }
 
 serversRoute.post("/:id/test", async (c) => {
-  const userId = await currentUserId();
+  const userId = c.get("userId");
   const id = c.req.param("id");
   const [server] = await db
     .select()
@@ -220,7 +209,7 @@ serversRoute.post("/:id/test", async (c) => {
 });
 
 serversRoute.get("/:id/models", async (c) => {
-  const userId = await currentUserId();
+  const userId = c.get("userId");
   const id = c.req.param("id");
   const [server] = await db
     .select()
@@ -402,7 +391,7 @@ function stripMakerPrefix(id: string): string {
 }
 
 serversRoute.post("/:id/endpoints/:eid/test", async (c) => {
-  const userId = await currentUserId();
+  const userId = c.get("userId");
   const id = c.req.param("id");
   const eid = c.req.param("eid");
   const [row] = await db
