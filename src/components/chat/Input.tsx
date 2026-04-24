@@ -2,11 +2,13 @@ import { useState } from "react";
 
 export default function Input({
   onSend,
+  onCancel,
   sending,
   disabled,
   placeholder,
 }: {
   onSend: (text: string) => void;
+  onCancel: () => void;
   sending: boolean;
   disabled?: boolean;
   placeholder?: string;
@@ -55,15 +57,27 @@ export default function Input({
           <MicIcon />
           Talk
         </button>
-        <button
-          type="button"
-          onClick={submit}
-          aria-label="Send"
-          disabled={!value.trim() || sending || disabled}
-          className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-cyan text-white transition-opacity hover:opacity-90 disabled:opacity-40"
-        >
-          {sending ? <SpinnerIcon /> : <ArrowUpIcon />}
-        </button>
+
+        {sending ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            aria-label="Stop"
+            className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-navy text-white transition-opacity hover:opacity-90"
+          >
+            <StopIcon />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={submit}
+            aria-label="Send"
+            disabled={!value.trim() || disabled}
+            className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-cyan text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            <ArrowUpIcon />
+          </button>
+        )}
       </div>
       <p className="font-mono text-[11px] text-gray-400">
         Your data stays on your hardware. Press <kbd>⇧</kbd> + <kbd>⏎</kbd> for a newline.
@@ -125,19 +139,10 @@ function ArrowUpIcon() {
   );
 }
 
-function SpinnerIcon() {
+function StopIcon() {
   return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      className="animate-spin"
-    >
-      <path d="M21 12a9 9 0 1 1-6.22-8.56" />
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="6" y="6" width="12" height="12" rx="1.5" />
     </svg>
   );
 }

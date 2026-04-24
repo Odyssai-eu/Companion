@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
+import {
+  api,
+  type ApiConversation,
+  type ApiMessage,
+  type ApiServer,
+} from "~/lib/api";
 import { streamChat, type ChatMessage } from "~/lib/chat-stream";
-import { api, type ApiServer } from "~/lib/api";
 
 export type UIMessage = {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   reasoning?: string;
   streaming?: boolean;
@@ -16,14 +22,26 @@ export type UIMessage = {
   };
 };
 
-export function useChat() {
+export type UseChatOptions = {
+  conversationId?: string;
+};
+
+export function useChat({ conversationId }: UseChatOptions = {}) {
+  const navigate = useNavigate();
+
   const [servers, setServers] = useState<ApiServer[]>([]);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conversation, setConversation] = useState<ApiConversation | null>(
+    null,
+  );
+
+  const loadedIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Load servers once
   useEffect(() => {
     api
       .listServers()
@@ -33,6 +51,27 @@ export function useChat() {
       })
       .catch((e) => setError(e.message));
   }, []);
+
+  // Load conversation when URL id changes
+  useEffect(() => {
+    if (!conversationId) {
+      setMessages([]);
+      setConversation(null);
+      loadedIdRef.current = null;
+      return;
+    }
+    if (loadedIdRef.current === conversationId) return;
+
+    loadedIdRef.current = conversationId;
+    api
+      .getConversation(conversationId)
+      .then(({ conversation, messages: msgs }) => {
+        setConversation(conversation);
+        setMessages(msgs.map(toUIMessage));
+        if (conversation.serverId) setActiveServerId(conversation.serverId);
+      })
+      .catch((e) => setError(e.message));
+  }, [conversationId]);
 
   const activeServer =
     servers.find((s) => s.id === activeServerId) ?? servers[0] ?? null;
@@ -44,6 +83,24 @@ export function useChat() {
       if (!trimmed) return;
 
       setError(null);
+
+      // Ensure we have a conversation to write into
+      let convId = conversationId ?? conversation?.id ?? null;
+      if (!convId) {
+        try {
+          const created = await api.createConversation({
+            serverId: activeServer.id,
+            title: trimmed.slice(0, 80),
+          });
+          convId = created.conversation.id;
+          setConversation(created.conversation);
+          loadedIdRef.current = convId;
+        } catch (e) {
+          setError((e as Error).message);
+          return;
+        }
+      }
+
       const userMsg: UIMessage = {
         id: crypto.randomUUID(),
         role: "user",
@@ -59,6 +116,16 @@ export function useChat() {
 
       setMessages((prev) => [...prev, userMsg, placeholder]);
       setSending(true);
+
+      // Update URL to /c/:id if we just created it (silent, no reload)
+      if (!conversationId) {
+        navigate(`/c/${convId}`, { replace: true });
+      }
+
+      // Persist user message (fire and forget — don't block the stream)
+      api
+        .appendMessage(convId, { role: "user", content: trimmed })
+        .catch((e) => console.warn("persist user failed", e));
 
       const convoForModel: ChatMessage[] = [...messages, userMsg].map((m) => ({
         role: m.role,
@@ -88,53 +155,69 @@ export function useChat() {
       abortRef.current = null;
       setSending(false);
 
-      if (!result.ok) {
-        setError(result.error ?? "Stream failed");
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? {
-                  ...m,
-                  content:
-                    m.content ||
-                    `⚠︎ ${result.error ?? "Couldn't reach the engine."}`,
-                  streaming: false,
-                }
-              : m,
-          ),
-        );
-        return;
-      }
-
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId
+      // Snapshot the final assistant message from state to persist
+      let finalAssistant: UIMessage | null = null;
+      setMessages((prev) => {
+        const next = prev.map((m) => {
+          if (m.id !== assistantId) return m;
+          const stats = result.ok
             ? {
-                ...m,
-                streaming: false,
-                stats: {
-                  ttft:
-                    result.ttftMs !== undefined
-                      ? `${result.ttftMs}ms`
-                      : undefined,
-                  tokens: result.tokens,
-                  speed:
-                    result.durationMs && result.tokens
-                      ? `${((result.tokens / result.durationMs) * 1000).toFixed(1)} tok/s`
-                      : undefined,
-                  cost: "$0.00 · local",
-                },
+                ttft:
+                  result.ttftMs !== undefined
+                    ? `${result.ttftMs}ms`
+                    : undefined,
+                tokens: result.tokens,
+                speed:
+                  result.durationMs && result.tokens
+                    ? `${((result.tokens / result.durationMs) * 1000).toFixed(1)} tok/s`
+                    : undefined,
+                cost: "$0.00 · local",
               }
-            : m,
-        ),
-      );
+            : undefined;
+          const aborted = controller.signal.aborted;
+          const finalContent =
+            !result.ok && !m.content
+              ? aborted
+                ? "⏹ Stopped"
+                : `⚠︎ ${result.error ?? "Couldn't reach the engine."}`
+              : m.content;
+          const updated = {
+            ...m,
+            content: finalContent,
+            streaming: false,
+            stats,
+          };
+          finalAssistant = updated;
+          return updated;
+        });
+        return next;
+      });
+
+      if (!result.ok) setError(result.error ?? null);
+
+      // Persist the assistant message (best effort)
+      if (finalAssistant && convId) {
+        const msg = finalAssistant as UIMessage;
+        api
+          .appendMessage(convId, {
+            role: "assistant",
+            content: msg.content,
+            reasoning: msg.reasoning,
+            stats: msg.stats as Record<string, unknown> | undefined,
+          })
+          .catch((e) => console.warn("persist assistant failed", e));
+      }
     },
-    [activeServer, messages, sending],
+    [activeServer, conversation?.id, conversationId, messages, navigate, sending],
   );
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
   }, []);
+
+  const startNew = useCallback(() => {
+    navigate("/");
+  }, [navigate]);
 
   return {
     messages,
@@ -143,7 +226,19 @@ export function useChat() {
     activeServer,
     servers,
     setActiveServerId,
+    conversation,
     sendMessage,
     cancel,
+    startNew,
+  };
+}
+
+function toUIMessage(m: ApiMessage): UIMessage {
+  return {
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    reasoning: m.reasoning ?? undefined,
+    stats: (m.stats as UIMessage["stats"]) ?? undefined,
   };
 }

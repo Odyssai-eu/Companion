@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -29,6 +31,16 @@ export const servers = pgTable(
     hint: text("hint"),
     url: text("url").notNull(),
     description: text("description"),
+    // How to talk to this server's engine. openai-compat covers exo, Ollama,
+    // LM Studio, vLLM, OpenRouter. Anthropic has a different protocol.
+    engineKind: text("engine_kind", {
+      enum: ["openai-compat", "anthropic"],
+    })
+      .notNull()
+      .default("openai-compat"),
+    // Optional bearer token to forward as `Authorization: Bearer …` upstream
+    // (OpenRouter, Anthropic, any hosted engine).
+    authBearer: text("auth_bearer"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
@@ -38,6 +50,56 @@ export const servers = pgTable(
   },
   (t) => ({
     userNameIdx: uniqueIndex("servers_user_name_idx").on(t.userId, t.name),
+  }),
+);
+
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    serverId: uuid("server_id").references(() => servers.id, {
+      onDelete: "set null",
+    }),
+    title: text("title").notNull().default("New conversation"),
+    model: text("model"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userUpdatedIdx: index("conversations_user_updated_idx").on(
+      t.userId,
+      t.updatedAt,
+    ),
+  }),
+);
+
+export const messages = pgTable(
+  "messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
+    content: text("content").notNull().default(""),
+    reasoning: text("reasoning"),
+    stats: jsonb("stats").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    conversationIdx: index("messages_conversation_idx").on(
+      t.conversationId,
+      t.createdAt,
+    ),
   }),
 );
 
@@ -61,5 +123,8 @@ export const endpoints = pgTable("endpoints", {
 export type User = typeof users.$inferSelect;
 export type Server = typeof servers.$inferSelect;
 export type Endpoint = typeof endpoints.$inferSelect;
+export type Conversation = typeof conversations.$inferSelect;
+export type Message = typeof messages.$inferSelect;
 export type NewServer = typeof servers.$inferInsert;
 export type NewEndpoint = typeof endpoints.$inferInsert;
+export type NewMessage = typeof messages.$inferInsert;

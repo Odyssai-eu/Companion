@@ -1,10 +1,35 @@
-import { Link } from "react-router";
-import { conversations, projects, type Conversation } from "~/data/mock";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router";
+import { api, type ApiConversation } from "~/lib/api";
 import Wordmark from "../Wordmark";
 
-export default function Sidebar() {
-  const today = conversations.filter((c) => c.bucket === "today");
-  const yesterday = conversations.filter((c) => c.bucket === "yesterday");
+type Props = {
+  activeConversationId: string | null;
+};
+
+export default function Sidebar({ activeConversationId }: Props) {
+  const [conversations, setConversations] = useState<ApiConversation[]>([]);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    let cancelled = false;
+    async function refresh() {
+      try {
+        const { conversations } = await api.listConversations();
+        if (!cancelled) setConversations(conversations);
+      } catch {
+        // ignore; empty list is fine for the shell
+      }
+    }
+    refresh();
+    const i = setInterval(refresh, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(i);
+    };
+  }, [activeConversationId]);
+
+  const groups = groupByBucket(conversations);
 
   return (
     <aside className="flex h-full w-[280px] flex-col border-r border-gray-200 bg-white">
@@ -17,31 +42,34 @@ export default function Sidebar() {
       </div>
 
       <div className="px-3 pb-4">
-        <NewConversationButton />
+        <button
+          type="button"
+          onClick={() => navigate("/")}
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-navy px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-95"
+        >
+          <PlusIcon />
+          New conversation
+        </button>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 pb-4">
-        <Section title="Projects" rightSlot={<AddButton />}>
-          {projects.map((p) => (
-            <ProjectRow key={p.id} name={p.name} count={p.count} />
-          ))}
-        </Section>
+        {groups.map((g) => (
+          <Section key={g.title} title={g.title}>
+            {g.items.map((c) => (
+              <ConversationRow
+                key={c.id}
+                conversation={c}
+                active={c.id === activeConversationId}
+              />
+            ))}
+          </Section>
+        ))}
 
-        <Section title="Today">
-          {today.map((c) => (
-            <ConversationRow
-              key={c.id}
-              conversation={c}
-              active={c.id === "c1"}
-            />
-          ))}
-        </Section>
-
-        <Section title="Yesterday">
-          {yesterday.map((c) => (
-            <ConversationRow key={c.id} conversation={c} />
-          ))}
-        </Section>
+        {conversations.length === 0 && (
+          <div className="mt-2 rounded-md px-2 py-3 text-[12px] text-gray-400">
+            No conversations yet. Start one below.
+          </div>
+        )}
       </nav>
 
       <UserFooter />
@@ -49,22 +77,45 @@ export default function Sidebar() {
   );
 }
 
+function groupByBucket(convos: ApiConversation[]) {
+  const today: ApiConversation[] = [];
+  const yesterday: ApiConversation[] = [];
+  const older: ApiConversation[] = [];
+  const now = new Date();
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  );
+  const startOfYesterday = new Date(startOfToday);
+  startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+  for (const c of convos) {
+    const t = new Date(c.updatedAt);
+    if (t >= startOfToday) today.push(c);
+    else if (t >= startOfYesterday) yesterday.push(c);
+    else older.push(c);
+  }
+  return [
+    { title: "Today", items: today },
+    { title: "Yesterday", items: yesterday },
+    { title: "Older", items: older },
+  ].filter((g) => g.items.length > 0);
+}
+
 function Section({
   title,
-  rightSlot,
   children,
 }: {
   title: string;
-  rightSlot?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="mb-5">
-      <div className="mb-2 flex items-center justify-between px-2">
+      <div className="mb-2 px-2">
         <span className="font-sans text-[11px] font-medium tracking-[0.08em] text-gray-400 uppercase">
           {title}
         </span>
-        {rightSlot}
       </div>
       <div className="flex flex-col gap-0.5">{children}</div>
     </div>
@@ -73,14 +124,18 @@ function Section({
 
 function ConversationRow({
   conversation,
-  active = false,
+  active,
 }: {
-  conversation: Conversation;
-  active?: boolean;
+  conversation: ApiConversation;
+  active: boolean;
 }) {
+  const time = new Date(conversation.updatedAt).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
   return (
-    <button
-      type="button"
+    <Link
+      to={`/c/${conversation.id}`}
       className={`flex w-full flex-col gap-0.5 rounded-md px-2 py-2 text-left transition-colors ${
         active
           ? "bg-[rgba(79,179,217,0.12)] text-navy"
@@ -93,30 +148,9 @@ function ConversationRow({
         {conversation.title}
       </span>
       <span className="font-mono text-[11px] text-gray-400">
-        {conversation.engine}
-        {conversation.time && (
-          <>
-            {" · "}
-            {conversation.time}
-          </>
-        )}
+        {conversation.model ? `${conversation.model} · ${time}` : time}
       </span>
-    </button>
-  );
-}
-
-function ProjectRow({ name, count }: { name: string; count: number }) {
-  return (
-    <button
-      type="button"
-      className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left hover:bg-gray-50"
-    >
-      <span className="flex min-w-0 items-center gap-2">
-        <FolderIcon />
-        <span className="truncate text-[13px] text-ink">{name}</span>
-      </span>
-      <span className="font-mono text-[11px] text-gray-400">{count}</span>
-    </button>
+    </Link>
   );
 }
 
@@ -131,30 +165,6 @@ function SearchInput() {
       />
       <kbd className="font-mono text-[10px] text-gray-400">⌘K</kbd>
     </div>
-  );
-}
-
-function NewConversationButton() {
-  return (
-    <button
-      type="button"
-      className="flex w-full items-center justify-center gap-2 rounded-lg bg-navy px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-95"
-    >
-      <PlusIcon />
-      New conversation
-    </button>
-  );
-}
-
-function AddButton() {
-  return (
-    <button
-      type="button"
-      aria-label="New project"
-      className="flex h-5 w-5 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-ink"
-    >
-      <PlusIcon />
-    </button>
   );
 }
 
@@ -217,24 +227,6 @@ function PlusIcon() {
       strokeLinejoin="round"
     >
       <path d="M12 5v14M5 12h14" />
-    </svg>
-  );
-}
-
-function FolderIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="flex-shrink-0 text-gray-400"
-    >
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
     </svg>
   );
 }

@@ -9,6 +9,26 @@ export type ApiServer = {
   updatedAt: string;
 };
 
+export type ApiConversation = {
+  id: string;
+  userId: string;
+  serverId: string | null;
+  title: string;
+  model: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ApiMessage = {
+  id: string;
+  conversationId: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  reasoning: string | null;
+  stats: Record<string, unknown> | null;
+  createdAt: string;
+};
+
 export type ApiEndpoint = {
   id: string;
   serverId: string;
@@ -80,5 +100,41 @@ export const api = {
     request<{ endpoint: ApiEndpoint }>(
       `/api/servers/${serverId}/endpoints/${endpointId}/test`,
       { method: "POST" },
+    ),
+
+  listConversations: () =>
+    request<{ conversations: ApiConversation[] }>("/api/conversations"),
+  getConversation: (id: string) =>
+    request<{ conversation: ApiConversation; messages: ApiMessage[] }>(
+      `/api/conversations/${id}`,
+    ),
+  createConversation: (body: {
+    title?: string;
+    serverId?: string;
+    model?: string;
+  }) =>
+    request<{ conversation: ApiConversation }>("/api/conversations", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  renameConversation: (id: string, title: string) =>
+    request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+  deleteConversation: (id: string) =>
+    request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
+  appendMessage: (
+    conversationId: string,
+    body: {
+      role: "user" | "assistant" | "system";
+      content: string;
+      reasoning?: string;
+      stats?: Record<string, unknown>;
+    },
+  ) =>
+    request<{ message: ApiMessage }>(
+      `/api/conversations/${conversationId}/messages`,
+      { method: "POST", body: JSON.stringify(body) },
     ),
 };
