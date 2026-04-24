@@ -196,7 +196,12 @@ function StatsRow({ stats }: { stats: NonNullable<UIMessage["stats"]> }) {
 
 function ActionsRow({ message }: { message: UIMessage }) {
   const [speakingId, setSpeakingId] = useState<string | null>(null);
-  useEffect(() => tts.subscribe(setSpeakingId), []);
+  useEffect(() => {
+    const unsub = tts.subscribe(setSpeakingId);
+    return () => {
+      unsub();
+    };
+  }, []);
   const speaking = speakingId === message.id;
 
   function onCopy() {

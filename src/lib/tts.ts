@@ -44,7 +44,7 @@ class TtsController {
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.onended = () => {
+    const finish = () => {
       URL.revokeObjectURL(url);
       if (this.current === id) {
         this.current = null;
@@ -52,7 +52,8 @@ class TtsController {
         this.notify();
       }
     };
-    audio.onerror = audio.onended;
+    audio.onended = finish;
+    audio.onerror = () => finish();
     this.audio = audio;
     this.current = id;
     this.notify();
