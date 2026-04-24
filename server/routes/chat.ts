@@ -54,17 +54,7 @@ chatRoute.post("/completions", async (c) => {
 
   let resolvedModel = model;
   if (!resolvedModel || resolvedModel === "auto") {
-    try {
-      const res = await fetch(`${base}/v1/models`);
-      if (res.ok) {
-        const body = (await res.json()) as {
-          data?: { id?: string }[];
-        };
-        resolvedModel = body.data?.[0]?.id;
-      }
-    } catch {
-      // fall through — upstream call below will surface the real error
-    }
+    resolvedModel = await pickLoadedModel(base);
   }
 
   if (!resolvedModel) {
@@ -114,5 +104,55 @@ chatRoute.post("/completions", async (c) => {
   c.header("X-Accel-Buffering", "no");
   return c.body(upstream.body);
 });
+
+/**
+ * Find a model that is actually loaded and ready to serve — not just known.
+ *
+ * - exo's `/state` lists placed instances under `instances.*.MlxJacclInstance
+ *   .shardAssignments.modelId`. We prefer this because `/v1/models` there
+ *   returns *every registered* model, including ones that aren't placed, and
+ *   chatting against one returns 404 "No instance found for model".
+ * - For Ollama / OpenRouter / Anthropic, `/v1/models` lists served models
+ *   accurately, so we fall back to its first entry.
+ */
+async function pickLoadedModel(base: string): Promise<string | undefined> {
+  // Try exo /state first.
+  try {
+    const res = await fetch(`${base}/state`);
+    if (res.ok) {
+      const state = (await res.json()) as {
+        instances?: Record<
+          string,
+          {
+            MlxJacclInstance?: {
+              shardAssignments?: { modelId?: string };
+            };
+          }
+        >;
+      };
+      const placed = Object.values(state.instances ?? {})
+        .map((i) => i.MlxJacclInstance?.shardAssignments?.modelId)
+        .filter((m): m is string => typeof m === "string" && m.length > 0);
+      if (placed.length > 0) return placed[0];
+    }
+  } catch {
+    // ignore — not an exo server
+  }
+
+  // Fall back to OpenAI-style /v1/models.
+  try {
+    const res = await fetch(`${base}/v1/models`);
+    if (res.ok) {
+      const body = (await res.json()) as {
+        data?: { id?: string }[];
+      };
+      return body.data?.[0]?.id;
+    }
+  } catch {
+    // ignore
+  }
+
+  return undefined;
+}
 
 export default chatRoute;
