@@ -45,7 +45,7 @@ export default function Input({
           onKeyDown={onKeyDown}
           disabled={disabled}
           rows={1}
-          placeholder={placeholder ?? "Ask your cluster anything..."}
+          placeholder={placeholder ?? "Ask your server anything..."}
           className="flex-1 resize-none bg-transparent text-[15px] leading-[22px] text-ink outline-none placeholder:text-gray-400 disabled:opacity-50"
           style={{ maxHeight: "200px" }}
         />

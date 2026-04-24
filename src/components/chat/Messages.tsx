@@ -24,7 +24,7 @@ export default function Messages({
             className="h-14 w-14 rounded-full opacity-70"
           />
           <p className="font-display text-[20px] font-light text-navy">
-            What would you like to ask your cluster?
+            What would you like to ask your server?
           </p>
           <p className="text-[13px] text-gray-400">
             Your conversations stay on your hardware.
