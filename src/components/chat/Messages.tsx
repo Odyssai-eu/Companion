@@ -30,9 +30,11 @@ function UserBubble({ content }: { content: string }) {
 function AssistantMessage({ message }: { message: Message }) {
   return (
     <div className="flex gap-4">
-      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(79,179,217,0.14)]">
-        <span className="font-mono text-[11px] font-medium text-navy">[B]</span>
-      </div>
+      <img
+        src="/logo/icon-192.png"
+        alt="Bear"
+        className="h-8 w-8 flex-shrink-0 rounded-full"
+      />
       <div className="flex min-w-0 flex-1 flex-col gap-4">
         <div className="flex flex-col gap-4 text-[15px] leading-relaxed text-ink">
           {message.content.split("\n\n").map((para, i) => (

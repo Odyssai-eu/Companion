@@ -6,6 +6,7 @@ COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile || pnpm install
 
 COPY tsconfig.json vite.config.ts index.html ./
+COPY public ./public
 COPY src ./src
 COPY server ./server
 RUN pnpm build
