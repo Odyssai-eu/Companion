@@ -390,6 +390,63 @@ function stripMakerPrefix(id: string): string {
   return slash === -1 ? id : id.slice(slash + 1);
 }
 
+const updateEndpointSchema = z.object({
+  label: z.string().min(1).max(120).optional(),
+  role: z.enum(["primary", "secondary"]).optional(),
+  node: z.string().max(60).nullish(),
+  ip: z.string().min(1).max(255).optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+});
+
+serversRoute.patch(
+  "/:id/endpoints/:eid",
+  zValidator("json", updateEndpointSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const id = c.req.param("id");
+    const eid = c.req.param("eid");
+    const [row] = await db
+      .select({ ep: endpoints, serverUserId: servers.userId })
+      .from(endpoints)
+      .innerJoin(servers, eq(endpoints.serverId, servers.id))
+      .where(eq(endpoints.id, eid))
+      .limit(1);
+    if (!row || row.ep.serverId !== id || row.serverUserId !== userId) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    const data = c.req.valid("json");
+    const patch: Partial<typeof endpoints.$inferInsert> = {};
+    if (data.label !== undefined) patch.label = data.label;
+    if (data.role !== undefined) patch.role = data.role;
+    if (data.node !== undefined) patch.node = data.node ?? null;
+    if (data.ip !== undefined) patch.ip = data.ip;
+    if (data.port !== undefined) patch.port = data.port;
+    const [updated] = await db
+      .update(endpoints)
+      .set(patch)
+      .where(eq(endpoints.id, eid))
+      .returning();
+    return c.json({ endpoint: updated });
+  },
+);
+
+serversRoute.delete("/:id/endpoints/:eid", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const eid = c.req.param("eid");
+  const [row] = await db
+    .select({ ep: endpoints, serverUserId: servers.userId })
+    .from(endpoints)
+    .innerJoin(servers, eq(endpoints.serverId, servers.id))
+    .where(eq(endpoints.id, eid))
+    .limit(1);
+  if (!row || row.ep.serverId !== id || row.serverUserId !== userId) {
+    return c.json({ error: "not_found" }, 404);
+  }
+  await db.delete(endpoints).where(eq(endpoints.id, eid));
+  return c.body(null, 204);
+});
+
 serversRoute.post("/:id/endpoints/:eid/test", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");

@@ -82,6 +82,49 @@ export default function ServerDetailPage() {
     [id],
   );
 
+  const updateEndpoint = useCallback(
+    async (
+      endpointId: string,
+      patch: Parameters<typeof api.updateEndpoint>[2],
+    ) => {
+      if (!id) return;
+      try {
+        const res = await api.updateEndpoint(id, endpointId, patch);
+        setData((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            endpoints: prev.endpoints.map((e) =>
+              e.id === endpointId ? res.endpoint : e,
+            ),
+          };
+        });
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [id],
+  );
+
+  const removeEndpoint = useCallback(
+    async (endpointId: string) => {
+      if (!id) return;
+      try {
+        await api.deleteEndpoint(id, endpointId);
+        setData((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            endpoints: prev.endpoints.filter((e) => e.id !== endpointId),
+          };
+        });
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [id],
+  );
+
   if (error) {
     return (
       <div className="flex flex-col gap-4">
@@ -121,6 +164,8 @@ export default function ServerDetailPage() {
         onTestAll={testAll}
         onTestOne={testOne}
         onAddClick={() => setAddOpen(true)}
+        onUpdate={updateEndpoint}
+        onDelete={removeEndpoint}
       />
       <DangerZone />
 
@@ -280,6 +325,8 @@ function EndpointsSection({
   onTestAll,
   onTestOne,
   onAddClick,
+  onUpdate,
+  onDelete,
 }: {
   endpoints: ApiEndpoint[];
   testingAll: boolean;
@@ -287,6 +334,11 @@ function EndpointsSection({
   onTestAll: () => void;
   onTestOne: (id: string) => void;
   onAddClick: () => void;
+  onUpdate: (
+    endpointId: string,
+    patch: Parameters<typeof api.updateEndpoint>[2],
+  ) => void;
+  onDelete: (endpointId: string) => void;
 }) {
   return (
     <section className="flex flex-col gap-4">
@@ -325,6 +377,8 @@ function EndpointsSection({
             endpoint={e}
             testing={testingIds.has(e.id) || testingAll}
             onTest={() => onTestOne(e.id)}
+            onUpdate={(patch) => onUpdate(e.id, patch)}
+            onDelete={() => onDelete(e.id)}
           />
         ))}
         <AddEndpointRow onClick={onAddClick} />
@@ -337,14 +391,115 @@ function EndpointRow({
   endpoint,
   testing,
   onTest,
+  onUpdate,
+  onDelete,
 }: {
   endpoint: ApiEndpoint;
   testing: boolean;
   onTest: () => void;
+  onUpdate: (patch: Parameters<typeof api.updateEndpoint>[2]) => void;
+  onDelete: () => void;
 }) {
-  const isPrimary = endpoint.role === "primary";
+  const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [node, setNode] = useState(endpoint.node ?? "");
+  const [ip, setIp] = useState(endpoint.ip);
+  const [port, setPort] = useState(String(endpoint.port));
+  const [role, setRole] = useState(endpoint.role);
+
+  useEffect(() => {
+    if (!editing) {
+      setNode(endpoint.node ?? "");
+      setIp(endpoint.ip);
+      setPort(String(endpoint.port));
+      setRole(endpoint.role);
+    }
+  }, [editing, endpoint]);
+
+  function save() {
+    const portNum = parseInt(port, 10);
+    const patch: Parameters<typeof api.updateEndpoint>[2] = {};
+    if (node !== (endpoint.node ?? "")) patch.node = node.trim() || null;
+    if (ip.trim() !== endpoint.ip) patch.ip = ip.trim();
+    if (Number.isFinite(portNum) && portNum !== endpoint.port)
+      patch.port = portNum;
+    if (role !== endpoint.role) patch.role = role;
+    if (Object.keys(patch).length > 0) onUpdate(patch);
+    setEditing(false);
+  }
+
+  const isPrimary = role === "primary";
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-3 rounded-xl border border-cyan bg-white px-5 py-4 shadow-[0_0_0_3px_rgba(79,179,217,0.12)]">
+        <div className="flex w-[180px] flex-shrink-0 flex-col gap-1">
+          <input
+            value={endpoint.label}
+            disabled
+            className="text-[14px] font-medium text-ink outline-none"
+          />
+          <div className="flex gap-0.5 rounded-full border border-gray-200 p-0.5">
+            {(["primary", "secondary"] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setRole(r)}
+                className={`flex-1 rounded-full px-2 py-0.5 text-[10px] font-medium capitalize transition-colors ${
+                  role === r
+                    ? isPrimary && r === "primary"
+                      ? "bg-[rgba(79,179,217,0.16)] text-navy"
+                      : "bg-gray-100 text-gray-700"
+                    : "text-gray-400 hover:text-ink"
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <input
+          value={node}
+          onChange={(e) => setNode(e.target.value)}
+          placeholder="node"
+          className="h-10 w-[120px] flex-shrink-0 rounded-lg border border-gray-200 bg-white px-3 font-mono text-[13px] text-ink outline-none placeholder:text-gray-400 focus:border-cyan"
+        />
+        <input
+          value={ip}
+          onChange={(e) => setIp(e.target.value)}
+          className="h-10 w-[180px] flex-shrink-0 rounded-lg border border-gray-200 bg-white px-3 font-mono text-[14px] text-ink outline-none focus:border-cyan"
+        />
+        <span className="flex-shrink-0 font-mono text-[14px] text-gray-400">:</span>
+        <input
+          value={port}
+          onChange={(e) => setPort(e.target.value)}
+          inputMode="numeric"
+          className="h-10 w-[90px] flex-shrink-0 rounded-lg border border-gray-200 bg-white px-3 font-mono text-[14px] text-ink outline-none focus:border-cyan"
+        />
+
+        <div className="flex flex-1 items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            className="flex h-9 items-center rounded-lg px-3 text-[13px] font-medium text-gray-600 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            className="flex h-9 items-center rounded-lg bg-navy px-4 text-[13px] font-medium text-white hover:opacity-95"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white px-5 py-4">
+    <div className="group flex items-center gap-4 rounded-xl border border-gray-200 bg-white px-5 py-4">
       <div className="flex w-[180px] flex-shrink-0 flex-col gap-1">
         <span className="text-[14px] font-medium text-ink">
           {endpoint.label}
@@ -386,6 +541,85 @@ function EndpointRow({
       </button>
 
       <EndpointStatus endpoint={endpoint} testing={testing} />
+
+      <div className="relative flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-label="Endpoint actions"
+          className="flex h-9 w-9 items-center justify-center rounded-md text-gray-400 hover:bg-gray-50 hover:text-ink"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="12" cy="5" r="1.5" />
+            <circle cx="12" cy="12" r="1.5" />
+            <circle cx="12" cy="19" r="1.5" />
+          </svg>
+        </button>
+        {menuOpen && (
+          <div
+            className="absolute top-full right-0 z-30 mt-1 w-[160px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-[0_10px_24px_rgba(10,10,10,0.1)]"
+            onMouseLeave={() => setMenuOpen(false)}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                setEditing(true);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-ink hover:bg-gray-50"
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+              </svg>
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                if (confirm(`Remove endpoint ${endpoint.ip}:${endpoint.port}?`)) {
+                  onDelete();
+                }
+              }}
+              className="flex w-full items-center gap-2 border-t border-gray-100 px-3 py-2 text-left text-[13px] text-red-600 hover:bg-red-50"
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              </svg>
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

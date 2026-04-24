@@ -143,6 +143,25 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  updateEndpoint: (
+    serverId: string,
+    endpointId: string,
+    body: Partial<{
+      label: string;
+      role: "primary" | "secondary";
+      node: string | null;
+      ip: string;
+      port: number;
+    }>,
+  ) =>
+    request<{ endpoint: ApiEndpoint }>(
+      `/api/servers/${serverId}/endpoints/${endpointId}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+  deleteEndpoint: (serverId: string, endpointId: string) =>
+    request<void>(`/api/servers/${serverId}/endpoints/${endpointId}`, {
+      method: "DELETE",
+    }),
   testServer: (serverId: string) =>
     request<{ endpoints: ApiEndpoint[] }>(
       `/api/servers/${serverId}/test`,
