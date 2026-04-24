@@ -1,3 +1,4 @@
+import { useIndicAI } from "~/hooks/useIndicAI";
 import type { ApiServer } from "~/lib/api";
 import ModelPicker from "./ModelPicker";
 import ToolsMenu from "./ToolsMenu";
@@ -23,6 +24,7 @@ export default function TopBar({
   onTogglePanel,
   panelOpen,
 }: Props) {
+  const indicai = useIndicAI();
   return (
     <header className="flex flex-col border-b border-gray-200 bg-white">
       {/* Line 1 — server + model / IndicAI */}
@@ -42,7 +44,10 @@ export default function TopBar({
             onChange={onModelChange}
           />
         </div>
-        <IndicAIPill level={3} label="Practitioner" />
+        <IndicAIPill
+          level={indicai?.level ?? 1}
+          label={indicai?.label ?? "Novice"}
+        />
       </div>
 
       {/* Line 2 — style tabs + Tools / Voice icon */}

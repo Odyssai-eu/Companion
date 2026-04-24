@@ -335,4 +335,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // IndicAI
+  getIndicAI: () =>
+    request<{
+      level: number;
+      label: string;
+      score: number;
+      next: { label: string; at: number } | null;
+      progress: number;
+      metrics: {
+        conversations: number;
+        userMessages: number;
+        distinctModels: number;
+        projects: number;
+        projectsWithPrompt: number;
+        activeAddons: number;
+      };
+    }>("/api/indicai"),
 };
