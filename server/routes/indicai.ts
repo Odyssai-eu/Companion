@@ -5,13 +5,15 @@ import { addons, conversations, messages, projects } from "../db/schema";
 
 const indicaiRoute = new Hono();
 
-const LEVELS = [
+type Level = { n: number; label: string; minScore: number };
+
+const LEVELS: Level[] = [
   { n: 1, label: "Novice", minScore: 0 },
   { n: 2, label: "Apprentice", minScore: 20 },
   { n: 3, label: "Practitioner", minScore: 60 },
   { n: 4, label: "Advanced", minScore: 150 },
   { n: 5, label: "Expert", minScore: 400 },
-] as const;
+];
 
 indicaiRoute.get("/", async (c) => {
   const userId = c.get("userId");
