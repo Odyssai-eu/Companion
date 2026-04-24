@@ -41,7 +41,7 @@ export const servers: Server[] = [
   {
     id: "home-mac-studios",
     name: "Home Mac Studios",
-    url: "http://macstudio.local:52415",
+    url: "http://192.168.86.29:52415",
     status: "online",
     engine: "exo",
     engineVersion: "v1.0.70",

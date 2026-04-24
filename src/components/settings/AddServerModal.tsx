@@ -40,7 +40,7 @@ export default function AddServerModal({ open, onClose, onCreated }: Props) {
     setError(null);
     const parsed = parseAddress(address);
     if (!parsed) {
-      setError("Address must look like host:port (e.g. macstudio.local:52415).");
+      setError("Address must look like host:port (e.g. 192.168.86.29:52415).");
       return;
     }
     if (!name.trim()) {
@@ -119,12 +119,12 @@ export default function AddServerModal({ open, onClose, onCreated }: Props) {
 
           <Field
             label="Address"
-            hint="IP or hostname with port — e.g. 192.168.86.29:52415 or macstudio.local:52415"
+            hint="IP or hostname with port — e.g. 192.168.86.29:52415 or https://macstudio-office.ts.net"
           >
             <input
               value={address}
               onChange={(e) => setAddress(e.target.value)}
-              placeholder="macstudio.local:52415"
+              placeholder="192.168.86.29:52415"
               className="w-full rounded-lg border border-gray-200 bg-white px-3.5 py-2.5 font-mono text-[14px] text-ink outline-none transition-colors placeholder:text-gray-400 focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
             />
           </Field>

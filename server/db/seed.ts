@@ -28,7 +28,7 @@ export async function seedIfEmpty() {
     .values({
       userId: sophie.id,
       name: "Home Mac Studios",
-      url: "http://macstudio.local:52415",
+      url: "http://192.168.86.29:52415",
       description:
         "4 Mac Studios in a Thunderbolt mesh, running exo v1.0.70. Secondary endpoints reach each node directly.",
     })
