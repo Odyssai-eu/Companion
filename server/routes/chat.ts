@@ -51,10 +51,30 @@ chatRoute.post("/completions", async (c) => {
   }
 
   const base = `http://${primary.ip}:${primary.port}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (server.authBearer) {
+    headers.Authorization = `Bearer ${server.authBearer}`;
+  }
+
+  // Anthropic uses a different wire protocol (messages API with content blocks
+  // and a distinct SSE event stream). Until we wire a translator, surface a
+  // clear error instead of silently 404'ing.
+  if (server.engineKind === "anthropic") {
+    return c.json(
+      {
+        error: "engine_not_yet_supported",
+        detail:
+          "Anthropic passthrough is coming in the next release. Use an OpenAI-compatible server for now.",
+      },
+      501,
+    );
+  }
 
   let resolvedModel = model;
   if (!resolvedModel || resolvedModel === "auto") {
-    resolvedModel = await pickLoadedModel(base);
+    resolvedModel = await pickLoadedModel(base, headers);
   }
 
   if (!resolvedModel) {
@@ -72,7 +92,7 @@ chatRoute.post("/completions", async (c) => {
   try {
     upstream = await fetch(`${base}/v1/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         model: resolvedModel,
         messages,
@@ -115,10 +135,13 @@ chatRoute.post("/completions", async (c) => {
  * - For Ollama / OpenRouter / Anthropic, `/v1/models` lists served models
  *   accurately, so we fall back to its first entry.
  */
-async function pickLoadedModel(base: string): Promise<string | undefined> {
+async function pickLoadedModel(
+  base: string,
+  headers: Record<string, string>,
+): Promise<string | undefined> {
   // Try exo /state first.
   try {
-    const res = await fetch(`${base}/state`);
+    const res = await fetch(`${base}/state`, { headers });
     if (res.ok) {
       const state = (await res.json()) as {
         instances?: Record<
@@ -141,7 +164,7 @@ async function pickLoadedModel(base: string): Promise<string | undefined> {
 
   // Fall back to OpenAI-style /v1/models.
   try {
-    const res = await fetch(`${base}/v1/models`);
+    const res = await fetch(`${base}/v1/models`, { headers });
     if (res.ok) {
       const body = (await res.json()) as {
         data?: { id?: string }[];

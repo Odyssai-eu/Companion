@@ -12,7 +12,11 @@ export default function ChatLayout() {
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar activeConversationId={id ?? null} />
       <main className="flex flex-1 flex-col bg-gray-50">
-        <TopBar activeServer={chat.activeServer} />
+        <TopBar
+          activeServer={chat.activeServer}
+          model={chat.model}
+          onModelChange={chat.setModel}
+        />
         <Messages messages={chat.messages} error={chat.error} />
         <Input
           onSend={chat.sendMessage}

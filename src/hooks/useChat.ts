@@ -37,6 +37,17 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   const [conversation, setConversation] = useState<ApiConversation | null>(
     null,
   );
+  const [model, setModel] = useState<string>(() => {
+    if (typeof window === "undefined") return "auto";
+    return window.localStorage.getItem("thecompai:model") ?? "auto";
+  });
+
+  const setModelAndPersist = useCallback((m: string) => {
+    setModel(m);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("thecompai:model", m);
+    }
+  }, []);
 
   const loadedIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -138,6 +149,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       const result = await streamChat({
         serverId: activeServer.id,
         messages: convoForModel,
+        model: model === "auto" ? undefined : model,
         signal: controller.signal,
         onDelta: (delta) => {
           setMessages((prev) =>
@@ -208,7 +220,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           .catch((e) => console.warn("persist assistant failed", e));
       }
     },
-    [activeServer, conversation?.id, conversationId, messages, navigate, sending],
+    [activeServer, conversation?.id, conversationId, messages, model, navigate, sending],
   );
 
   const cancel = useCallback(() => {
@@ -227,6 +239,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     servers,
     setActiveServerId,
     conversation,
+    model,
+    setModel: setModelAndPersist,
     sendMessage,
     cancel,
     startNew,

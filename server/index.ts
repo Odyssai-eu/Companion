@@ -7,8 +7,10 @@ import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { runMigrations } from "./db/migrate";
 import { seedIfEmpty } from "./db/seed";
+import { licenseGate } from "./middleware/license";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
+import licenseRoute from "./routes/license";
 import serversRoute from "./routes/servers";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -28,6 +30,14 @@ app.get("/api/health", (c) =>
     engines: 0,
   }),
 );
+
+// Open endpoints (no license required)
+app.route("/api/license", licenseRoute);
+
+// Everything else behind the license gate
+app.use("/api/servers/*", licenseGate);
+app.use("/api/conversations/*", licenseGate);
+app.use("/api/chat/*", licenseGate);
 
 app.route("/api/servers", serversRoute);
 app.route("/api/conversations", conversationsRoute);

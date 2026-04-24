@@ -65,6 +65,21 @@ export default function ServerDetailPage() {
     [id],
   );
 
+  const rename = useCallback(
+    async (name: string) => {
+      if (!id) return;
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      try {
+        const res = await api.updateServer(id, { name: trimmed });
+        setData((prev) => (prev ? { ...prev, server: res.server } : prev));
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [id],
+  );
+
   if (error) {
     return (
       <div className="flex flex-col gap-4">
@@ -92,7 +107,11 @@ export default function ServerDetailPage() {
   return (
     <div className="flex flex-col gap-10">
       <Breadcrumb serverName={server.name} />
-      <Header server={server} endpointCount={endpoints.length} />
+      <Header
+        server={server}
+        endpointCount={endpoints.length}
+        onRename={rename}
+      />
       <EndpointsSection
         endpoints={endpoints}
         testingAll={testingAll}
@@ -139,10 +158,25 @@ function Breadcrumb({ serverName }: { serverName: string }) {
 function Header({
   server,
   endpointCount,
+  onRename,
 }: {
   server: ApiServer;
   endpointCount: number;
+  onRename: (name: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(server.name);
+
+  useEffect(() => {
+    if (!editing) setValue(server.name);
+  }, [editing, server.name]);
+
+  function save() {
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== server.name) onRename(trimmed);
+    setEditing(false);
+  }
+
   return (
     <header className="flex items-start justify-between gap-6">
       <div className="flex flex-col gap-2">
@@ -150,9 +184,24 @@ function Header({
           Infrastructure
         </span>
         <div className="flex items-center gap-4">
-          <h1 className="font-display text-[40px] leading-[48px] font-light text-navy">
-            {server.name}.
-          </h1>
+          {editing ? (
+            <input
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onBlur={save}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") save();
+                if (e.key === "Escape") setEditing(false);
+              }}
+              autoFocus
+              className="font-display text-[40px] leading-[48px] font-light text-navy outline-none border-b-2 border-cyan bg-transparent"
+              style={{ minWidth: 240 }}
+            />
+          ) : (
+            <h1 className="font-display text-[40px] leading-[48px] font-light text-navy">
+              {server.name}.
+            </h1>
+          )}
           <span className="flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-[12px] font-medium text-gray-600">
             <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />
             Untested
@@ -163,18 +212,28 @@ function Header({
             {server.description}
           </p>
         )}
-        <div className="mt-2 flex gap-6 font-mono text-[12px] text-gray-600">
+        <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 font-mono text-[12px] text-gray-600">
           <span>
             <span className="text-gray-400">URL</span> {server.url}
           </span>
           <span>
             <span className="text-gray-400">Endpoints</span> {endpointCount}
           </span>
+          <span>
+            <span className="text-gray-400">Engine</span>{" "}
+            {server.engineKind === "anthropic" ? "Anthropic" : "OpenAI-compat"}
+          </span>
+          {server.authBearer && (
+            <span>
+              <span className="text-gray-400">Auth</span> Bearer •••
+            </span>
+          )}
         </div>
       </div>
       <div className="flex flex-shrink-0 gap-2">
         <button
           type="button"
+          onClick={() => setEditing((v) => !v)}
           className="flex h-9 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 text-[13px] font-medium text-ink hover:bg-gray-50"
         >
           <svg
@@ -190,7 +249,7 @@ function Header({
             <path d="M12 20h9" />
             <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
           </svg>
-          <span className="whitespace-nowrap">Rename</span>
+          <span className="whitespace-nowrap">{editing ? "Done" : "Rename"}</span>
         </button>
       </div>
     </header>

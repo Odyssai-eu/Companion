@@ -12,6 +12,11 @@ export default function AddServerModal({ open, onClose, onCreated }: Props) {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
+  const [engineKind, setEngineKind] = useState<"openai-compat" | "anthropic">(
+    "openai-compat",
+  );
+  const [authBearer, setAuthBearer] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,6 +33,9 @@ export default function AddServerModal({ open, onClose, onCreated }: Props) {
     if (open) {
       setName("");
       setAddress("");
+      setEngineKind("openai-compat");
+      setAuthBearer("");
+      setShowAdvanced(false);
       setError(null);
       setSubmitting(false);
     }
@@ -54,6 +62,12 @@ export default function AddServerModal({ open, onClose, onCreated }: Props) {
         ip: parsed.ip,
         port: parsed.port,
       });
+      const patch: Parameters<typeof api.updateServer>[1] = {};
+      if (engineKind !== "openai-compat") patch.engineKind = engineKind;
+      if (authBearer.trim()) patch.authBearer = authBearer.trim();
+      if (Object.keys(patch).length > 0) {
+        await api.updateServer(server.id, patch);
+      }
       onCreated();
       navigate(`/settings/servers/${server.id}`);
     } catch (e) {
@@ -128,6 +142,59 @@ export default function AddServerModal({ open, onClose, onCreated }: Props) {
               className="w-full rounded-lg border border-gray-200 bg-white px-3.5 py-2.5 font-mono text-[14px] text-ink outline-none transition-colors placeholder:text-gray-400 focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
             />
           </Field>
+
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="flex items-center gap-1.5 text-[12px] font-medium text-gray-500 hover:text-ink"
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`transition-transform ${showAdvanced ? "rotate-90" : ""}`}
+            >
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+            Advanced (engine, bearer token)
+          </button>
+
+          {showAdvanced && (
+            <div className="flex flex-col gap-4 rounded-lg border border-gray-100 bg-gray-50/60 p-4">
+              <Field label="Engine" hint="OpenAI-compat covers exo, Ollama, LM Studio, vLLM, OpenRouter. Anthropic uses a different protocol (passthrough coming soon).">
+                <select
+                  value={engineKind}
+                  onChange={(e) =>
+                    setEngineKind(
+                      e.target.value as "openai-compat" | "anthropic",
+                    )
+                  }
+                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
+                >
+                  <option value="openai-compat">openai-compat</option>
+                  <option value="anthropic">anthropic</option>
+                </select>
+              </Field>
+              <Field
+                label="Bearer token"
+                hint="Forwarded as Authorization header. Needed for OpenRouter, hosted Anthropic, etc."
+              >
+                <input
+                  type="password"
+                  value={authBearer}
+                  onChange={(e) => setAuthBearer(e.target.value)}
+                  placeholder="sk-or-…"
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-gray-200 bg-white px-3.5 py-2.5 font-mono text-[13px] text-ink outline-none placeholder:text-gray-400 focus:border-cyan"
+                />
+              </Field>
+            </div>
+          )}
 
           {error && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-[12px] text-red-700">

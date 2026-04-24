@@ -1,22 +1,34 @@
 import type { ApiServer } from "~/lib/api";
+import ModelPicker from "./ModelPicker";
 
 type Style = "Creative" | "Normal" | "Code";
 
 export default function TopBar({
   activeServer,
+  model,
+  onModelChange,
 }: {
   activeServer: ApiServer | null;
+  model: string | null;
+  onModelChange: (model: string) => void;
 }) {
   const activeStyle: Style = "Normal";
   return (
     <header className="flex h-15 items-center justify-between border-b border-gray-200 bg-white px-6">
       <div className="flex items-center gap-3">
         {activeServer ? (
-          <EngineBadge engine={activeServer.name} detail={activeServer.url} />
+          <EngineBadge
+            engine={activeServer.name}
+            detail={engineKindLabel(activeServer.engineKind)}
+          />
         ) : (
           <EngineBadge engine="No server" detail="Add one in Settings" />
         )}
-        <ModelPicker model="auto" />
+        <ModelPicker
+          serverId={activeServer?.id ?? null}
+          model={model}
+          onChange={onModelChange}
+        />
         <StyleTabs active={activeStyle} />
         <ToolsButton count={4} />
       </div>
@@ -29,28 +41,19 @@ export default function TopBar({
   );
 }
 
+function engineKindLabel(kind: "openai-compat" | "anthropic") {
+  return kind === "anthropic" ? "Anthropic" : "OpenAI-compat";
+}
+
 function EngineBadge({ engine, detail }: { engine: string; detail: string }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5">
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-      <span className="font-mono text-[12px] font-medium text-ink">
+      <span className="max-w-[200px] truncate font-mono text-[12px] font-medium text-ink">
         {engine}
       </span>
       <span className="font-mono text-[11px] text-gray-400">· {detail}</span>
     </div>
-  );
-}
-
-function ModelPicker({ model }: { model: string }) {
-  return (
-    <button
-      type="button"
-      className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 hover:bg-gray-50"
-    >
-      <span className="font-mono text-[12px] text-ink">{model}</span>
-      <EyeIcon />
-      <ChevronDownIcon />
-    </button>
   );
 }
 
@@ -128,43 +131,6 @@ function IconButton({
       {icon}
       <span>{label}</span>
     </button>
-  );
-}
-
-function EyeIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="text-gray-400"
-    >
-      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
-function ChevronDownIcon() {
-  return (
-    <svg
-      width="10"
-      height="10"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="text-gray-400"
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
   );
 }
 

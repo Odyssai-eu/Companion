@@ -5,8 +5,15 @@ export type ApiServer = {
   hint: string | null;
   url: string;
   description: string | null;
+  engineKind: "openai-compat" | "anthropic";
+  authBearer: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ApiModel = {
+  id: string;
+  loaded: boolean;
 };
 
 export type ApiConversation = {
@@ -77,6 +84,24 @@ export const api = {
     }),
   deleteServer: (id: string) =>
     request<void>(`/api/servers/${id}`, { method: "DELETE" }),
+  updateServer: (
+    id: string,
+    body: {
+      name?: string;
+      hint?: string | null;
+      description?: string | null;
+      authBearer?: string | null;
+      engineKind?: "openai-compat" | "anthropic";
+    },
+  ) =>
+    request<{ server: ApiServer }>(`/api/servers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  listModels: (serverId: string) =>
+    request<{ models: ApiModel[]; error?: string }>(
+      `/api/servers/${serverId}/models`,
+    ),
   addEndpoint: (
     serverId: string,
     body: {
