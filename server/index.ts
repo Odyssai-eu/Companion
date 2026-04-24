@@ -5,6 +5,9 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
+import { runMigrations } from "./db/migrate";
+import { seedIfEmpty } from "./db/seed";
+import serversRoute from "./routes/servers";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -24,6 +27,8 @@ app.get("/api/health", (c) =>
   }),
 );
 
+app.route("/api/servers", serversRoute);
+
 if (process.env.NODE_ENV === "production") {
   app.use("/*", serveStatic({ root: "./dist/client" }));
   app.get("*", serveStatic({ path: "./dist/client/index.html" }));
@@ -31,6 +36,15 @@ if (process.env.NODE_ENV === "production") {
 
 const port = Number(process.env.PORT ?? 3001);
 
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`→ thecomp.ai api listening on :${info.port}`);
+async function main() {
+  await runMigrations();
+  await seedIfEmpty();
+  serve({ fetch: app.fetch, port }, (info) => {
+    console.log(`→ thecomp.ai api listening on :${info.port}`);
+  });
+}
+
+main().catch((err) => {
+  console.error("fatal: server failed to start", err);
+  process.exit(1);
 });

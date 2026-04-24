@@ -1,15 +1,26 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { servers, type Server } from "~/data/mock";
+import { api, type ApiServer } from "~/lib/api";
 
 export default function ServersPage() {
+  const [servers, setServers] = useState<ApiServer[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .listServers()
+      .then((data) => setServers(data.servers))
+      .catch((e) => setError(e.message));
+  }, []);
+
   return (
     <div className="flex flex-col gap-10">
       <PageHeader />
       <div className="flex flex-col gap-3">
-        {servers.map((s) => (
-          <ServerCard key={s.id} server={s} />
-        ))}
-        <AddServerRow />
+        {error && <ErrorBox message={error} />}
+        {!servers && !error && <Loading />}
+        {servers?.map((s) => <ServerCard key={s.id} server={s} />)}
+        {servers && <AddServerRow />}
       </div>
     </div>
   );
@@ -32,14 +43,11 @@ function PageHeader() {
   );
 }
 
-function ServerCard({ server }: { server: Server }) {
-  const unreachable = server.status === "unreachable";
+function ServerCard({ server }: { server: ApiServer }) {
   return (
     <Link
       to={`/settings/servers/${server.id}`}
-      className={`flex flex-col gap-5 rounded-xl border border-gray-200 bg-white p-5 transition-all hover:border-cyan hover:shadow-[0_1px_3px_rgba(10,10,10,0.04)] ${
-        unreachable ? "opacity-75" : ""
-      }`}
+      className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-5 transition-all hover:border-cyan hover:shadow-[0_1px_3px_rgba(10,10,10,0.04)]"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
@@ -63,90 +71,19 @@ function ServerCard({ server }: { server: Server }) {
           </div>
         </div>
         <div className="flex flex-shrink-0 items-center gap-2">
-          <StatusBadge
-            status={server.status}
-            detail={server.statusDetail}
-          />
-          {!unreachable && <MoreButton />}
+          <UntestedBadge />
+          <MoreButton />
         </div>
       </div>
-
-      {!unreachable && (
-        <div className="grid grid-cols-5 gap-4 border-t border-gray-100 pt-4">
-          <Stat label="Engine" value={`${server.engine} ${server.engineVersion}`} />
-          <Stat label="Nodes" value={`${server.nodesOnline} / ${server.nodesTotal}`} />
-          <Stat label="Models" value={String(server.models)} />
-          <Stat label="Latency" value={`${server.latencyMs}ms`} />
-          <Stat
-            label="Active"
-            value={
-              server.activeModel ? (
-                <span className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 rounded-full bg-cyan" />
-                  <span className="text-cyan">{server.activeModel}</span>
-                </span>
-              ) : (
-                "—"
-              )
-            }
-          />
-        </div>
-      )}
     </Link>
   );
 }
 
-function Stat({
-  label,
-  value,
-}: {
-  label: string;
-  value: React.ReactNode;
-}) {
+function UntestedBadge() {
   return (
-    <div className="flex flex-col gap-1.5">
-      <span className="font-sans text-[11px] font-medium tracking-[0.08em] text-gray-400 uppercase">
-        {label}
-      </span>
-      <span className="font-mono text-[13px] text-ink">{value}</span>
-    </div>
-  );
-}
-
-function StatusBadge({
-  status,
-  detail,
-}: {
-  status: Server["status"];
-  detail?: string;
-}) {
-  const map = {
-    online: {
-      bg: "bg-emerald-50",
-      fg: "text-emerald-700",
-      dot: "bg-emerald-500",
-      label: "Online",
-    },
-    offline: {
-      bg: "bg-gray-100",
-      fg: "text-gray-600",
-      dot: "bg-gray-400",
-      label: "Offline",
-    },
-    unreachable: {
-      bg: "bg-gray-100",
-      fg: "text-gray-600",
-      dot: "bg-gray-400",
-      label: "Unreachable",
-    },
-  }[status];
-  return (
-    <span
-      className={`flex items-center gap-1.5 rounded-full ${map.bg} px-2.5 py-1 text-[12px] font-medium ${map.fg}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${map.dot}`} />
-      {map.label}
-      {detail && <span className="text-gray-400">· {detail}</span>}
+    <span className="flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-[12px] font-medium text-gray-600">
+      <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />
+      Untested
     </span>
   );
 }
@@ -156,7 +93,10 @@ function MoreButton() {
     <button
       type="button"
       aria-label="More"
-      onClick={(e) => e.preventDefault()}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-gray-50 hover:text-ink"
     >
       <svg
@@ -209,6 +149,22 @@ function AddServerRow() {
         Add server
       </span>
     </button>
+  );
+}
+
+function Loading() {
+  return (
+    <div className="flex items-center justify-center rounded-xl border border-gray-200 bg-white py-10">
+      <span className="font-mono text-[12px] text-gray-400">Loading…</span>
+    </div>
+  );
+}
+
+function ErrorBox({ message }: { message: string }) {
+  return (
+    <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 font-mono text-[12px] text-red-700">
+      {message}
+    </div>
   );
 }
 
