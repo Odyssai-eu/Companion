@@ -1,4 +1,131 @@
-export type Engine = "exo" | "Ollama" | "Claude" | "LM Studio" | "OpenRouter";
+export type Engine =
+  | "exo"
+  | "Ollama"
+  | "Claude"
+  | "Anthropic"
+  | "LM Studio"
+  | "OpenRouter"
+  | "ComfyUI";
+
+export type ServerStatus = "online" | "offline" | "unreachable";
+
+export type Server = {
+  id: string;
+  name: string;
+  hint?: string;
+  url: string;
+  status: ServerStatus;
+  statusDetail?: string;
+  engine: string;
+  engineVersion: string;
+  nodesOnline: number;
+  nodesTotal: number;
+  models: number;
+  latencyMs: number;
+  activeModel?: string;
+  description?: string;
+};
+
+export type Endpoint = {
+  id: string;
+  label: string;
+  role: "primary" | "secondary";
+  node: string;
+  ip: string;
+  port: number;
+  latencyMs: number;
+  healthy: boolean;
+};
+
+export const servers: Server[] = [
+  {
+    id: "home-mac-studios",
+    name: "Home Mac Studios",
+    url: "http://macstudio.local:52415",
+    status: "online",
+    engine: "exo",
+    engineVersion: "v1.0.70",
+    nodesOnline: 4,
+    nodesTotal: 4,
+    models: 7,
+    latencyMs: 18,
+    activeModel: "gemma-4-31b",
+    description:
+      "4 Mac Studios in a Thunderbolt mesh, running exo v1.0.70. Secondary endpoints reach each node directly.",
+  },
+  {
+    id: "office-server",
+    name: "Office server",
+    hint: "via Tailscale",
+    url: "https://macstudio-office.ts.net",
+    status: "online",
+    engine: "Ollama",
+    engineVersion: "0.7.2",
+    nodesOnline: 1,
+    nodesTotal: 1,
+    models: 12,
+    latencyMs: 42,
+  },
+  {
+    id: "client-lab",
+    name: "Client lab — Paris",
+    url: "https://lab.acme.example:52415",
+    status: "unreachable",
+    statusDetail: "2h ago",
+    engine: "",
+    engineVersion: "",
+    nodesOnline: 0,
+    nodesTotal: 0,
+    models: 0,
+    latencyMs: 0,
+  },
+];
+
+export const endpointsByServer: Record<string, Endpoint[]> = {
+  "home-mac-studios": [
+    {
+      id: "e1",
+      label: "EXO Endpoint",
+      role: "primary",
+      node: "exo1",
+      ip: "192.168.86.29",
+      port: 52415,
+      latencyMs: 18,
+      healthy: true,
+    },
+    {
+      id: "e2",
+      label: "EXO Endpoint",
+      role: "secondary",
+      node: "exo2",
+      ip: "192.168.86.30",
+      port: 52415,
+      latencyMs: 21,
+      healthy: true,
+    },
+    {
+      id: "e3",
+      label: "EXO Endpoint",
+      role: "secondary",
+      node: "exo3",
+      ip: "192.168.86.31",
+      port: 52415,
+      latencyMs: 24,
+      healthy: true,
+    },
+    {
+      id: "e4",
+      label: "EXO Endpoint",
+      role: "secondary",
+      node: "exo4",
+      ip: "192.168.86.32",
+      port: 52415,
+      latencyMs: 19,
+      healthy: true,
+    },
+  ],
+};
+
 
 export type Project = {
   id: string;

@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import { conversations, projects, type Conversation } from "~/data/mock";
 import Wordmark from "../Wordmark";
 
@@ -173,13 +174,13 @@ function UserFooter() {
           </span>
         </div>
       </div>
-      <button
-        type="button"
+      <Link
+        to="/settings/servers"
         aria-label="Settings"
         className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-gray-50 hover:text-ink"
       >
         <SettingsIcon />
-      </button>
+      </Link>
     </div>
   );
 }
