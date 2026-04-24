@@ -50,15 +50,41 @@ chatRoute.post("/completions", async (c) => {
     return c.json({ error: "no_endpoint" }, 400);
   }
 
-  const target = `http://${primary.ip}:${primary.port}/v1/chat/completions`;
+  const base = `http://${primary.ip}:${primary.port}`;
+
+  let resolvedModel = model;
+  if (!resolvedModel || resolvedModel === "auto") {
+    try {
+      const res = await fetch(`${base}/v1/models`);
+      if (res.ok) {
+        const body = (await res.json()) as {
+          data?: { id?: string }[];
+        };
+        resolvedModel = body.data?.[0]?.id;
+      }
+    } catch {
+      // fall through — upstream call below will surface the real error
+    }
+  }
+
+  if (!resolvedModel) {
+    return c.json(
+      {
+        error: "no_model",
+        detail:
+          "Engine didn't report any loaded model. Load one on the server, then retry.",
+      },
+      400,
+    );
+  }
 
   let upstream: Response;
   try {
-    upstream = await fetch(target, {
+    upstream = await fetch(`${base}/v1/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: model ?? "auto",
+        model: resolvedModel,
         messages,
         stream: true,
         ...(temperature !== undefined ? { temperature } : {}),
