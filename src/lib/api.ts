@@ -13,7 +13,9 @@ export type ApiServer = {
 
 export type ApiModel = {
   id: string;
+  name: string;
   loaded: boolean;
+  endpoints: string[];
 };
 
 export type ApiConversation = {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
+import AddEndpointModal from "~/components/settings/AddEndpointModal";
 import { api, type ApiEndpoint, type ApiServer } from "~/lib/api";
 
 export default function ServerDetailPage() {
@@ -11,6 +12,7 @@ export default function ServerDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [testingAll, setTestingAll] = useState(false);
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set());
+  const [addOpen, setAddOpen] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -118,8 +120,23 @@ export default function ServerDetailPage() {
         testingIds={testingIds}
         onTestAll={testAll}
         onTestOne={testOne}
+        onAddClick={() => setAddOpen(true)}
       />
       <DangerZone />
+
+      {id && (
+        <AddEndpointModal
+          serverId={id}
+          open={addOpen}
+          onClose={() => setAddOpen(false)}
+          onCreated={(endpoint) => {
+            setData((prev) =>
+              prev ? { ...prev, endpoints: [...prev.endpoints, endpoint] } : prev,
+            );
+            setAddOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -262,12 +279,14 @@ function EndpointsSection({
   testingIds,
   onTestAll,
   onTestOne,
+  onAddClick,
 }: {
   endpoints: ApiEndpoint[];
   testingAll: boolean;
   testingIds: Set<string>;
   onTestAll: () => void;
   onTestOne: (id: string) => void;
+  onAddClick: () => void;
 }) {
   return (
     <section className="flex flex-col gap-4">
@@ -308,7 +327,7 @@ function EndpointsSection({
             onTest={() => onTestOne(e.id)}
           />
         ))}
-        <AddEndpointRow />
+        <AddEndpointRow onClick={onAddClick} />
       </div>
     </section>
   );
@@ -425,10 +444,11 @@ function CrossIcon() {
   );
 }
 
-function AddEndpointRow() {
+function AddEndpointRow({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
+      onClick={onClick}
       className="flex items-center justify-center gap-2.5 rounded-xl border border-dashed border-gray-300 bg-transparent py-4 text-[14px] font-medium text-gray-600 hover:border-gray-400 hover:text-ink"
     >
       <svg

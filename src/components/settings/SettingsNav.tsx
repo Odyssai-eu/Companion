@@ -23,6 +23,7 @@ const sections: NavSection[] = [
     title: "Preferences",
     items: [
       { to: "/settings/appearance", label: "Appearance" },
+      { to: "/settings/accessibility", label: "Accessibility" },
       { to: "/settings/shortcuts", label: "Shortcuts" },
     ],
   },

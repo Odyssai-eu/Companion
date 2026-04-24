@@ -235,88 +235,170 @@ serversRoute.get("/:id/models", async (c) => {
     .from(endpoints)
     .where(eq(endpoints.serverId, id))
     .orderBy(asc(endpoints.createdAt));
-  const primary = eps.find((e) => e.role === "primary") ?? eps[0];
-  if (!primary) {
-    return c.json({ models: [] });
-  }
-  const base = `http://${primary.ip}:${primary.port}`;
+  if (eps.length === 0) return c.json({ models: [] });
+
   const headers: Record<string, string> = {};
   if (server.authBearer)
     headers.Authorization = `Bearer ${server.authBearer}`;
 
-  try {
-    const models = await listModels(base, headers, server.engineKind);
-    return c.json({ models });
-  } catch (err) {
-    return c.json(
-      { models: [], error: String(err) },
-      200,
-    );
-  }
+  const models = await listModelsForServer(eps, headers, server.engineKind);
+  return c.json({ models });
 });
 
-async function listModels(
-  base: string,
+type ModelEntry = {
+  id: string;
+  name: string;
+  loaded: boolean;
+  endpoints: string[];
+};
+
+/**
+ * Merge model availability across a server's endpoints. Exoscopy pattern:
+ *   - For exo, fetch `/state` per endpoint → placed (loaded) modelIds
+ *   - Also fetch `/v1/models?status=downloaded` → downloaded but not loaded (registered)
+ *   - For OpenAI-compat cloud (OpenRouter, Anthropic-compat), primary endpoint
+ *     is enough; hit /v1/models directly
+ * Duplicates across endpoints are merged (same modelId surfaced once with the
+ * list of endpoints that carry it). `name` is the model id without the `maker/`
+ * prefix so the UI doesn't have to parse it.
+ */
+async function listModelsForServer(
+  eps: Endpoint[],
   headers: Record<string, string>,
   engineKind: string,
-): Promise<{ id: string; loaded: boolean }[]> {
+): Promise<ModelEntry[]> {
   if (engineKind === "anthropic") {
-    const res = await fetch(`${base}/v1/models`, { headers });
-    if (!res.ok) return [];
+    // Anthropic-style: primary endpoint only, /v1/models
+    const primary = eps.find((e) => e.role === "primary") ?? eps[0];
+    const base = `http://${primary.ip}:${primary.port}`;
+    const res = await fetch(`${base}/v1/models`, { headers }).catch(() => null);
+    if (!res || !res.ok) return [];
     const body = (await res.json()) as { data?: { id?: string }[] };
     return (body.data ?? [])
       .map((m) => m.id)
-      .filter((id): id is string => typeof id === "string")
-      .map((id) => ({ id, loaded: true }));
+      .filter((id): id is string => !!id)
+      .map<ModelEntry>((id) => ({
+        id,
+        name: stripMakerPrefix(id),
+        loaded: true,
+        endpoints: [primary.node ?? primary.ip],
+      }));
   }
 
-  // OpenAI-compat (exo, Ollama, LM Studio, OpenRouter, vLLM)
-  const placedFromState = await fetchExoPlacedModels(base, headers);
-  const placedSet = new Set(placedFromState);
+  // OpenAI-compat path — merge across every endpoint in parallel.
+  const perEndpoint = await Promise.all(
+    eps.map((ep) => fetchEndpointModels(ep, headers)),
+  );
+
+  const merged = new Map<string, ModelEntry>();
+  for (const { endpointLabel, loaded, downloaded } of perEndpoint) {
+    for (const id of loaded) {
+      const existing = merged.get(id);
+      if (existing) {
+        existing.loaded = true;
+        if (!existing.endpoints.includes(endpointLabel))
+          existing.endpoints.push(endpointLabel);
+      } else {
+        merged.set(id, {
+          id,
+          name: stripMakerPrefix(id),
+          loaded: true,
+          endpoints: [endpointLabel],
+        });
+      }
+    }
+    for (const id of downloaded) {
+      if (merged.has(id)) continue;
+      merged.set(id, {
+        id,
+        name: stripMakerPrefix(id),
+        loaded: false,
+        endpoints: [endpointLabel],
+      });
+    }
+  }
+
+  return Array.from(merged.values()).sort((a, b) => {
+    if (a.loaded !== b.loaded) return a.loaded ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+async function fetchEndpointModels(
+  ep: Endpoint,
+  headers: Record<string, string>,
+): Promise<{
+  endpointLabel: string;
+  loaded: string[];
+  downloaded: string[];
+}> {
+  const base = `http://${ep.ip}:${ep.port}`;
+  const label = ep.node ?? ep.ip;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4500);
 
   try {
-    const res = await fetch(`${base}/v1/models`, { headers });
-    if (!res.ok) {
-      return placedFromState.map((id) => ({ id, loaded: true }));
+    const [stateRes, downloadedRes] = await Promise.all([
+      fetch(`${base}/state`, { headers, signal: controller.signal }).catch(
+        () => null,
+      ),
+      fetch(`${base}/v1/models?status=downloaded`, {
+        headers,
+        signal: controller.signal,
+      }).catch(() => null),
+    ]);
+
+    const loaded: string[] = [];
+    if (stateRes?.ok) {
+      const state = (await stateRes.json()) as {
+        instances?: Record<
+          string,
+          {
+            MlxJacclInstance?: { shardAssignments?: { modelId?: string } };
+            MlxInstance?: { shardAssignments?: { modelId?: string } };
+          }
+        >;
+      };
+      for (const inst of Object.values(state.instances ?? {})) {
+        const inner = inst.MlxJacclInstance ?? inst.MlxInstance;
+        const modelId = inner?.shardAssignments?.modelId;
+        if (modelId && !loaded.includes(modelId)) loaded.push(modelId);
+      }
     }
-    const body = (await res.json()) as { data?: { id?: string }[] };
-    const ids = (body.data ?? [])
-      .map((m) => m.id)
-      .filter((id): id is string => typeof id === "string");
-    // If we have placed info, mark loaded accordingly; else assume all loaded.
-    if (placedFromState.length > 0) {
-      const merged = Array.from(new Set([...placedFromState, ...ids]));
-      return merged.map((id) => ({ id, loaded: placedSet.has(id) }));
+
+    const downloaded: string[] = [];
+    if (downloadedRes?.ok) {
+      const body = (await downloadedRes.json()) as {
+        data?: { id?: string }[];
+      };
+      for (const m of body.data ?? []) {
+        if (m.id && !downloaded.includes(m.id)) downloaded.push(m.id);
+      }
     }
-    return ids.map((id) => ({ id, loaded: true }));
-  } catch {
-    return placedFromState.map((id) => ({ id, loaded: true }));
+
+    // Fallback for non-exo OpenAI-compat: /v1/models without the filter
+    if (loaded.length === 0 && downloaded.length === 0) {
+      const plain = await fetch(`${base}/v1/models`, {
+        headers,
+        signal: controller.signal,
+      }).catch(() => null);
+      if (plain?.ok) {
+        const body = (await plain.json()) as { data?: { id?: string }[] };
+        for (const m of body.data ?? []) {
+          if (m.id) loaded.push(m.id); // assume served = loaded for cloud
+        }
+      }
+    }
+
+    return { endpointLabel: label, loaded, downloaded };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-async function fetchExoPlacedModels(
-  base: string,
-  headers: Record<string, string>,
-): Promise<string[]> {
-  try {
-    const res = await fetch(`${base}/state`, { headers });
-    if (!res.ok) return [];
-    const state = (await res.json()) as {
-      instances?: Record<
-        string,
-        {
-          MlxJacclInstance?: {
-            shardAssignments?: { modelId?: string };
-          };
-        }
-      >;
-    };
-    return Object.values(state.instances ?? {})
-      .map((i) => i.MlxJacclInstance?.shardAssignments?.modelId)
-      .filter((m): m is string => typeof m === "string" && m.length > 0);
-  } catch {
-    return [];
-  }
+function stripMakerPrefix(id: string): string {
+  const slash = id.indexOf("/");
+  return slash === -1 ? id : id.slice(slash + 1);
 }
 
 serversRoute.post("/:id/endpoints/:eid/test", async (c) => {

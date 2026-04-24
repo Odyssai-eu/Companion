@@ -179,7 +179,8 @@ function UserFooter() {
           <span className="truncate text-[13px] font-medium text-ink">
             Sophie
           </span>
-          <span className="font-mono text-[11px] text-gray-400">
+          <span className="flex items-center gap-1 font-mono text-[11px] text-gray-400">
+            <SyncIcon />
             Pro · 3 devices
           </span>
         </div>
@@ -192,6 +193,25 @@ function UserFooter() {
         <SettingsIcon />
       </Link>
     </div>
+  );
+}
+
+function SyncIcon() {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-label="Synced across devices"
+    >
+      <path d="M18 10h-1.26A8 8 0 1 0 9 20" />
+      <path d="M13 16l4 4 4-4" />
+    </svg>
   );
 }
 

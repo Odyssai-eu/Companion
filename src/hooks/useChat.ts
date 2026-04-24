@@ -8,6 +8,43 @@ import {
 } from "~/lib/api";
 import { streamChat, type ChatMessage } from "~/lib/chat-stream";
 
+export type InferenceParams = {
+  temperature: number;
+  maxTokens: number;
+  thinking: boolean;
+  reasoningEffort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  topP: number | null;
+  topK: number | null;
+  minP: number | null;
+  repPenalty: number | null;
+  seed: number | null;
+  systemPrompt: string;
+  systemPromptEnabled: boolean;
+};
+
+export const DEFAULT_INFERENCE: InferenceParams = {
+  temperature: 0.7,
+  maxTokens: 32768,
+  thinking: false,
+  reasoningEffort: "medium",
+  topP: null,
+  topK: null,
+  minP: null,
+  repPenalty: null,
+  seed: null,
+  systemPrompt: "",
+  systemPromptEnabled: false,
+};
+
+export const STYLE_PRESETS: Record<
+  "Creative" | "Normal" | "Code",
+  Partial<InferenceParams>
+> = {
+  Creative: { temperature: 1.0, topP: 0.95, thinking: false },
+  Normal: { temperature: 0.7, topP: null, thinking: false },
+  Code: { temperature: 0.2, topP: 0.95, thinking: false },
+};
+
 export type UIMessage = {
   id: string;
   role: "user" | "assistant" | "system";
@@ -47,6 +84,30 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     if (typeof window !== "undefined") {
       window.localStorage.setItem("thecompai:model", m);
     }
+  }, []);
+
+  const [inference, setInference] = useState<InferenceParams>(() => {
+    if (typeof window === "undefined") return DEFAULT_INFERENCE;
+    try {
+      const raw = window.localStorage.getItem("thecompai:inference");
+      if (raw) return { ...DEFAULT_INFERENCE, ...JSON.parse(raw) };
+    } catch {
+      // ignore
+    }
+    return DEFAULT_INFERENCE;
+  });
+
+  const updateInference = useCallback((patch: Partial<InferenceParams>) => {
+    setInference((prev) => {
+      const next = { ...prev, ...patch };
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(
+          "thecompai:inference",
+          JSON.stringify(next),
+        );
+      }
+      return next;
+    });
   }, []);
 
   const loadedIdRef = useRef<string | null>(null);
@@ -150,6 +211,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         serverId: activeServer.id,
         messages: convoForModel,
         model: model === "auto" ? undefined : model,
+        inference: inferenceToPayload(inference),
         signal: controller.signal,
         onDelta: (delta) => {
           setMessages((prev) =>
@@ -220,7 +282,16 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           .catch((e) => console.warn("persist assistant failed", e));
       }
     },
-    [activeServer, conversation?.id, conversationId, messages, model, navigate, sending],
+    [
+      activeServer,
+      conversation?.id,
+      conversationId,
+      inference,
+      messages,
+      model,
+      navigate,
+      sending,
+    ],
   );
 
   const cancel = useCallback(() => {
@@ -241,6 +312,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     conversation,
     model,
     setModel: setModelAndPersist,
+    inference,
+    setInference: updateInference,
     sendMessage,
     cancel,
     startNew,
@@ -254,5 +327,20 @@ function toUIMessage(m: ApiMessage): UIMessage {
     content: m.content,
     reasoning: m.reasoning ?? undefined,
     stats: (m.stats as UIMessage["stats"]) ?? undefined,
+  };
+}
+
+function inferenceToPayload(i: InferenceParams) {
+  return {
+    temperature: i.temperature,
+    max_tokens: i.maxTokens,
+    top_p: i.topP,
+    top_k: i.topK,
+    min_p: i.minP,
+    repetition_penalty: i.repPenalty,
+    seed: i.seed,
+    thinking: i.thinking,
+    reasoning_effort: i.reasoningEffort,
+    system_prompt: i.systemPromptEnabled ? i.systemPrompt : undefined,
   };
 }

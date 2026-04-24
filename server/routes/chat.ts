@@ -2,6 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db/index";
 import { endpoints, servers, users } from "../db/schema";
+import { handleAnthropicChat } from "./chat-anthropic";
 
 const chatRoute = new Hono();
 
@@ -20,12 +21,34 @@ chatRoute.post("/completions", async (c) => {
   if (!body || typeof body !== "object") {
     return c.json({ error: "invalid_json" }, 400);
   }
-  const { serverId, messages, model, temperature, max_tokens } = body as {
+  const {
+    serverId,
+    messages,
+    model,
+    temperature,
+    max_tokens,
+    top_p,
+    top_k,
+    min_p,
+    repetition_penalty,
+    seed,
+    thinking,
+    reasoning_effort,
+    system_prompt,
+  } = body as {
     serverId?: string;
     messages?: unknown;
     model?: string;
     temperature?: number;
     max_tokens?: number;
+    top_p?: number;
+    top_k?: number;
+    min_p?: number;
+    repetition_penalty?: number;
+    seed?: number;
+    thinking?: boolean;
+    reasoning_effort?: string;
+    system_prompt?: string;
   };
   if (!serverId || !Array.isArray(messages) || messages.length === 0) {
     return c.json({ error: "missing_serverId_or_messages" }, 400);
@@ -51,32 +74,25 @@ chatRoute.post("/completions", async (c) => {
   }
 
   const base = `http://${primary.ip}:${primary.port}`;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (server.authBearer) {
-    headers.Authorization = `Bearer ${server.authBearer}`;
-  }
 
-  // Anthropic uses a different wire protocol (messages API with content blocks
-  // and a distinct SSE event stream). Until we wire a translator, surface a
-  // clear error instead of silently 404'ing.
-  if (server.engineKind === "anthropic") {
-    return c.json(
-      {
-        error: "engine_not_yet_supported",
-        detail:
-          "Anthropic passthrough is coming in the next release. Use an OpenAI-compatible server for now.",
-      },
-      501,
-    );
-  }
+  // Prepend system prompt if provided (OpenAI format; Anthropic handler
+  // extracts it into its native field).
+  const withSystem =
+    system_prompt && system_prompt.trim().length > 0
+      ? [
+          { role: "system", content: system_prompt.trim() },
+          ...(messages as { role: string; content: string }[]),
+        ]
+      : (messages as { role: "user" | "assistant" | "system"; content: string }[]);
 
-  let resolvedModel = model;
-  if (!resolvedModel || resolvedModel === "auto") {
-    resolvedModel = await pickLoadedModel(base, headers);
+  // Resolve model (either user-picked, or ask upstream what's loaded)
+  let resolvedModel = model && model !== "auto" ? model : undefined;
+  if (!resolvedModel) {
+    const authHeaders: Record<string, string> = {};
+    if (server.authBearer)
+      authHeaders.Authorization = `Bearer ${server.authBearer}`;
+    resolvedModel = await pickLoadedModel(base, authHeaders);
   }
-
   if (!resolvedModel) {
     return c.json(
       {
@@ -88,18 +104,51 @@ chatRoute.post("/completions", async (c) => {
     );
   }
 
+  if (server.engineKind === "anthropic") {
+    return handleAnthropicChat(c, {
+      base,
+      authBearer: server.authBearer,
+      model: resolvedModel,
+      messages: withSystem as Parameters<typeof handleAnthropicChat>[1]["messages"],
+      temperature,
+      max_tokens,
+    });
+  }
+
+  // OpenAI-compat path (exo, Ollama, LM Studio, vLLM, OpenRouter)
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (server.authBearer) {
+    headers.Authorization = `Bearer ${server.authBearer}`;
+    // OpenRouter asks attribution headers on each call
+    headers["HTTP-Referer"] = "https://dev.thecomp.ai";
+    headers["X-Title"] = "Thecomp.ai";
+  }
+
+  const upstreamBody: Record<string, unknown> = {
+    model: resolvedModel,
+    messages: withSystem,
+    stream: true,
+  };
+  if (temperature !== undefined) upstreamBody.temperature = temperature;
+  if (max_tokens !== undefined) upstreamBody.max_tokens = max_tokens;
+  if (top_p !== undefined) upstreamBody.top_p = top_p;
+  if (top_k !== undefined) upstreamBody.top_k = top_k;
+  if (min_p !== undefined) upstreamBody.min_p = min_p;
+  if (repetition_penalty !== undefined)
+    upstreamBody.repetition_penalty = repetition_penalty;
+  if (seed !== undefined) upstreamBody.seed = seed;
+  if (thinking) upstreamBody.enable_thinking = true;
+  if (thinking && reasoning_effort)
+    upstreamBody.reasoning_effort = reasoning_effort;
+
   let upstream: Response;
   try {
     upstream = await fetch(`${base}/v1/chat/completions`, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        model: resolvedModel,
-        messages,
-        stream: true,
-        ...(temperature !== undefined ? { temperature } : {}),
-        ...(max_tokens !== undefined ? { max_tokens } : {}),
-      }),
+      body: JSON.stringify(upstreamBody),
     });
   } catch (err) {
     return c.json(

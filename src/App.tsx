@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router";
 import ChatLayout from "./layouts/ChatLayout";
 import SettingsLayout from "./layouts/SettingsLayout";
+import AccessibilityPage from "./pages/settings/AccessibilityPage";
 import ComingSoonPage from "./pages/settings/ComingSoonPage";
 import ServerDetailPage from "./pages/settings/ServerDetailPage";
 import ServersPage from "./pages/settings/ServersPage";
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="engines" element={<ComingSoonPage title="Engines" />} />
         <Route path="devices" element={<ComingSoonPage title="Devices & sync" />} />
         <Route path="appearance" element={<ComingSoonPage title="Appearance" />} />
+        <Route path="accessibility" element={<AccessibilityPage />} />
         <Route path="shortcuts" element={<ComingSoonPage title="Shortcuts" />} />
         <Route path="add-ons" element={<ComingSoonPage title="Add-ons" />} />
       </Route>

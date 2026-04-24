@@ -12,6 +12,7 @@ export default function ModelPicker({ serverId, model, onChange }: Props) {
   const [models, setModels] = useState<ApiModel[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -32,17 +33,9 @@ export default function ModelPicker({ serverId, model, onChange }: Props) {
 
   useEffect(() => {
     if (!open || !serverId || models) return;
-    setLoading(true);
-    setError(null);
-    api
-      .listModels(serverId)
-      .then((r) => {
-        setModels(r.models);
-        if (r.error) setError(r.error);
-      })
-      .catch((e) => setError((e as Error).message))
-      .finally(() => setLoading(false));
-  }, [open, serverId, models]);
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, serverId]);
 
   function refresh() {
     if (!serverId) return;
@@ -58,6 +51,14 @@ export default function ModelPicker({ serverId, model, onChange }: Props) {
       .finally(() => setLoading(false));
   }
 
+  const activeName =
+    models?.find((m) => m.id === model)?.name ??
+    (model && model !== "auto" ? stripPrefix(model) : "auto");
+
+  const loaded = models?.filter((m) => m.loaded) ?? [];
+  const registered = models?.filter((m) => !m.loaded) ?? [];
+  const visible = showAll ? [...loaded, ...registered] : loaded;
+
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -67,17 +68,31 @@ export default function ModelPicker({ serverId, model, onChange }: Props) {
         className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 hover:bg-gray-50 disabled:opacity-50"
       >
         <span className="max-w-[220px] truncate font-mono text-[12px] text-ink">
-          {model ?? "auto"}
+          {activeName}
         </span>
         <ChevronDownIcon />
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 z-40 mt-1 w-[320px] rounded-xl border border-gray-200 bg-white shadow-[0_10px_30px_rgba(10,10,10,0.12)]">
+        <div className="absolute top-full left-0 z-40 mt-1 w-[360px] rounded-xl border border-gray-200 bg-white shadow-[0_10px_30px_rgba(10,10,10,0.12)]">
           <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
-            <span className="font-mono text-[11px] tracking-[0.08em] text-gray-400 uppercase">
-              Models
-            </span>
+            <div className="flex items-center gap-3 text-[11px] font-mono tracking-[0.08em] text-gray-400 uppercase">
+              <span>Models</span>
+              {loaded.length > 0 && (
+                <span className="text-emerald-600">{loaded.length} loaded</span>
+              )}
+              {registered.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAll((v) => !v)}
+                  className="normal-case text-gray-500 hover:text-ink"
+                >
+                  {showAll
+                    ? "Hide registered"
+                    : `+ ${registered.length} registered`}
+                </button>
+              )}
+            </div>
             <button
               type="button"
               onClick={refresh}
@@ -87,24 +102,30 @@ export default function ModelPicker({ serverId, model, onChange }: Props) {
             </button>
           </div>
 
-          <div className="max-h-[320px] overflow-y-auto py-1">
+          <div className="max-h-[360px] overflow-y-auto py-1">
             <button
               type="button"
               onClick={() => {
                 onChange("auto");
                 setOpen(false);
               }}
-              className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-gray-50"
+              className={`flex w-full items-center justify-between px-3 py-2 text-left ${
+                model === "auto" || !model
+                  ? "bg-[rgba(79,179,217,0.12)]"
+                  : "hover:bg-gray-50"
+              }`}
             >
               <span className="font-mono text-[12px] text-ink">auto</span>
-              <span className="text-[11px] text-gray-400">pick loaded</span>
+              <span className="text-[11px] text-gray-400">pick a loaded one</span>
             </button>
+
             {loading && !models && (
               <div className="px-3 py-6 text-center font-mono text-[11px] text-gray-400">
                 Loading…
               </div>
             )}
-            {models?.map((m) => (
+
+            {visible.map((m) => (
               <button
                 key={m.id}
                 type="button"
@@ -112,27 +133,39 @@ export default function ModelPicker({ serverId, model, onChange }: Props) {
                   onChange(m.id);
                   setOpen(false);
                 }}
-                className={`flex w-full items-center justify-between px-3 py-2 text-left ${
-                  model === m.id ? "bg-[rgba(79,179,217,0.12)]" : "hover:bg-gray-50"
+                className={`flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left ${
+                  model === m.id
+                    ? "bg-[rgba(79,179,217,0.12)]"
+                    : "hover:bg-gray-50"
                 }`}
               >
-                <span className="truncate font-mono text-[12px] text-ink">
-                  {m.id}
-                </span>
-                {m.loaded ? (
-                  <span className="flex-shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
-                    loaded
+                <span className="flex w-full items-center justify-between gap-2">
+                  <span className="truncate font-mono text-[12px] text-ink">
+                    {m.name}
                   </span>
-                ) : (
-                  <span className="flex-shrink-0 text-[10px] text-gray-400">
-                    registered
+                  {m.loaded ? (
+                    <span className="flex-shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                      loaded
+                    </span>
+                  ) : (
+                    <span className="flex-shrink-0 text-[10px] text-gray-400">
+                      registered
+                    </span>
+                  )}
+                </span>
+                {m.endpoints.length > 0 && (
+                  <span className="font-mono text-[10px] text-gray-400">
+                    {m.endpoints.join(" · ")}
                   </span>
                 )}
               </button>
             ))}
-            {!loading && models?.length === 0 && !error && (
+
+            {!loading && models !== null && visible.length === 0 && (
               <div className="px-3 py-6 text-center font-mono text-[11px] text-gray-400">
-                No models reported.
+                {loaded.length === 0 && registered.length > 0
+                  ? "No loaded models. Toggle above to see registered."
+                  : "No models reported."}
               </div>
             )}
           </div>
@@ -146,6 +179,11 @@ export default function ModelPicker({ serverId, model, onChange }: Props) {
       )}
     </div>
   );
+}
+
+function stripPrefix(id: string): string {
+  const slash = id.indexOf("/");
+  return slash === -1 ? id : id.slice(slash + 1);
 }
 
 function ChevronDownIcon() {

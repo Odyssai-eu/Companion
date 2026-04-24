@@ -1,41 +1,61 @@
 import type { ApiServer } from "~/lib/api";
 import ModelPicker from "./ModelPicker";
 
-type Style = "Creative" | "Normal" | "Code";
+export type ChatStyle = "Creative" | "Normal" | "Code" | "Inference";
+
+type Props = {
+  activeServer: ApiServer | null;
+  model: string | null;
+  onModelChange: (model: string) => void;
+  activeStyle: ChatStyle;
+  onStyleChange: (style: ChatStyle) => void;
+  toolsCount?: number;
+};
 
 export default function TopBar({
   activeServer,
   model,
   onModelChange,
-}: {
-  activeServer: ApiServer | null;
-  model: string | null;
-  onModelChange: (model: string) => void;
-}) {
-  const activeStyle: Style = "Normal";
+  activeStyle,
+  onStyleChange,
+  toolsCount = 4,
+}: Props) {
   return (
-    <header className="flex h-15 items-center justify-between border-b border-gray-200 bg-white px-6">
-      <div className="flex items-center gap-3">
-        {activeServer ? (
-          <EngineBadge
-            engine={activeServer.name}
-            detail={engineKindLabel(activeServer.engineKind)}
+    <header className="flex flex-col border-b border-gray-200 bg-white">
+      {/* Line 1 — server + model / IndicAI */}
+      <div className="flex items-center justify-between gap-3 px-6 pt-3 pb-1.5">
+        <div className="flex items-center gap-3">
+          {activeServer ? (
+            <EngineBadge
+              engine={activeServer.name}
+              detail={engineKindLabel(activeServer.engineKind)}
+            />
+          ) : (
+            <EngineBadge engine="No server" detail="Add one in Settings" />
+          )}
+          <ModelPicker
+            serverId={activeServer?.id ?? null}
+            model={model}
+            onChange={onModelChange}
           />
-        ) : (
-          <EngineBadge engine="No server" detail="Add one in Settings" />
-        )}
-        <ModelPicker
-          serverId={activeServer?.id ?? null}
-          model={model}
-          onChange={onModelChange}
-        />
-        <StyleTabs active={activeStyle} />
-        <ToolsButton count={4} />
-      </div>
-      <div className="flex items-center gap-2">
+        </div>
         <IndicAIPill level={3} label="Practitioner" />
-        <IconButton icon={<VoiceIcon />} label="Voice mode" />
-        <IconButton icon={<SyncedIcon />} label="Synced" subtle />
+      </div>
+
+      {/* Line 2 — style tabs + Tools / Voice icon */}
+      <div className="flex items-center justify-between gap-3 px-6 pt-1 pb-3">
+        <div className="flex items-center gap-3">
+          <StyleTabs active={activeStyle} onChange={onStyleChange} />
+          <ToolsButton count={toolsCount} />
+        </div>
+        <button
+          type="button"
+          aria-label="Voice mode"
+          title="Voice mode"
+          className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-ink transition-colors hover:bg-gray-50"
+        >
+          <VoiceIcon />
+        </button>
       </div>
     </header>
   );
@@ -49,7 +69,7 @@ function EngineBadge({ engine, detail }: { engine: string; detail: string }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5">
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-      <span className="max-w-[200px] truncate font-mono text-[12px] font-medium text-ink">
+      <span className="max-w-[180px] truncate font-mono text-[12px] font-medium text-ink">
         {engine}
       </span>
       <span className="font-mono text-[11px] text-gray-400">· {detail}</span>
@@ -57,14 +77,21 @@ function EngineBadge({ engine, detail }: { engine: string; detail: string }) {
   );
 }
 
-function StyleTabs({ active }: { active: Style }) {
-  const tabs: Style[] = ["Creative", "Normal", "Code"];
+function StyleTabs({
+  active,
+  onChange,
+}: {
+  active: ChatStyle;
+  onChange: (s: ChatStyle) => void;
+}) {
+  const tabs: ChatStyle[] = ["Creative", "Normal", "Code", "Inference"];
   return (
     <div className="flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white p-0.5">
       {tabs.map((tab) => (
         <button
           key={tab}
           type="button"
+          onClick={() => onChange(tab)}
           className={`rounded-md px-3 py-1 text-[12px] transition-colors ${
             active === tab
               ? "bg-gray-50 font-medium text-ink"
@@ -112,28 +139,6 @@ function IndicAIPill({ level, label }: { level: number; label: string }) {
   );
 }
 
-function IconButton({
-  icon,
-  label,
-  subtle = false,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  subtle?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      className={`flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-[12px] ${
-        subtle ? "text-gray-600" : "text-ink"
-      } hover:bg-gray-50`}
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-
 function WrenchIcon() {
   return (
     <svg
@@ -154,8 +159,8 @@ function WrenchIcon() {
 function VoiceIcon() {
   return (
     <svg
-      width="13"
-      height="13"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -163,25 +168,9 @@ function VoiceIcon() {
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <path d="M3 12h2m4-7v14m4-10v6m4-8v10m4-6v2" />
-    </svg>
-  );
-}
-
-function SyncedIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M18 10h-1.26A8 8 0 1 0 9 20" />
-      <path d="M13 16l4 4 4-4" />
+      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <line x1="12" x2="12" y1="19" y2="22" />
     </svg>
   );
 }

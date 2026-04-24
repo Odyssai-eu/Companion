@@ -8,10 +8,24 @@ export type StreamDelta = {
   text: string;
 };
 
+export type InferencePayload = {
+  temperature?: number;
+  max_tokens?: number;
+  top_p?: number | null;
+  top_k?: number | null;
+  min_p?: number | null;
+  repetition_penalty?: number | null;
+  seed?: number | null;
+  thinking?: boolean;
+  reasoning_effort?: string;
+  system_prompt?: string;
+};
+
 export type StreamChatOptions = {
   serverId: string;
   messages: ChatMessage[];
   model?: string;
+  inference?: InferencePayload | null;
   signal?: AbortSignal;
   onDelta: (delta: StreamDelta) => void;
 };
@@ -33,14 +47,31 @@ export async function streamChat(
 
   let res: Response;
   try {
+    const body: Record<string, unknown> = {
+      serverId: opts.serverId,
+      messages: opts.messages,
+    };
+    if (opts.model) body.model = opts.model;
+    if (opts.inference) {
+      const inf = opts.inference;
+      if (inf.temperature !== undefined) body.temperature = inf.temperature;
+      if (inf.max_tokens !== undefined) body.max_tokens = inf.max_tokens;
+      if (inf.top_p != null) body.top_p = inf.top_p;
+      if (inf.top_k != null) body.top_k = inf.top_k;
+      if (inf.min_p != null) body.min_p = inf.min_p;
+      if (inf.repetition_penalty != null)
+        body.repetition_penalty = inf.repetition_penalty;
+      if (inf.seed != null) body.seed = inf.seed;
+      if (inf.thinking) body.thinking = true;
+      if (inf.thinking && inf.reasoning_effort)
+        body.reasoning_effort = inf.reasoning_effort;
+      if (inf.system_prompt) body.system_prompt = inf.system_prompt;
+    }
+
     res = await fetch("/api/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        serverId: opts.serverId,
-        messages: opts.messages,
-        model: opts.model,
-      }),
+      body: JSON.stringify(body),
       signal: opts.signal,
     });
   } catch (e) {

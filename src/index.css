@@ -26,3 +26,25 @@ body {
   background: var(--color-gray-50);
   -webkit-font-smoothing: antialiased;
 }
+
+/* Accessibility: toggled from Settings → Accessibility */
+html.a11y-accessible-font body {
+  font-family: "Atkinson Hyperlegible", var(--font-sans);
+}
+html.a11y-larger-text {
+  font-size: 17px;
+}
+html.a11y-high-contrast {
+  --color-gray-400: #6b7280;
+  --color-gray-600: #1f2937;
+}
+html.a11y-reduced-motion *,
+html.a11y-reduced-motion *::before,
+html.a11y-reduced-motion *::after {
+  animation-duration: 0.001ms !important;
+  transition-duration: 0.001ms !important;
+}
+html.a11y-dyslexia-line body {
+  line-height: 1.7;
+  letter-spacing: 0.02em;
+}
