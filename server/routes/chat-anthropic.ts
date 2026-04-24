@@ -117,8 +117,6 @@ function translateStream(
         // First chunk: announce assistant role so OpenAI-compat clients init
         emitDelta({ content: "" });
 
-        let currentBlock: "text" | "thinking" | null = null;
-
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -145,13 +143,6 @@ function translateStream(
             }
 
             switch (eventName) {
-              case "content_block_start": {
-                const block = (
-                  data as { content_block?: { type?: string } }
-                ).content_block;
-                currentBlock = block?.type === "thinking" ? "thinking" : "text";
-                break;
-              }
               case "content_block_delta": {
                 const delta = (
                   data as { delta?: { type?: string; text?: string; thinking?: string } }
@@ -167,9 +158,6 @@ function translateStream(
                 }
                 break;
               }
-              case "content_block_stop":
-                currentBlock = null;
-                break;
               case "message_stop":
                 controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
                 break;
