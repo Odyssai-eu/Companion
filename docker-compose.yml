@@ -9,7 +9,7 @@ services:
       DATABASE_URL: postgres://thecompai:thecompai@db:5432/thecompai
       NODE_ENV: production
     ports:
-      - "3000:3000"
+      - "${HOST_PORT:-3000}:3000"
     depends_on:
       db:
         condition: service_healthy
