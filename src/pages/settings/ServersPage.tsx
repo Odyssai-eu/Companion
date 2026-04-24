@@ -1,17 +1,23 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
+import AddServerModal from "~/components/settings/AddServerModal";
 import { api, type ApiServer } from "~/lib/api";
 
 export default function ServersPage() {
   const [servers, setServers] = useState<ApiServer[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
-  useEffect(() => {
+  const refetch = useCallback(() => {
     api
       .listServers()
       .then((data) => setServers(data.servers))
       .catch((e) => setError(e.message));
   }, []);
+
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
 
   return (
     <div className="flex flex-col gap-10">
@@ -20,8 +26,17 @@ export default function ServersPage() {
         {error && <ErrorBox message={error} />}
         {!servers && !error && <Loading />}
         {servers?.map((s) => <ServerCard key={s.id} server={s} />)}
-        {servers && <AddServerRow />}
+        {servers && <AddServerRow onClick={() => setAddOpen(true)} />}
       </div>
+
+      <AddServerModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onCreated={() => {
+          setAddOpen(false);
+          refetch();
+        }}
+      />
     </div>
   );
 }
@@ -117,10 +132,11 @@ function MoreButton() {
   );
 }
 
-function AddServerRow() {
+function AddServerRow({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
+      onClick={onClick}
       className="flex items-center justify-between gap-4 rounded-xl border border-dashed border-gray-300 bg-transparent p-5 text-left transition-colors hover:border-gray-400 hover:bg-white"
     >
       <div className="flex items-center gap-3">

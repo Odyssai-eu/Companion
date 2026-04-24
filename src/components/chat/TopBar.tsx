@@ -1,12 +1,22 @@
+import type { ApiServer } from "~/lib/api";
+
 type Style = "Creative" | "Normal" | "Code";
 
-export default function TopBar() {
+export default function TopBar({
+  activeServer,
+}: {
+  activeServer: ApiServer | null;
+}) {
   const activeStyle: Style = "Normal";
   return (
     <header className="flex h-15 items-center justify-between border-b border-gray-200 bg-white px-6">
       <div className="flex items-center gap-3">
-        <EngineBadge engine="exo" detail="4 nodes" />
-        <ModelPicker model="gemma-4-31b-it-bf16" />
+        {activeServer ? (
+          <EngineBadge engine={activeServer.name} detail={activeServer.url} />
+        ) : (
+          <EngineBadge engine="No server" detail="Add one in Settings" />
+        )}
+        <ModelPicker model="auto" />
         <StyleTabs active={activeStyle} />
         <ToolsButton count={4} />
       </div>

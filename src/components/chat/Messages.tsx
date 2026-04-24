@@ -1,10 +1,47 @@
-import type { Message } from "~/data/mock";
-import { messages } from "~/data/mock";
+import { useEffect, useRef } from "react";
+import type { UIMessage } from "~/hooks/useChat";
 
-export default function Messages() {
+export default function Messages({
+  messages,
+  error,
+}: {
+  messages: UIMessage[];
+  error: string | null;
+}) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  if (messages.length === 0 && !error) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-8">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <img
+            src="/logo/icon-192.png"
+            alt=""
+            className="h-14 w-14 rounded-full opacity-70"
+          />
+          <p className="font-display text-[20px] font-light text-navy">
+            What would you like to ask your cluster?
+          </p>
+          <p className="text-[13px] text-gray-400">
+            Your conversations stay on your hardware.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 overflow-y-auto px-8 py-10">
       <div className="mx-auto flex max-w-3xl flex-col gap-10">
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 font-mono text-[12px] text-red-700">
+            {error}
+          </div>
+        )}
         {messages.map((m) =>
           m.role === "user" ? (
             <UserBubble key={m.id} content={m.content} />
@@ -12,6 +49,7 @@ export default function Messages() {
             <AssistantMessage key={m.id} message={m} />
           ),
         )}
+        <div ref={bottomRef} />
       </div>
     </div>
   );
@@ -21,13 +59,15 @@ function UserBubble({ content }: { content: string }) {
   return (
     <div className="flex justify-end">
       <div className="max-w-[85%] rounded-2xl bg-[rgba(79,179,217,0.14)] px-5 py-4">
-        <p className="text-[15px] leading-relaxed text-ink">{content}</p>
+        <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
+          {content}
+        </p>
       </div>
     </div>
   );
 }
 
-function AssistantMessage({ message }: { message: Message }) {
+function AssistantMessage({ message }: { message: UIMessage }) {
   return (
     <div className="flex gap-4">
       <img
@@ -37,25 +77,48 @@ function AssistantMessage({ message }: { message: Message }) {
       />
       <div className="flex min-w-0 flex-1 flex-col gap-4">
         <div className="flex flex-col gap-4 text-[15px] leading-relaxed text-ink">
-          {message.content.split("\n\n").map((para, i) => (
-            <p key={i}>{para}</p>
-          ))}
+          {message.content ? (
+            message.content.split("\n\n").map((para, i) => (
+              <p key={i} className="whitespace-pre-wrap">
+                {para}
+              </p>
+            ))
+          ) : (
+            <span className="inline-flex items-center gap-2 text-[14px] text-gray-400">
+              <TypingDots />
+            </span>
+          )}
+          {message.streaming && message.content && (
+            <span className="inline-block h-4 w-0.5 animate-pulse bg-cyan align-middle" />
+          )}
         </div>
-        {message.stats && <StatsRow stats={message.stats} />}
-        <ActionsRow />
+        {message.stats && !message.streaming && <StatsRow stats={message.stats} />}
+        {!message.streaming && message.content && <ActionsRow />}
       </div>
     </div>
   );
 }
 
-function StatsRow({ stats }: { stats: NonNullable<Message["stats"]> }) {
+function TypingDots() {
+  return (
+    <span className="flex gap-1">
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:-0.3s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:-0.15s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" />
+    </span>
+  );
+}
+
+function StatsRow({ stats }: { stats: NonNullable<UIMessage["stats"]> }) {
   const items = [
-    ["TTFT", stats.ttft],
-    ["Tokens", String(stats.tokens)],
-    ["Speed", stats.speed],
-    ["Ctx", stats.ctx],
-    ["Cost", stats.cost],
-  ];
+    stats.ttft && ["TTFT", stats.ttft],
+    stats.tokens !== undefined && ["Tokens", String(stats.tokens)],
+    stats.speed && ["Speed", stats.speed],
+    stats.cost && ["Cost", stats.cost],
+  ].filter(Boolean) as [string, string][];
+
+  if (items.length === 0) return null;
+
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-gray-200 bg-white px-5 py-3 font-mono text-[12px] text-gray-600">
       {items.map(([label, value]) => (

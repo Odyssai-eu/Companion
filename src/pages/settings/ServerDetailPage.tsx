@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api, type ApiEndpoint, type ApiServer } from "~/lib/api";
 
@@ -9,6 +9,8 @@ export default function ServerDetailPage() {
     endpoints: ApiEndpoint[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [testingAll, setTestingAll] = useState(false);
+  const [testingIds, setTestingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!id) return;
@@ -19,6 +21,49 @@ export default function ServerDetailPage() {
       .then(setData)
       .catch((e) => setError(e.message));
   }, [id]);
+
+  const testAll = useCallback(async () => {
+    if (!id) return;
+    setTestingAll(true);
+    try {
+      const res = await api.testServer(id);
+      setData((prev) =>
+        prev ? { ...prev, endpoints: res.endpoints } : prev,
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setTestingAll(false);
+    }
+  }, [id]);
+
+  const testOne = useCallback(
+    async (endpointId: string) => {
+      if (!id) return;
+      setTestingIds((s) => new Set(s).add(endpointId));
+      try {
+        const res = await api.testEndpoint(id, endpointId);
+        setData((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            endpoints: prev.endpoints.map((e) =>
+              e.id === endpointId ? res.endpoint : e,
+            ),
+          };
+        });
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setTestingIds((s) => {
+          const next = new Set(s);
+          next.delete(endpointId);
+          return next;
+        });
+      }
+    },
+    [id],
+  );
 
   if (error) {
     return (
@@ -48,7 +93,13 @@ export default function ServerDetailPage() {
     <div className="flex flex-col gap-10">
       <Breadcrumb serverName={server.name} />
       <Header server={server} endpointCount={endpoints.length} />
-      <EndpointsSection endpoints={endpoints} />
+      <EndpointsSection
+        endpoints={endpoints}
+        testingAll={testingAll}
+        testingIds={testingIds}
+        onTestAll={testAll}
+        onTestOne={testOne}
+      />
       <DangerZone />
     </div>
   );
@@ -146,7 +197,19 @@ function Header({
   );
 }
 
-function EndpointsSection({ endpoints }: { endpoints: ApiEndpoint[] }) {
+function EndpointsSection({
+  endpoints,
+  testingAll,
+  testingIds,
+  onTestAll,
+  onTestOne,
+}: {
+  endpoints: ApiEndpoint[];
+  testingAll: boolean;
+  testingIds: Set<string>;
+  onTestAll: () => void;
+  onTestOne: (id: string) => void;
+}) {
   return (
     <section className="flex flex-col gap-4">
       <div className="flex items-end justify-between gap-6">
@@ -161,10 +224,14 @@ function EndpointsSection({ endpoints }: { endpoints: ApiEndpoint[] }) {
         </div>
         <button
           type="button"
-          className="flex flex-shrink-0 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-[13px] font-medium text-ink hover:bg-gray-50"
+          onClick={onTestAll}
+          disabled={testingAll || endpoints.length === 0}
+          className="flex flex-shrink-0 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-[13px] font-medium text-ink hover:bg-gray-50 disabled:opacity-50"
         >
           <PlayIcon />
-          <span className="whitespace-nowrap">Test all</span>
+          <span className="whitespace-nowrap">
+            {testingAll ? "Testing…" : "Test all"}
+          </span>
         </button>
       </div>
 
@@ -175,7 +242,12 @@ function EndpointsSection({ endpoints }: { endpoints: ApiEndpoint[] }) {
           </div>
         )}
         {endpoints.map((e) => (
-          <EndpointRow key={e.id} endpoint={e} />
+          <EndpointRow
+            key={e.id}
+            endpoint={e}
+            testing={testingIds.has(e.id) || testingAll}
+            onTest={() => onTestOne(e.id)}
+          />
         ))}
         <AddEndpointRow />
       </div>
@@ -183,7 +255,15 @@ function EndpointsSection({ endpoints }: { endpoints: ApiEndpoint[] }) {
   );
 }
 
-function EndpointRow({ endpoint }: { endpoint: ApiEndpoint }) {
+function EndpointRow({
+  endpoint,
+  testing,
+  onTest,
+}: {
+  endpoint: ApiEndpoint;
+  testing: boolean;
+  onTest: () => void;
+}) {
   const isPrimary = endpoint.role === "primary";
   return (
     <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white px-5 py-4">
@@ -219,27 +299,70 @@ function EndpointRow({ endpoint }: { endpoint: ApiEndpoint }) {
 
       <button
         type="button"
-        className="flex h-10 flex-shrink-0 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-4 text-[13px] font-medium text-ink hover:bg-gray-50"
+        onClick={onTest}
+        disabled={testing}
+        className="flex h-10 flex-shrink-0 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-4 text-[13px] font-medium text-ink hover:bg-gray-50 disabled:opacity-50"
       >
         <PlayIcon small />
-        <span className="whitespace-nowrap">Test</span>
+        <span className="whitespace-nowrap">{testing ? "…" : "Test"}</span>
       </button>
 
-      <div
-        className={`flex flex-1 items-center gap-2 font-mono text-[12px] ${
-          endpoint.latencyMs !== null ? "text-emerald-600" : "text-gray-400"
-        }`}
-      >
-        {endpoint.latencyMs !== null ? (
-          <>
-            <CheckIcon />
-            <span>{endpoint.latencyMs}ms</span>
-          </>
-        ) : (
-          <span>—</span>
-        )}
-      </div>
+      <EndpointStatus endpoint={endpoint} testing={testing} />
     </div>
+  );
+}
+
+function EndpointStatus({
+  endpoint,
+  testing,
+}: {
+  endpoint: ApiEndpoint;
+  testing: boolean;
+}) {
+  if (testing) {
+    return (
+      <div className="flex flex-1 items-center gap-2 font-mono text-[12px] text-gray-400">
+        <span>Pinging…</span>
+      </div>
+    );
+  }
+  if (endpoint.latencyMs !== null && endpoint.healthy) {
+    return (
+      <div className="flex flex-1 items-center gap-2 font-mono text-[12px] text-emerald-600">
+        <CheckIcon />
+        <span>{endpoint.latencyMs}ms</span>
+      </div>
+    );
+  }
+  if (endpoint.healthy === false) {
+    return (
+      <div className="flex flex-1 items-center gap-2 font-mono text-[12px] text-red-600">
+        <CrossIcon />
+        <span>unreachable</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-1 items-center gap-2 font-mono text-[12px] text-gray-400">
+      <span>—</span>
+    </div>
+  );
+}
+
+function CrossIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M18 6L6 18M6 6l12 12" />
+    </svg>
   );
 }
 

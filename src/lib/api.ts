@@ -46,11 +46,12 @@ export const api = {
     ),
   createServer: (body: {
     name: string;
-    url: string;
+    ip: string;
+    port: number;
     hint?: string;
     description?: string;
   }) =>
-    request<{ server: ApiServer }>("/api/servers", {
+    request<{ server: ApiServer; endpoint: ApiEndpoint }>("/api/servers", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -70,4 +71,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  testServer: (serverId: string) =>
+    request<{ endpoints: ApiEndpoint[] }>(
+      `/api/servers/${serverId}/test`,
+      { method: "POST" },
+    ),
+  testEndpoint: (serverId: string, endpointId: string) =>
+    request<{ endpoint: ApiEndpoint }>(
+      `/api/servers/${serverId}/endpoints/${endpointId}/test`,
+      { method: "POST" },
+    ),
 };
