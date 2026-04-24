@@ -104,6 +104,69 @@ authRoute.post("/logout", (c) => {
   return c.body(null, 204);
 });
 
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(8).max(200),
+});
+
+authRoute.post(
+  "/change-password",
+  zValidator("json", changePasswordSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    if (!userId) return c.json({ error: "unauthenticated" }, 401);
+    const { currentPassword, newPassword } = c.req.valid("json");
+
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!user || !user.passwordHash) {
+      return c.json({ error: "unauthenticated" }, 401);
+    }
+
+    const ok = await verifyPassword(currentPassword, user.passwordHash);
+    if (!ok) {
+      return c.json(
+        { error: "invalid_current_password" },
+        401,
+      );
+    }
+
+    const newHash = await hashPassword(newPassword);
+    await db
+      .update(users)
+      .set({ passwordHash: newHash })
+      .where(eq(users.id, userId));
+    return c.json({ ok: true });
+  },
+);
+
+const updateProfileSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+});
+
+authRoute.patch(
+  "/me",
+  zValidator("json", updateProfileSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    if (!userId) return c.json({ error: "unauthenticated" }, 401);
+    const data = c.req.valid("json");
+    const [updated] = await db
+      .update(users)
+      .set({ name: data.name })
+      .where(eq(users.id, userId))
+      .returning({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+      });
+    return c.json({ user: updated });
+  },
+);
+
 authRoute.get("/me", async (c) => {
   const userId = c.get("userId");
   if (!userId) return c.json({ user: null });

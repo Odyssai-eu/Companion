@@ -277,4 +277,17 @@ export const api = {
     }),
   logout: () =>
     request<void>("/api/auth/logout", { method: "POST" }),
+  updateProfile: (body: { name?: string }) =>
+    request<{ user: AuthUser }>("/api/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  changePassword: (body: {
+    currentPassword: string;
+    newPassword: string;
+  }) =>
+    request<{ ok: true }>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };

@@ -6,9 +6,14 @@ import LoginPage from "./pages/auth/LoginPage";
 import SignupPage from "./pages/auth/SignupPage";
 import ProjectPage from "./pages/ProjectPage";
 import AccessibilityPage from "./pages/settings/AccessibilityPage";
+import AppearancePage from "./pages/settings/AppearancePage";
 import ComingSoonPage from "./pages/settings/ComingSoonPage";
+import DevicesPage from "./pages/settings/DevicesPage";
+import EnginesPage from "./pages/settings/EnginesPage";
+import ProfilePage from "./pages/settings/ProfilePage";
 import ServerDetailPage from "./pages/settings/ServerDetailPage";
 import ServersPage from "./pages/settings/ServersPage";
+import ShortcutsPage from "./pages/settings/ShortcutsPage";
 
 export default function App() {
   return (
@@ -53,13 +58,13 @@ export default function App() {
         <Route index element={<Navigate to="/settings/servers" replace />} />
         <Route path="servers" element={<ServersPage />} />
         <Route path="servers/:id" element={<ServerDetailPage />} />
-        <Route path="profile" element={<ComingSoonPage title="Profile" />} />
+        <Route path="profile" element={<ProfilePage />} />
         <Route path="security" element={<ComingSoonPage title="Security" />} />
-        <Route path="engines" element={<ComingSoonPage title="Engines" />} />
-        <Route path="devices" element={<ComingSoonPage title="Devices & sync" />} />
-        <Route path="appearance" element={<ComingSoonPage title="Appearance" />} />
+        <Route path="engines" element={<EnginesPage />} />
+        <Route path="devices" element={<DevicesPage />} />
+        <Route path="appearance" element={<AppearancePage />} />
         <Route path="accessibility" element={<AccessibilityPage />} />
-        <Route path="shortcuts" element={<ComingSoonPage title="Shortcuts" />} />
+        <Route path="shortcuts" element={<ShortcutsPage />} />
         <Route path="add-ons" element={<ComingSoonPage title="Add-ons" />} />
       </Route>
 
