@@ -1,7 +1,16 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const pkg = JSON.parse(
+  readFileSync(resolve(__dirname, "../../package.json"), "utf8"),
+) as { version: string };
 
 const app = new Hono();
 
@@ -10,7 +19,7 @@ app.use("*", logger());
 app.get("/api/health", (c) =>
   c.json({
     status: "ok" as const,
-    version: "0.0.1",
+    version: pkg.version,
     engines: 0,
   }),
 );
