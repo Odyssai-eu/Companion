@@ -159,6 +159,35 @@ export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
+
+export const addons = pgTable(
+  "addons",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    kind: text("kind", { enum: ["core", "plugin", "mcp"] })
+      .notNull()
+      .default("plugin"),
+    description: text("description"),
+    version: text("version"),
+    enabled: boolean("enabled").notNull().default(false),
+    config: jsonb("config").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userKindIdx: index("addons_user_kind_idx").on(t.userId, t.kind),
+  }),
+);
+
+export type Addon = typeof addons.$inferSelect;
 export type NewServer = typeof servers.$inferInsert;
 export type NewEndpoint = typeof endpoints.$inferInsert;
 export type NewMessage = typeof messages.$inferInsert;

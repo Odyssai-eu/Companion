@@ -41,6 +41,19 @@ export type ApiProject = {
   updatedAt: string;
 };
 
+export type ApiAddon = {
+  id: string;
+  userId: string;
+  name: string;
+  kind: "core" | "plugin" | "mcp";
+  description: string | null;
+  version: string | null;
+  enabled: boolean;
+  config: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ApiProjectCategory = {
   id: string;
   name: string;
@@ -262,6 +275,38 @@ export const api = {
     }),
   deleteProject: (id: string) =>
     request<void>(`/api/projects/${id}`, { method: "DELETE" }),
+
+  // Add-ons
+  listAddons: () =>
+    request<{ addons: ApiAddon[] }>("/api/addons"),
+  createAddon: (body: {
+    name: string;
+    kind?: "core" | "plugin" | "mcp";
+    description?: string;
+    version?: string;
+    enabled?: boolean;
+    config?: Record<string, unknown>;
+  }) =>
+    request<{ addon: ApiAddon }>("/api/addons", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateAddon: (
+    id: string,
+    body: Partial<{
+      name: string;
+      description: string | null;
+      version: string | null;
+      enabled: boolean;
+      config: Record<string, unknown> | null;
+    }>,
+  ) =>
+    request<{ addon: ApiAddon }>(`/api/addons/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteAddon: (id: string) =>
+    request<void>(`/api/addons/${id}`, { method: "DELETE" }),
 
   // Auth
   me: () => request<{ user: AuthUser | null }>("/api/auth/me"),

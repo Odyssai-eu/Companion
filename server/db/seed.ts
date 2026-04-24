@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { hashPassword } from "../auth/password";
 import { db } from "./index";
-import { endpoints, servers, users } from "./schema";
+import { addons, endpoints, servers, users } from "./schema";
 
 /**
  * Seed dev data on an empty DB. Idempotent — checks if users table is empty
@@ -104,6 +104,63 @@ export async function seedIfEmpty() {
       node: "ultra-96b",
       ip: "192.168.86.42",
       port: 52415,
+    },
+  ]);
+
+  await db.insert(addons).values([
+    {
+      userId: sophie.id,
+      name: "Admin — Simple",
+      kind: "core",
+      description:
+        "Invite users, manage roles, revoke devices. Installed by default on Team plans.",
+      version: "1.0.0",
+      enabled: true,
+    },
+    {
+      userId: sophie.id,
+      name: "Admin — Extended",
+      kind: "core",
+      description:
+        "Audit log, SSO, usage analytics, billing reconciliation, infra diagnostics à la Starbase. Activate when you need it.",
+      version: "1.0.0",
+      enabled: false,
+    },
+    {
+      userId: sophie.id,
+      name: "Voice Mode",
+      kind: "plugin",
+      description:
+        "Full-duplex audio via VibeVoice-Realtime. EN only for now; falls back to Voxtral batch when the realtime service is down.",
+      version: "0.3.2",
+      enabled: false,
+    },
+    {
+      userId: sophie.id,
+      name: "Audiobook",
+      kind: "plugin",
+      description:
+        "Turn long documents into voiced MP3s. Voxtral TTS with prosody-aware LLM splitting, speed slider, Google Drive delivery.",
+      version: "1.2.0",
+      enabled: false,
+    },
+    {
+      userId: sophie.id,
+      name: "Obsidian",
+      kind: "mcp",
+      description:
+        "Read and write your vault. Appears in the Tools menu with an embedded reader.",
+      version: "0.4.1",
+      enabled: false,
+    },
+    {
+      userId: sophie.id,
+      name: "Notion",
+      kind: "mcp",
+      description:
+        "Query pages, create databases, push conversation summaries into your Notion workspaces.",
+      version: "0.9.0",
+      enabled: false,
     },
   ]);
 

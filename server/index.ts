@@ -9,6 +9,7 @@ import { runMigrations } from "./db/migrate";
 import { seedIfEmpty } from "./db/seed";
 import { requireUser, sessionLoader } from "./middleware/auth";
 import { licenseGate } from "./middleware/license";
+import addonsRoute from "./routes/addons";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
@@ -49,12 +50,14 @@ app.use("/api/conversations/*", licenseGate, requireUser);
 app.use("/api/chat/*", licenseGate, requireUser);
 app.use("/api/projects/*", licenseGate, requireUser);
 app.use("/api/tts/*", licenseGate, requireUser);
+app.use("/api/addons/*", licenseGate, requireUser);
 
 app.route("/api/servers", serversRoute);
 app.route("/api/conversations", conversationsRoute);
 app.route("/api/chat", chatRoute);
 app.route("/api/projects", projectsRoute);
 app.route("/api/tts", ttsRoute);
+app.route("/api/addons", addonsRoute);
 
 if (process.env.NODE_ENV === "production") {
   app.use("/*", serveStatic({ root: "./dist/client" }));

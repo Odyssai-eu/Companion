@@ -6,6 +6,7 @@ import LoginPage from "./pages/auth/LoginPage";
 import SignupPage from "./pages/auth/SignupPage";
 import ProjectPage from "./pages/ProjectPage";
 import AccessibilityPage from "./pages/settings/AccessibilityPage";
+import AddonsPage from "./pages/settings/AddonsPage";
 import AppearancePage from "./pages/settings/AppearancePage";
 import ComingSoonPage from "./pages/settings/ComingSoonPage";
 import DevicesPage from "./pages/settings/DevicesPage";
@@ -65,7 +66,7 @@ export default function App() {
         <Route path="appearance" element={<AppearancePage />} />
         <Route path="accessibility" element={<AccessibilityPage />} />
         <Route path="shortcuts" element={<ShortcutsPage />} />
-        <Route path="add-ons" element={<ComingSoonPage title="Add-ons" />} />
+        <Route path="add-ons" element={<AddonsPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

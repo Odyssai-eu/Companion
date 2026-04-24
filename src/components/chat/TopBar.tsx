@@ -1,5 +1,6 @@
 import type { ApiServer } from "~/lib/api";
 import ModelPicker from "./ModelPicker";
+import ToolsMenu from "./ToolsMenu";
 
 export type ChatStyle = "Creative" | "Normal" | "Code" | "Custom";
 
@@ -11,7 +12,6 @@ type Props = {
   onStyleChange: (style: ChatStyle) => void;
   onTogglePanel: () => void;
   panelOpen: boolean;
-  toolsCount?: number;
 };
 
 export default function TopBar({
@@ -22,7 +22,6 @@ export default function TopBar({
   onStyleChange,
   onTogglePanel,
   panelOpen,
-  toolsCount = 4,
 }: Props) {
   return (
     <header className="flex flex-col border-b border-gray-200 bg-white">
@@ -63,7 +62,7 @@ export default function TopBar({
           >
             <SlidersIcon />
           </button>
-          <ToolsButton count={toolsCount} />
+          <ToolsMenu />
         </div>
         <button
           type="button"
@@ -122,21 +121,6 @@ function StyleTabs({
   );
 }
 
-function ToolsButton({ count }: { count: number }) {
-  return (
-    <button
-      type="button"
-      className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 hover:bg-gray-50"
-    >
-      <WrenchIcon />
-      <span className="text-[12px] font-medium text-ink">Tools</span>
-      <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[rgba(79,179,217,0.16)] px-1.5 font-mono text-[10px] font-medium text-navy">
-        {count}
-      </span>
-    </button>
-  );
-}
-
 function IndicAIPill({ level, label }: { level: number; label: string }) {
   return (
     <div className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1">
@@ -153,23 +137,6 @@ function IndicAIPill({ level, label }: { level: number; label: string }) {
       <span className="font-mono text-[11px] text-gray-600">IndicAI</span>
       <span className="text-[12px] font-medium text-navy">{label}</span>
     </div>
-  );
-}
-
-function WrenchIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-    </svg>
   );
 }
 
