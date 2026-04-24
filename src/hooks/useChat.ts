@@ -6,6 +6,7 @@ export type UIMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  reasoning?: string;
   streaming?: boolean;
   stats?: {
     ttft?: string;
@@ -73,11 +74,13 @@ export function useChat() {
         signal: controller.signal,
         onDelta: (delta) => {
           setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? { ...m, content: m.content + delta }
-                : m,
-            ),
+            prev.map((m) => {
+              if (m.id !== assistantId) return m;
+              if (delta.type === "reasoning") {
+                return { ...m, reasoning: (m.reasoning ?? "") + delta.text };
+              }
+              return { ...m, content: m.content + delta.text };
+            }),
           );
         },
       });

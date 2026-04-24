@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { UIMessage } from "~/hooks/useChat";
 
 export default function Messages({
@@ -68,6 +68,7 @@ function UserBubble({ content }: { content: string }) {
 }
 
 function AssistantMessage({ message }: { message: UIMessage }) {
+  const thinking = !message.content && (message.streaming || !!message.reasoning);
   return (
     <div className="flex gap-4">
       <img
@@ -75,7 +76,13 @@ function AssistantMessage({ message }: { message: UIMessage }) {
         alt="Bear"
         className="h-8 w-8 flex-shrink-0 rounded-full"
       />
-      <div className="flex min-w-0 flex-1 flex-col gap-4">
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
+        {message.reasoning && (
+          <ReasoningBlock
+            reasoning={message.reasoning}
+            thinking={thinking}
+          />
+        )}
         <div className="flex flex-col gap-4 text-[15px] leading-relaxed text-ink">
           {message.content ? (
             message.content.split("\n\n").map((para, i) => (
@@ -84,9 +91,11 @@ function AssistantMessage({ message }: { message: UIMessage }) {
               </p>
             ))
           ) : (
-            <span className="inline-flex items-center gap-2 text-[14px] text-gray-400">
-              <TypingDots />
-            </span>
+            !message.reasoning && (
+              <span className="inline-flex items-center gap-2 text-[14px] text-gray-400">
+                <TypingDots />
+              </span>
+            )
           )}
           {message.streaming && message.content && (
             <span className="inline-block h-4 w-0.5 animate-pulse bg-cyan align-middle" />
@@ -95,6 +104,57 @@ function AssistantMessage({ message }: { message: UIMessage }) {
         {message.stats && !message.streaming && <StatsRow stats={message.stats} />}
         {!message.streaming && message.content && <ActionsRow />}
       </div>
+    </div>
+  );
+}
+
+function ReasoningBlock({
+  reasoning,
+  thinking,
+}: {
+  reasoning: string;
+  thinking: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-lg border border-gray-200 bg-gray-50/60">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left"
+      >
+        <span className="flex items-center gap-2 font-mono text-[11px] tracking-[0.04em] text-gray-600 uppercase">
+          {thinking ? (
+            <>
+              <TypingDots />
+              <span>Thinking</span>
+            </>
+          ) : (
+            <>
+              <span className="h-1.5 w-1.5 rounded-full bg-cyan" />
+              <span>Thought</span>
+            </>
+          )}
+        </span>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`text-gray-400 transition-transform ${open ? "rotate-180" : ""}`}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="border-t border-gray-200 px-4 py-3 font-mono text-[12px] leading-[18px] whitespace-pre-wrap text-gray-600">
+          {reasoning}
+        </div>
+      )}
     </div>
   );
 }
