@@ -161,7 +161,7 @@ function UserFooter() {
   return (
     <div className="flex items-center justify-between gap-2 border-t border-gray-200 px-3 py-3">
       <div className="flex min-w-0 items-center gap-2.5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-cyan to-navy">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-navy">
           <span className="font-mono text-xs font-medium text-white">S</span>
         </div>
         <div className="flex min-w-0 flex-col">
