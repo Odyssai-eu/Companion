@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { UIMessage } from "~/hooks/useChat";
+import { tts } from "~/lib/tts";
 
 export default function Messages({
   messages,
@@ -102,7 +103,9 @@ function AssistantMessage({ message }: { message: UIMessage }) {
           )}
         </div>
         {message.stats && !message.streaming && <StatsRow stats={message.stats} />}
-        {!message.streaming && message.content && <ActionsRow />}
+        {!message.streaming && message.content && (
+          <ActionsRow message={message} />
+        )}
       </div>
     </div>
   );
@@ -191,25 +194,63 @@ function StatsRow({ stats }: { stats: NonNullable<UIMessage["stats"]> }) {
   );
 }
 
-function ActionsRow() {
-  const actions = [
-    { label: "Copy", icon: <CopyIcon /> },
-    { label: "Regenerate", icon: <RegenerateIcon /> },
-    { label: "Speak", icon: <SpeakIcon /> },
-    { label: "Save", icon: <SaveIcon /> },
-  ];
+function ActionsRow({ message }: { message: UIMessage }) {
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+  useEffect(() => tts.subscribe(setSpeakingId), []);
+  const speaking = speakingId === message.id;
+
+  function onCopy() {
+    if (!message.content) return;
+    navigator.clipboard?.writeText(message.content).catch(() => undefined);
+  }
+
+  function onSpeak() {
+    if (speaking) {
+      tts.stop();
+    } else {
+      tts.speak(message.id, message.content).catch(() => undefined);
+    }
+  }
+
+  function onSave() {
+    tts
+      .save(message.content, `thecompai-${message.id.slice(0, 8)}.wav`)
+      .catch(() => undefined);
+  }
+
   return (
     <div className="flex items-center gap-5 text-[12px] text-gray-400">
-      {actions.map((a) => (
-        <button
-          key={a.label}
-          type="button"
-          className="flex items-center gap-1.5 hover:text-ink"
-        >
-          {a.icon}
-          <span>{a.label}</span>
-        </button>
-      ))}
+      <button
+        type="button"
+        onClick={onCopy}
+        className="flex items-center gap-1.5 hover:text-ink"
+      >
+        <CopyIcon />
+        <span>Copy</span>
+      </button>
+      <button
+        type="button"
+        className="flex items-center gap-1.5 hover:text-ink"
+      >
+        <RegenerateIcon />
+        <span>Regenerate</span>
+      </button>
+      <button
+        type="button"
+        onClick={onSpeak}
+        className={`flex items-center gap-1.5 hover:text-ink ${speaking ? "text-cyan" : ""}`}
+      >
+        <SpeakIcon />
+        <span>{speaking ? "Stop" : "Speak"}</span>
+      </button>
+      <button
+        type="button"
+        onClick={onSave}
+        className="flex items-center gap-1.5 hover:text-ink"
+      >
+        <SaveIcon />
+        <span>Save WAV</span>
+      </button>
     </div>
   );
 }
