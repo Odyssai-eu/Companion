@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { UIMessage } from "~/hooks/useChat";
+import { useVoiceMode } from "~/hooks/useVoiceMode";
 import { tts } from "~/lib/tts";
 
 export default function Messages({
@@ -10,10 +11,27 @@ export default function Messages({
   error: string | null;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const voice = useVoiceMode();
+  const spokenIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Auto-speak when Voice mode is on: each assistant message that finished
+  // streaming gets spoken once. We track ids in a ref so React re-renders
+  // don't replay them.
+  useEffect(() => {
+    if (!voice.enabled) return;
+    const last = messages[messages.length - 1];
+    if (!last) return;
+    if (last.role !== "assistant") return;
+    if (last.streaming) return;
+    if (!last.content || last.content.startsWith("⚠︎")) return;
+    if (spokenIdsRef.current.has(last.id)) return;
+    spokenIdsRef.current.add(last.id);
+    tts.speak(last.id, last.content).catch(() => undefined);
+  }, [messages, voice.enabled]);
 
   if (messages.length === 0 && !error) {
     return (

@@ -9,22 +9,36 @@ const ttsRoute = new Hono();
  * we forward and stream the WAV back.
  */
 
+/**
+ * TTS proxy. Targets the mlx-audio server (Blaizzy/mlx-audio) running on
+ * ultra-96b:8892. Default model is Qwen3-TTS-12Hz-1.7B-CustomVoice; default
+ * voice is `vivian`. The server speaks OpenAI-compat /v1/audio/speech with
+ * a `stream: true` flag we always pass through for low latency.
+ */
 const TTS_BASE_URL =
-  process.env.TTS_BASE_URL ?? "http://192.168.86.42:8890";
+  process.env.TTS_BASE_URL ?? "http://192.168.86.42:8892";
+const TTS_DEFAULT_MODEL =
+  process.env.TTS_DEFAULT_MODEL ??
+  "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16";
+const TTS_DEFAULT_VOICE = process.env.TTS_DEFAULT_VOICE ?? "vivian";
 
-ttsRoute.get("/voices", async (c) => {
-  // Voxtral / Kokoro both expose /v1/audio/voices
-  try {
-    const res = await fetch(`${TTS_BASE_URL}/v1/audio/voices`);
-    if (!res.ok) return c.json({ voices: [] });
-    const body = (await res.json()) as { voices?: { id?: string }[] };
-    const voices = (body.voices ?? [])
-      .map((v) => v.id)
-      .filter((id): id is string => !!id);
-    return c.json({ voices });
-  } catch {
-    return c.json({ voices: [] });
-  }
+ttsRoute.get("/voices", async (_c) => {
+  // mlx-audio doesn't expose a generic voices list; return what Qwen3-TTS
+  // CustomVoice supports (the most-deployed model in our setup).
+  return _c.json({
+    model: TTS_DEFAULT_MODEL,
+    voices: [
+      "vivian",
+      "serena",
+      "uncle_fu",
+      "ryan",
+      "aiden",
+      "ono_anna",
+      "sohee",
+      "eric",
+      "dylan",
+    ],
+  });
 });
 
 ttsRoute.post("/speak", async (c) => {
@@ -36,12 +50,14 @@ ttsRoute.post("/speak", async (c) => {
     text,
     voice,
     format = "wav",
-    model = "voxtral",
+    model,
+    speed,
   } = body as {
     text?: string;
     voice?: string;
     format?: "wav" | "mp3";
     model?: string;
+    speed?: number;
   };
   if (!text || typeof text !== "string" || text.trim().length === 0) {
     return c.json({ error: "missing_text" }, 400);
@@ -53,10 +69,12 @@ ttsRoute.post("/speak", async (c) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        model: model ?? TTS_DEFAULT_MODEL,
+        voice: voice ?? TTS_DEFAULT_VOICE,
         input: text.slice(0, 6000),
-        voice: voice ?? "default",
-        model,
         response_format: format,
+        stream: true,
+        ...(speed !== undefined ? { speed } : {}),
       }),
     });
   } catch (err) {
@@ -81,6 +99,56 @@ ttsRoute.post("/speak", async (c) => {
   );
   c.header("Cache-Control", "no-cache");
   return c.body(upstream.body);
+});
+
+/**
+ * ASR proxy. Forwards a multipart upload to mlx-audio's /v1/audio/transcriptions.
+ * The default model is VibeVoice-ASR; the upstream sometimes errors with
+ * "no Stream(gpu, 1) in current thread" — we surface the upstream status as-is.
+ */
+ttsRoute.post("/transcribe", async (c) => {
+  const form = await c.req.formData().catch(() => null);
+  if (!form) return c.json({ error: "invalid_form" }, 400);
+  const file = form.get("file");
+  if (!(file instanceof File)) return c.json({ error: "missing_file" }, 400);
+  const model =
+    (form.get("model") as string | null) ??
+    "mlx-community/VibeVoice-ASR-bf16";
+
+  const upstreamForm = new FormData();
+  upstreamForm.append("model", model);
+  upstreamForm.append("file", file);
+  if (form.get("language")) {
+    upstreamForm.append("language", form.get("language") as string);
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${TTS_BASE_URL}/v1/audio/transcriptions`, {
+      method: "POST",
+      body: upstreamForm,
+    });
+  } catch (err) {
+    return c.json({ error: "asr_unreachable", detail: String(err) }, 502);
+  }
+
+  if (!upstream.ok) {
+    const body = await upstream.text().catch(() => "");
+    return c.json(
+      { error: "asr_error", status: upstream.status, body: body.slice(0, 300) },
+      upstream.status as 400 | 500 | 502,
+    );
+  }
+
+  const text = await upstream.text();
+  // mlx-audio returns plain text; OpenAI returns { text }
+  try {
+    const parsed = JSON.parse(text) as { text?: string };
+    if (parsed?.text) return c.json({ text: parsed.text });
+  } catch {
+    // not JSON, fall through
+  }
+  return c.json({ text });
 });
 
 export default ttsRoute;

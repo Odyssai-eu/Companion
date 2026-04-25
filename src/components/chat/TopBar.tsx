@@ -1,4 +1,5 @@
 import { useIndicAI } from "~/hooks/useIndicAI";
+import { useVoiceMode } from "~/hooks/useVoiceMode";
 import type { ApiServer } from "~/lib/api";
 import ModelPicker from "./ModelPicker";
 import ToolsMenu from "./ToolsMenu";
@@ -25,6 +26,7 @@ export default function TopBar({
   panelOpen,
 }: Props) {
   const indicai = useIndicAI();
+  const voiceMode = useVoiceMode();
   return (
     <header className="flex flex-col border-b border-gray-200 bg-white">
       {/* Line 1 — server + model / IndicAI */}
@@ -71,9 +73,15 @@ export default function TopBar({
         </div>
         <button
           type="button"
+          onClick={voiceMode.toggle}
           aria-label="Voice mode"
-          title="Voice mode"
-          className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-ink transition-colors hover:bg-gray-50"
+          aria-pressed={voiceMode.enabled}
+          title={voiceMode.enabled ? "Voice mode ON — answers spoken" : "Voice mode OFF"}
+          className={`flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${
+            voiceMode.enabled
+              ? "border-cyan bg-cyan text-white"
+              : "border-gray-200 bg-white text-ink hover:bg-gray-50"
+          }`}
         >
           <VoiceIcon />
         </button>

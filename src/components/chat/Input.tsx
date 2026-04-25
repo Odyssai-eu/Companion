@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { voiceInput, type VoiceInputState } from "~/lib/voice-input";
 
 export default function Input({
   onSend,
@@ -14,6 +15,27 @@ export default function Input({
   placeholder?: string;
 }) {
   const [value, setValue] = useState("");
+  const [voice, setVoice] = useState<VoiceInputState>({ status: "idle" });
+
+  useEffect(() => {
+    const unsub = voiceInput.subscribe(setVoice);
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  function startTalk() {
+    if (voice.status === "listening") {
+      voiceInput.stop();
+      return;
+    }
+    voiceInput.start((text) => {
+      if (text) onSend(text);
+    });
+  }
+
+  const listening = voice.status === "listening";
+  const interim = listening ? voice.interim : "";
 
   function submit() {
     if (!value.trim() || sending || disabled) return;
@@ -40,22 +62,32 @@ export default function Input({
           <AttachIcon />
         </button>
         <textarea
-          value={value}
+          value={listening ? interim : value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKeyDown}
-          disabled={disabled}
+          disabled={disabled || listening}
           rows={1}
-          placeholder={placeholder ?? "Ask your server anything..."}
+          placeholder={
+            listening
+              ? "Listening… speak now, click Stop when done."
+              : placeholder ?? "Ask your server anything..."
+          }
           className="flex-1 resize-none bg-transparent text-[15px] leading-[22px] text-ink outline-none placeholder:text-gray-400 disabled:opacity-50"
           style={{ maxHeight: "200px" }}
         />
         <button
           type="button"
-          className="mb-0.5 flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-[12px] font-medium text-ink hover:bg-gray-50 disabled:opacity-50"
-          disabled={disabled}
+          onClick={startTalk}
+          disabled={disabled || sending}
+          title={listening ? "Stop listening" : "Talk (push-to-talk)"}
+          className={`mb-0.5 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-50 ${
+            listening
+              ? "border-cyan bg-[rgba(79,179,217,0.12)] text-cyan"
+              : "border-gray-200 text-ink hover:bg-gray-50"
+          }`}
         >
           <MicIcon />
-          Talk
+          {listening ? "Stop" : "Talk"}
         </button>
 
         {sending ? (
