@@ -226,6 +226,35 @@ conversationsRoute.delete("/:id", async (c) => {
   return c.body(null, 204);
 });
 
+// Truncate the conversation back to (and not including) the given message.
+// Used by Edit and Regenerate so we don't keep stale assistant replies in the
+// log when the user backtracks.
+conversationsRoute.delete("/:id/messages/from/:messageId", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const messageId = c.req.param("messageId");
+  const [conversation] = await db
+    .select({ userId: conversations.userId })
+    .from(conversations)
+    .where(eq(conversations.id, id))
+    .limit(1);
+  if (!conversation || conversation.userId !== userId) {
+    return c.json({ error: "not_found" }, 404);
+  }
+  const [pivot] = await db
+    .select({ createdAt: messages.createdAt })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .limit(1);
+  if (!pivot) return c.json({ error: "not_found" }, 404);
+  await db
+    .delete(messages)
+    .where(
+      sql`${messages.conversationId} = ${id} AND ${messages.createdAt} >= ${pivot.createdAt}`,
+    );
+  return c.body(null, 204);
+});
+
 conversationsRoute.post(
   "/:id/messages",
   zValidator("json", appendMessageSchema),

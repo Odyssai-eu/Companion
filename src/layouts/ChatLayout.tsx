@@ -1,17 +1,49 @@
 import { useState } from "react";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import InferencePanel from "~/components/chat/InferencePanel";
 import Input from "~/components/chat/Input";
 import Messages from "~/components/chat/Messages";
 import Sidebar from "~/components/chat/Sidebar";
 import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
 import { STYLE_PRESETS, useChat } from "~/hooks/useChat";
+import { useGlobalShortcuts } from "~/hooks/useGlobalShortcuts";
+import { useVoiceMode } from "~/hooks/useVoiceMode";
+import { voiceInput } from "~/lib/voice-input";
 
 export default function ChatLayout() {
   const { id } = useParams<{ id?: string }>();
   const chat = useChat({ conversationId: id });
   const [style, setStyle] = useState<ChatStyle>("Normal");
   const [panelOpen, setPanelOpen] = useState(false);
+  const navigate = useNavigate();
+  const voiceMode = useVoiceMode();
+
+  useGlobalShortcuts({
+    onNewChat: () => navigate("/"),
+    onFocusSearch: () => {
+      // Focus the sidebar search input by selector — simpler than threading
+      // a ref through props.
+      const el = document.querySelector<HTMLInputElement>(
+        'aside input[placeholder="Search conversations"]',
+      );
+      el?.focus();
+      el?.select();
+    },
+    onStop: () => {
+      if (chat.sending) chat.cancel();
+    },
+    onToggleVoiceMode: () => voiceMode.toggle(),
+    onOpenSettings: () => navigate("/settings/servers"),
+    onPushToTalkChange: (active) => {
+      if (active) {
+        voiceInput.start((text) => {
+          if (text) chat.sendMessage(text, []);
+        });
+      } else {
+        voiceInput.stop();
+      }
+    },
+  });
 
   function onStyleChange(next: ChatStyle) {
     setStyle(next);
@@ -26,7 +58,10 @@ export default function ChatLayout() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-      <Sidebar activeConversationId={id ?? null} />
+      <Sidebar
+        activeConversationId={id ?? null}
+        streamingConversationId={chat.sending ? id ?? null : null}
+      />
       <main className="flex flex-1 flex-col bg-gray-50">
         <TopBar
           activeServer={chat.activeServer}
@@ -48,7 +83,12 @@ export default function ChatLayout() {
             onClose={() => setPanelOpen(false)}
           />
         )}
-        <Messages messages={chat.messages} error={chat.error} />
+        <Messages
+          messages={chat.messages}
+          error={chat.error}
+          onRegenerate={chat.regenerate}
+          onEdit={chat.editAndResend}
+        />
         <Input
           onSend={chat.sendMessage}
           onCancel={chat.cancel}

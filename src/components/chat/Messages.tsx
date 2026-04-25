@@ -13,9 +13,13 @@ import { tts } from "~/lib/tts";
 export default function Messages({
   messages,
   error,
+  onRegenerate,
+  onEdit,
 }: {
   messages: UIMessage[];
   error: string | null;
+  onRegenerate?: (assistantId: string) => void;
+  onEdit?: (messageId: string, newText: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const voice = useVoiceMode();
@@ -70,9 +74,19 @@ export default function Messages({
         )}
         {messages.map((m) =>
           m.role === "user" ? (
-            <UserBubble key={m.id} content={m.content} />
+            <UserBubble
+              key={m.id}
+              content={m.content}
+              onEdit={onEdit ? (next) => onEdit(m.id, next) : undefined}
+            />
           ) : (
-            <AssistantMessage key={m.id} message={m} />
+            <AssistantMessage
+              key={m.id}
+              message={m}
+              onRegenerate={
+                onRegenerate ? () => onRegenerate(m.id) : undefined
+              }
+            />
           ),
         )}
         <div ref={bottomRef} />
@@ -81,11 +95,95 @@ export default function Messages({
   );
 }
 
-function UserBubble({ content }: { content: string }) {
+function UserBubble({
+  content,
+  onEdit,
+}: {
+  content: string;
+  onEdit?: (next: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(content);
+
+  if (editing && onEdit) {
+    return (
+      <div className="flex justify-end">
+        <div className="flex w-[85%] flex-col gap-2 rounded-2xl border border-cyan bg-white p-3">
+          <textarea
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                if (draft.trim()) {
+                  onEdit(draft.trim());
+                  setEditing(false);
+                }
+              }
+              if (e.key === "Escape") {
+                setDraft(content);
+                setEditing(false);
+              }
+            }}
+            rows={Math.max(2, draft.split("\n").length)}
+            className="w-full resize-none bg-transparent text-[15px] leading-relaxed text-ink outline-none"
+          />
+          <div className="flex items-center justify-end gap-2 text-[12px]">
+            <span className="mr-auto font-mono text-[11px] text-gray-400">
+              <kbd>⌘</kbd> + <kbd>⏎</kbd> to send · <kbd>Esc</kbd> to cancel
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(content);
+                setEditing(false);
+              }}
+              className="text-gray-500 hover:text-ink"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!draft.trim()) return;
+                onEdit(draft.trim());
+                setEditing(false);
+              }}
+              className="rounded-md bg-cyan px-3 py-1 font-medium text-white hover:opacity-95"
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl bg-[rgba(79,179,217,0.14)] px-5 py-4">
-        <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
+    <div className="group flex justify-end">
+      <div className="relative max-w-[85%] rounded-2xl bg-[rgba(79,179,217,0.14)] px-5 py-4">
+        {onEdit && (
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(content);
+              setEditing(true);
+            }}
+            title="Edit message"
+            className="absolute -top-2 -left-2 hidden h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm hover:text-ink group-hover:flex"
+          >
+            <PencilIcon />
+          </button>
+        )}
+        <p
+          className="text-[15px] leading-relaxed whitespace-pre-wrap text-ink"
+          onDoubleClick={() => {
+            if (!onEdit) return;
+            setDraft(content);
+            setEditing(true);
+          }}
+        >
           {content}
         </p>
       </div>
@@ -93,7 +191,13 @@ function UserBubble({ content }: { content: string }) {
   );
 }
 
-function AssistantMessage({ message }: { message: UIMessage }) {
+function AssistantMessage({
+  message,
+  onRegenerate,
+}: {
+  message: UIMessage;
+  onRegenerate?: () => void;
+}) {
   const thinking = !message.content && (message.streaming || !!message.reasoning);
   return (
     <div className="flex gap-4">
@@ -132,7 +236,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
         {message.stats && !message.streaming && <StatsRow stats={message.stats} />}
         {!message.streaming && message.content && (
           <>
-            <ActionsRow message={message} />
+            <ActionsRow message={message} onRegenerate={onRegenerate} />
             <CodeBlockPills message={message} />
           </>
         )}
@@ -257,7 +361,13 @@ function StatsRow({ stats }: { stats: NonNullable<UIMessage["stats"]> }) {
   );
 }
 
-function ActionsRow({ message }: { message: UIMessage }) {
+function ActionsRow({
+  message,
+  onRegenerate,
+}: {
+  message: UIMessage;
+  onRegenerate?: () => void;
+}) {
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   useEffect(() => {
     const unsub = tts.subscribe((s) => setSpeakingId(s.speakingId));
@@ -321,6 +431,17 @@ function ActionsRow({ message }: { message: UIMessage }) {
         <SaveIcon />
         <span>Save</span>
       </button>
+      {onRegenerate && (
+        <button
+          type="button"
+          onClick={onRegenerate}
+          className="flex items-center gap-1.5 hover:text-ink"
+          title="Regenerate this answer"
+        >
+          <RegenerateIcon />
+          <span>Regenerate</span>
+        </button>
+      )}
       <button
         type="button"
         onClick={onSaveWav}
@@ -406,6 +527,43 @@ function CopyIcon() {
     >
       <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function RegenerateIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+      <path d="M3 21v-5h5" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
     </svg>
   );
 }

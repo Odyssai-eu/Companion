@@ -140,6 +140,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
   const loadedIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Holds the latest sendMessage closure so regenerate/editAndResend (defined
+  // earlier) can call it without circular deps.
+  const sendMessageRef = useRef<
+    ((text: string, attachments?: Attachment[]) => Promise<void>) | null
+  >(null);
 
   // Load servers once
   useEffect(() => {
@@ -366,9 +371,66 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     ],
   );
 
+  // Keep the ref in sync so regenerate / editAndResend can invoke the
+  // latest closure without listing it as a dep (which would loop).
+  sendMessageRef.current = sendMessage;
+
   const cancel = useCallback(() => {
     abortRef.current?.abort();
   }, []);
+
+  /**
+   * Drop the assistant reply for `assistantId` (and any later turns), then
+   * resend the most recent user message to get a fresh answer.
+   */
+  const regenerate = useCallback(
+    async (assistantId: string) => {
+      const idx = messages.findIndex((m) => m.id === assistantId);
+      if (idx <= 0 || sending) return;
+      // Find the user message that produced this assistant reply
+      let userIdx = idx - 1;
+      while (userIdx >= 0 && messages[userIdx].role !== "user") userIdx--;
+      if (userIdx < 0) return;
+      const userText = messages[userIdx].content;
+      const trimmed = messages.slice(0, userIdx);
+      setMessages(trimmed);
+      const convId = conversationId ?? conversation?.id ?? null;
+      if (convId) {
+        try {
+          await api.truncateConversationFrom(convId, assistantId);
+        } catch {
+          // best effort — server may have already deleted, or the id is local
+        }
+      }
+      // Re-send. NB: we pass [] for attachments because the original
+      // attachment data (image data URLs) only lived in-flight, not in DB.
+      await sendMessageRef.current?.(userText, []);
+    },
+    [messages, sending, conversationId, conversation?.id],
+  );
+
+  /**
+   * Edit a previous user message and re-run the conversation from there.
+   */
+  const editAndResend = useCallback(
+    async (messageId: string, newText: string) => {
+      const idx = messages.findIndex((m) => m.id === messageId);
+      if (idx < 0 || sending) return;
+      if (messages[idx].role !== "user") return;
+      const trimmed = messages.slice(0, idx);
+      setMessages(trimmed);
+      const convId = conversationId ?? conversation?.id ?? null;
+      if (convId) {
+        try {
+          await api.truncateConversationFrom(convId, messageId);
+        } catch {
+          // best effort
+        }
+      }
+      await sendMessageRef.current?.(newText, []);
+    },
+    [messages, sending, conversationId, conversation?.id],
+  );
 
   const startNew = useCallback(() => {
     navigate("/");
@@ -388,6 +450,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     inference,
     setInference: updateInference,
     sendMessage,
+    regenerate,
+    editAndResend,
     cancel,
     startNew,
   };

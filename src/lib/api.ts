@@ -267,6 +267,11 @@ export const api = {
       `/api/conversations/${conversationId}/messages`,
       { method: "POST", body: JSON.stringify(body) },
     ),
+  truncateConversationFrom: (conversationId: string, messageId: string) =>
+    request<void>(
+      `/api/conversations/${conversationId}/messages/from/${messageId}`,
+      { method: "DELETE" },
+    ),
   exportConversationUrl: (id: string) =>
     `/api/conversations/${id}/export.md`,
   exportConversationJsonUrl: (id: string) =>

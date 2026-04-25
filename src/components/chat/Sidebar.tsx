@@ -6,9 +6,14 @@ import Wordmark from "../Wordmark";
 
 type Props = {
   activeConversationId: string | null;
+  /** Conversation currently streaming a reply, if any. */
+  streamingConversationId?: string | null;
 };
 
-export default function Sidebar({ activeConversationId }: Props) {
+export default function Sidebar({
+  activeConversationId,
+  streamingConversationId,
+}: Props) {
   const [conversations, setConversations] = useState<ApiConversation[]>([]);
   const [projectsList, setProjectsList] = useState<ApiProject[]>([]);
   const [search, setSearch] = useState("");
@@ -112,6 +117,7 @@ export default function Sidebar({ activeConversationId }: Props) {
                 key={c.id}
                 conversation={c}
                 active={c.id === activeConversationId}
+                streaming={c.id === streamingConversationId}
                 projects={projectsList}
                 onChange={refresh}
               />
@@ -242,11 +248,13 @@ function PlusIcon() {
 function ConversationRow({
   conversation,
   active,
+  streaming,
   projects,
   onChange,
 }: {
   conversation: ApiConversation;
   active: boolean;
+  streaming?: boolean;
   projects: ApiProject[];
   onChange: () => void;
 }) {
@@ -344,6 +352,12 @@ function ConversationRow({
               active ? "font-medium" : "font-normal"
             }`}
           >
+            {streaming && (
+              <span
+                className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500"
+                title="Streaming reply"
+              />
+            )}
             {conversation.pinned && (
               <span className="mr-0.5 text-[10px] text-amber-500">📌</span>
             )}
