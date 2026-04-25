@@ -9,6 +9,10 @@ import {
 } from "~/lib/file-export";
 import { renderMarkdown } from "~/lib/markdown";
 import { tts } from "~/lib/tts";
+import SpaceInvaders from "./SpaceInvaders";
+
+// ⌥⇧A ⌥⇧T ⌥⇧A ⌥⇧R ⌥⇧I
+const ATARI_SEQ = ["KeyA", "KeyT", "KeyA", "KeyR", "KeyI"];
 
 export default function Messages({
   messages,
@@ -24,6 +28,25 @@ export default function Messages({
   const bottomRef = useRef<HTMLDivElement>(null);
   const voice = useVoiceMode();
   const spokenIdsRef = useRef<Set<string>>(new Set());
+
+  // Easter egg — Space Invaders triggered by ⌥⇧ATARI on empty chat
+  const [easterEgg, setEasterEgg] = useState(false);
+  const eggBuf = useRef<string[]>([]);
+
+  useEffect(() => {
+    if (messages.length > 0) return;
+    const handler = (e: KeyboardEvent) => {
+      if (!e.altKey || !e.shiftKey) return;
+      eggBuf.current.push(e.code);
+      if (eggBuf.current.length > ATARI_SEQ.length) eggBuf.current.shift();
+      if (JSON.stringify(eggBuf.current) === JSON.stringify(ATARI_SEQ)) {
+        setEasterEgg(true);
+        eggBuf.current = [];
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [messages.length]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -46,7 +69,10 @@ export default function Messages({
 
   if (messages.length === 0 && !error) {
     return (
-      <div className="flex flex-1 items-center justify-center px-8">
+      <div className="flex flex-1 flex-col items-center justify-center gap-6 px-8">
+        {easterEgg && (
+          <SpaceInvaders onClose={() => setEasterEgg(false)} />
+        )}
         <div className="flex flex-col items-center gap-3 text-center">
           <img
             src="/logo/icon-192.png"
@@ -215,13 +241,7 @@ function AssistantMessage({
         )}
         <div className="text-[15px] leading-relaxed text-ink">
           {message.content ? (
-            <div
-              className="md-body"
-              // Sanitised in renderMarkdown — see src/lib/markdown.ts
-              dangerouslySetInnerHTML={{
-                __html: renderMarkdown(message.content),
-              }}
-            />
+            <MarkdownBody content={message.content} />
           ) : (
             !message.reasoning && (
               <span className="inline-flex items-center gap-2 text-[14px] text-gray-400">
@@ -242,6 +262,54 @@ function AssistantMessage({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Renders markdown HTML (from renderMarkdown) and wires copy buttons.
+ * Using a ref + useEffect so we can attach native DOM listeners to the
+ * .copy-code-btn elements that are baked into the sanitised HTML.
+ */
+function MarkdownBody({ content }: { content: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const html = useMemo(() => renderMarkdown(content), [content]);
+
+  // Attach copy-button listeners every time the rendered HTML changes
+  // (i.e. while streaming new tokens).
+  useEffect(() => {
+    const container = ref.current;
+    if (!container) return;
+
+    const buttons = container.querySelectorAll<HTMLButtonElement>(".copy-code-btn");
+    const cleanups: (() => void)[] = [];
+
+    buttons.forEach((btn) => {
+      const codeEl = btn
+        .closest(".code-block")
+        ?.querySelector("code");
+
+      const handler = () => {
+        const text = codeEl?.textContent ?? "";
+        navigator.clipboard?.writeText(text).then(() => {
+          btn.textContent = "Copied!";
+          setTimeout(() => { btn.textContent = "Copy"; }, 1800);
+        }).catch(() => undefined);
+      };
+
+      btn.addEventListener("click", handler);
+      cleanups.push(() => btn.removeEventListener("click", handler));
+    });
+
+    return () => cleanups.forEach((fn) => fn());
+  }, [html]);
+
+  return (
+    <div
+      ref={ref}
+      className="md-body"
+      // Sanitised in renderMarkdown — see src/lib/markdown.ts
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }
 
