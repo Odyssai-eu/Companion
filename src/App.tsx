@@ -10,6 +10,7 @@ import AddonsPage from "./pages/settings/AddonsPage";
 import AppearancePage from "./pages/settings/AppearancePage";
 import ComingSoonPage from "./pages/settings/ComingSoonPage";
 import DevicesPage from "./pages/settings/DevicesPage";
+import HelpPage from "./pages/settings/HelpPage";
 import ProfilePage from "./pages/settings/ProfilePage";
 import ServerDetailPage from "./pages/settings/ServerDetailPage";
 import ServersPage from "./pages/settings/ServersPage";
@@ -66,6 +67,7 @@ export default function App() {
         <Route path="accessibility" element={<AccessibilityPage />} />
         <Route path="shortcuts" element={<ShortcutsPage />} />
         <Route path="add-ons" element={<AddonsPage />} />
+        <Route path="help" element={<HelpPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

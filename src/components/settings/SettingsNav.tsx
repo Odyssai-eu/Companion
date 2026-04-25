@@ -30,6 +30,10 @@ const sections: NavSection[] = [
     title: "Extensions",
     items: [{ to: "/settings/add-ons", label: "Add-ons" }],
   },
+  {
+    title: "Reference",
+    items: [{ to: "/settings/help", label: "Help" }],
+  },
 ];
 
 export default function SettingsNav() {
