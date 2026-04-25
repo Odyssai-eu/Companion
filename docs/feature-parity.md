@@ -1,6 +1,37 @@
 # Feature parity — ExoScopy → Thecomp.ai
 
-Audit Saturday 2026-04-25. Version Thecomp.ai : v0.0.38.
+Audit initial Saturday 2026-04-25 sur v0.0.38. **Mis à jour le même jour sur v0.0.45** : la majorité des régressions P0/P1/P2 est livrée.
+
+## Quick status board
+
+| Catégorie | État au 2026-04-25 |
+|---|---|
+| Markdown rendering | ✅ marked + sanitisation |
+| Code blocks export (.md, individual files, .zip) | ✅ |
+| Attachments (text/code, images, PDF up to 20p) | ✅ |
+| Drag & drop + paste image | ✅ |
+| Edit user message | ✅ pencil + Cmd+Enter, server-side truncation |
+| Regenerate | ✅ |
+| Sidebar search | ✅ |
+| Active stream indicator | ✅ pulse vert dans la liste |
+| Style presets (Creative/Normal/Code/Custom) | ✅ |
+| System prompt library (saved prompts, export/import) | ✅ |
+| Detailed stats (prompt/completion/reasoning tokens, chunks, duration) + Copy | ✅ |
+| Hold Space push-to-talk | ✅ |
+| Global keyboard shortcuts (Cmd+K/N/, ⇧V, Esc) | ✅ |
+| Vision/tools capability badges | ✅ heuristique regex |
+| Mobile drawer + responsive paddings | ✅ |
+| Help page | ✅ (Settings → Reference → Help) |
+| Strip markdown avant TTS | ✅ déjà en place |
+| TTS Voxtral streaming WAV | ✅ (upgrade vs ExoScopy speechSynthesis) |
+| Project view = sidebar identique au chat | ✅ |
+| Auto-fill systemPrompt depuis category | ✅ déjà en place dans ProjectPage |
+| Cost tracking OpenRouter | 🟡 marker "X tok · cloud" — pas de $ table |
+| Web tools (web_search, web_fetch) | 🔴 hors P3 (gros chantier) |
+| Magic link / Password reset / OAuth | 🔴 P3 (besoin SMTP / creds) |
+| MCP execution | 🔴 P3 (gros chantier) |
+| Customisable shortcuts | 🔴 low value, pas prio |
+| Cluster monitoring SSH / Model matrix / Download HF | ⚪ Hors scope |
 
 **Légende** :
 - ✅ Présent et fonctionnel dans Thecomp.ai
