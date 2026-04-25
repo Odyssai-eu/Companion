@@ -32,14 +32,10 @@ export default function TopBar({
       {/* Line 1 — server + model / IndicAI */}
       <div className="flex items-center justify-between gap-3 px-6 pt-3 pb-1.5">
         <div className="flex items-center gap-3">
-          {activeServer ? (
-            <EngineBadge
-              engine={activeServer.name}
-              detail={engineKindLabel(activeServer.engineKind)}
-            />
-          ) : (
-            <EngineBadge engine="No server" detail="Add one in Settings" />
-          )}
+          <EngineBadge
+            engine={activeServer ? activeServer.name : "No server"}
+            connected={!!activeServer}
+          />
           <ModelPicker selected={modelSelection} onChange={onModelChange} />
         </div>
         <IndicAIPill
@@ -94,18 +90,23 @@ export default function TopBar({
   );
 }
 
-function engineKindLabel(kind: "openai-compat" | "anthropic") {
-  return kind === "anthropic" ? "Anthropic" : "OpenAI-compat";
-}
-
-function EngineBadge({ engine, detail }: { engine: string; detail: string }) {
+function EngineBadge({
+  engine,
+  connected,
+}: {
+  engine: string;
+  connected: boolean;
+}) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5">
-      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-      <span className="max-w-[200px] truncate font-mono text-[12px] font-medium text-ink">
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${
+          connected ? "bg-emerald-500" : "bg-gray-300"
+        }`}
+      />
+      <span className="max-w-[220px] truncate font-mono text-[12px] font-medium text-ink">
         {engine}
       </span>
-      <span className="font-mono text-[11px] text-gray-400">· {detail}</span>
     </div>
   );
 }

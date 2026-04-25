@@ -6,6 +6,10 @@ export type SelectedModel = {
   serverId: string | null; // null when "auto"
 };
 
+type Source = "local" | "cloud";
+
+const SOURCE_KEY = "thecompai:modelSource";
+
 type Props = {
   selected: SelectedModel;
   onChange: (next: SelectedModel) => void;
@@ -17,7 +21,18 @@ export default function ModelPicker({ selected, onChange }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [source, setSource] = useState<Source>(() => {
+    if (typeof window === "undefined") return "local";
+    const stored = window.localStorage.getItem(SOURCE_KEY);
+    return stored === "cloud" ? "cloud" : "local";
+  });
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(SOURCE_KEY, source);
+    }
+  }, [source]);
 
   useEffect(() => {
     if (!open) return;
@@ -51,29 +66,52 @@ export default function ModelPicker({ selected, onChange }: Props) {
       .finally(() => setLoading(false));
   }
 
-  // Group by server, with deterministic order = order of first appearance.
-  const groups = useMemo(() => {
+  const counts = useMemo(() => {
+    if (!models) return { local: 0, cloud: 0 };
+    return {
+      local: models.filter((m) => m.source === "local").length,
+      cloud: models.filter((m) => m.source === "cloud").length,
+    };
+  }, [models]);
+
+  const visible = useMemo(() => {
     if (!models) return [];
+    return models.filter((m) => m.source === source);
+  }, [models, source]);
+
+  // Local models: group by server. Cloud models: group by provider (if known).
+  const groups = useMemo(() => {
     const map = new Map<
       string,
-      { serverId: string; serverName: string; loaded: ApiGlobalModel[]; registered: ApiGlobalModel[] }
+      {
+        key: string;
+        label: string;
+        loaded: ApiGlobalModel[];
+        registered: ApiGlobalModel[];
+      }
     >();
-    for (const m of models) {
-      const key = m.serverId;
+    for (const m of visible) {
+      const key =
+        source === "local"
+          ? m.serverId
+          : m.provider ?? m.serverName.toLowerCase();
+      const label =
+        source === "local"
+          ? m.serverName
+          : m.provider
+            ? capitalize(m.provider)
+            : m.serverName;
       if (!map.has(key)) {
-        map.set(key, {
-          serverId: m.serverId,
-          serverName: m.serverName,
-          loaded: [],
-          registered: [],
-        });
+        map.set(key, { key, label, loaded: [], registered: [] });
       }
       const group = map.get(key)!;
       if (m.loaded) group.loaded.push(m);
       else group.registered.push(m);
     }
-    return Array.from(map.values());
-  }, [models]);
+    return Array.from(map.values()).sort((a, b) =>
+      a.label.localeCompare(b.label),
+    );
+  }, [visible, source]);
 
   const totalLoaded = groups.reduce((n, g) => n + g.loaded.length, 0);
   const totalRegistered = groups.reduce((n, g) => n + g.registered.length, 0);
@@ -81,8 +119,9 @@ export default function ModelPicker({ selected, onChange }: Props) {
   const selectedDisplay =
     selected.id === "auto" || !selected.id
       ? "auto"
-      : models?.find((m) => m.id === selected.id && m.serverId === selected.serverId)?.name ??
-        stripPrefix(selected.id);
+      : models?.find(
+          (m) => m.id === selected.id && m.serverId === selected.serverId,
+        )?.name ?? stripPrefix(selected.id);
 
   return (
     <div ref={ref} className="relative">
@@ -99,21 +138,21 @@ export default function ModelPicker({ selected, onChange }: Props) {
 
       {open && (
         <div className="absolute top-full left-0 z-40 mt-1 w-[400px] rounded-xl border border-gray-200 bg-white shadow-[0_10px_30px_rgba(10,10,10,0.12)]">
-          <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
-            <div className="flex items-center gap-3 text-[11px] font-mono tracking-[0.08em] text-gray-400 uppercase">
-              <span>Models</span>
-              {totalLoaded > 0 && (
-                <span className="text-emerald-600">{totalLoaded} loaded</span>
-              )}
-              {totalRegistered > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setShowAll((v) => !v)}
-                  className="normal-case text-gray-500 hover:text-ink"
-                >
-                  {showAll ? "Hide registered" : `+ ${totalRegistered} registered`}
-                </button>
-              )}
+          {/* Source toggle */}
+          <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-2">
+            <div className="flex gap-0.5 rounded-lg border border-gray-200 bg-white p-0.5">
+              <SourceTab
+                label="Local"
+                count={counts.local}
+                active={source === "local"}
+                onClick={() => setSource("local")}
+              />
+              <SourceTab
+                label="Cloud"
+                count={counts.cloud}
+                active={source === "cloud"}
+                onClick={() => setSource("cloud")}
+              />
             </div>
             <button
               type="button"
@@ -124,7 +163,25 @@ export default function ModelPicker({ selected, onChange }: Props) {
             </button>
           </div>
 
-          <div className="max-h-[400px] overflow-y-auto py-1">
+          {/* Counts strip */}
+          <div className="flex items-center gap-3 border-b border-gray-100 px-3 py-1.5 font-mono text-[11px] tracking-[0.08em] text-gray-400 uppercase">
+            <span>Models</span>
+            {totalLoaded > 0 && (
+              <span className="text-emerald-600">{totalLoaded} loaded</span>
+            )}
+            {totalRegistered > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowAll((v) => !v)}
+                className="normal-case text-gray-500 hover:text-ink"
+              >
+                {showAll ? "Hide registered" : `+ ${totalRegistered} registered`}
+              </button>
+            )}
+          </div>
+
+          {/* List */}
+          <div className="max-h-[420px] overflow-y-auto py-1">
             <button
               type="button"
               onClick={() => {
@@ -153,9 +210,12 @@ export default function ModelPicker({ selected, onChange }: Props) {
               const visible = showAll ? [...g.loaded, ...g.registered] : g.loaded;
               if (visible.length === 0) return null;
               return (
-                <div key={g.serverId} className="border-t border-gray-100 first:border-t-0">
+                <div
+                  key={g.key}
+                  className="border-t border-gray-100 first:border-t-0"
+                >
                   <div className="px-3 py-1.5 font-sans text-[10px] font-medium tracking-[0.08em] text-gray-400 uppercase">
-                    {g.serverName}
+                    {g.label}
                   </div>
                   {visible.map((m) => {
                     const isActive =
@@ -195,7 +255,9 @@ export default function ModelPicker({ selected, onChange }: Props) {
 
             {!loading && models !== null && groups.length === 0 && (
               <div className="px-3 py-6 text-center font-mono text-[11px] text-gray-400">
-                No models on any server.
+                {source === "cloud"
+                  ? "No cloud server. Add OpenRouter or Anthropic in Settings."
+                  : "No local server. Add an exo or Ollama server in Settings."}
               </div>
             )}
           </div>
@@ -209,6 +271,44 @@ export default function ModelPicker({ selected, onChange }: Props) {
       )}
     </div>
   );
+}
+
+function SourceTab({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-[12px] transition-colors ${
+        active
+          ? "bg-gray-50 font-medium text-ink"
+          : "font-normal text-gray-400 hover:text-ink"
+      }`}
+    >
+      {label}
+      <span
+        className={`font-mono text-[10px] ${
+          active ? "text-gray-500" : "text-gray-400"
+        }`}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function capitalize(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function stripPrefix(id: string): string {

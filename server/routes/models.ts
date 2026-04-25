@@ -2,6 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db/index";
 import { endpoints, servers } from "../db/schema";
+import { isCloudHost } from "../lib/url";
 import { listModelsForServer, type ModelEntry } from "./servers";
 
 const modelsRoute = new Hono();
@@ -13,6 +14,8 @@ export type GlobalModel = {
   serverId: string;
   serverName: string;
   engineKind: "openai-compat" | "anthropic";
+  source: "local" | "cloud";
+  provider: string | null;
 };
 
 /**
@@ -46,6 +49,12 @@ modelsRoute.get("/", async (c) => {
       } catch {
         // Server unreachable — silently skip; UI still sees other servers.
       }
+      // Classify the server: cloud (OpenRouter/Anthropic/OpenAI) vs local.
+      const primary = eps.find((e) => e.role === "primary") ?? eps[0];
+      const cloud =
+        s.engineKind === "anthropic" ||
+        (primary ? isCloudHost(primary.ip) : false);
+
       return modelsList.map<GlobalModel>((m) => ({
         id: m.id,
         name: m.name,
@@ -53,6 +62,8 @@ modelsRoute.get("/", async (c) => {
         serverId: s.id,
         serverName: s.name,
         engineKind: s.engineKind as "openai-compat" | "anthropic",
+        source: cloud ? "cloud" : "local",
+        provider: cloud ? extractProvider(m.id) : null,
       }));
     }),
   );
@@ -66,5 +77,19 @@ modelsRoute.get("/", async (c) => {
 
   return c.json({ models: flat });
 });
+
+/**
+ * For cloud models like `anthropic/claude-3-haiku` or `openai/gpt-4o`, the
+ * id's first segment is the provider name. Local models tend to have
+ * `mlx-community/...`, `microsoft/...`, etc. — the maker, which we don't want
+ * to expose as a "provider" group on the cloud picker. So we only call out
+ * the segment when the source is cloud.
+ */
+function extractProvider(id: string): string | null {
+  const slash = id.indexOf("/");
+  if (slash === -1) return null;
+  const head = id.slice(0, slash).trim().toLowerCase();
+  return head || null;
+}
 
 export default modelsRoute;

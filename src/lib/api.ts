@@ -25,6 +25,8 @@ export type ApiGlobalModel = {
   serverId: string;
   serverName: string;
   engineKind: "openai-compat" | "anthropic";
+  source: "local" | "cloud";
+  provider: string | null;
 };
 
 export type ApiConversation = {
