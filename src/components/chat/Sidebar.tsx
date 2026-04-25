@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { useAuth } from "~/hooks/useAuth";
 import { api, type ApiConversation, type ApiProject } from "~/lib/api";
 import Wordmark from "../Wordmark";
 
 type Props = {
   activeConversationId: string | null;
+  /** Active project id. When set, the sidebar filters conversations to that
+   *  project; when null, only orphan conversations (no project) are shown.
+   *  This mirrors ExoScopy's behaviour. */
+  activeProjectId: string | null;
   /** Conversation currently streaming a reply, if any. */
   streamingConversationId?: string | null;
   /** Mobile drawer open/closed. Desktop ignores this. */
@@ -15,6 +19,7 @@ type Props = {
 
 export default function Sidebar({
   activeConversationId,
+  activeProjectId,
   streamingConversationId,
   mobileOpen = false,
   onMobileClose,
@@ -23,8 +28,6 @@ export default function Sidebar({
   const [projectsList, setProjectsList] = useState<ApiProject[]>([]);
   const [search, setSearch] = useState("");
   const navigate = useNavigate();
-  const params = useParams<{ projectId?: string }>();
-  const activeProjectId = params.projectId ?? null;
 
   const refresh = async () => {
     try {
@@ -51,18 +54,53 @@ export default function Sidebar({
       cancelled = true;
       clearInterval(i);
     };
-  }, [activeConversationId]);
+  }, [activeConversationId, activeProjectId]);
+
+  // ExoScopy filter: a conversation belongs to either a project or to "All
+  // Chats" (orphans). When the user is inside a project, only that project's
+  // conversations show. Otherwise only orphans.
+  const projectFiltered = activeProjectId
+    ? conversations.filter((c) => c.projectId === activeProjectId)
+    : conversations.filter((c) => !c.projectId);
 
   const filtered = search.trim()
-    ? conversations.filter((c) => {
+    ? projectFiltered.filter((c) => {
         const q = search.trim().toLowerCase();
         return (
           c.title.toLowerCase().includes(q) ||
           (c.lastMessage ?? "").toLowerCase().includes(q)
         );
       })
-    : conversations;
+    : projectFiltered;
   const groups = groupByBucket(filtered);
+
+  async function startNewConversation() {
+    // If we're inside a project, the new conversation must inherit the
+    // projectId so it shows up in this filtered list (and stays out of the
+    // root "All Chats"). Mirrors ExoScopy.
+    if (!activeProjectId) {
+      navigate("/");
+      return;
+    }
+    try {
+      const servers = await api.listServers();
+      const first = servers.servers[0];
+      if (!first) {
+        navigate("/settings/servers");
+        return;
+      }
+      const { conversation } = await api.createConversation({
+        serverId: first.id,
+        projectId: activeProjectId,
+        title: "New conversation",
+      });
+      await refresh();
+      navigate(`/c/${conversation.id}`);
+    } catch {
+      // fall back to plain new chat
+      navigate("/");
+    }
+  }
 
   return (
     <>
@@ -85,15 +123,24 @@ export default function Sidebar({
         <SearchInput value={search} onChange={setSearch} />
       </div>
 
-      <div className="px-3 pb-4">
+      <div className="flex flex-col gap-1.5 px-3 pb-4">
         <button
           type="button"
-          onClick={() => navigate("/")}
+          onClick={startNewConversation}
           className="flex w-full items-center justify-center gap-2 rounded-lg bg-navy px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-95"
         >
           <PlusIcon />
-          New conversation
+          {activeProjectId ? "New chat in project" : "New conversation"}
         </button>
+        {activeProjectId && (
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="text-center text-[12px] text-gray-500 hover:text-ink"
+          >
+            ← All chats
+          </button>
+        )}
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 pb-4">
@@ -109,6 +156,29 @@ export default function Sidebar({
             </Link>
           }
         >
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left transition-colors ${
+              !activeProjectId
+                ? "bg-[rgba(79,179,217,0.12)] text-navy"
+                : "text-ink hover:bg-gray-50"
+            }`}
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="text-[13px]">💬</span>
+              <span
+                className={`truncate text-[13px] ${
+                  !activeProjectId ? "font-medium" : "font-normal"
+                }`}
+              >
+                All chats
+              </span>
+            </span>
+            <span className="font-mono text-[11px] text-gray-400">
+              {conversations.filter((c) => !c.projectId).length}
+            </span>
+          </button>
           {projectsList.map((p) => (
             <ProjectRow
               key={p.id}
@@ -312,8 +382,11 @@ function ConversationRow({
       await api.deleteConversation(conversation.id);
       if (active) navigate("/");
       onChange();
-    } catch {
-      // ignore
+    } catch (err) {
+      // Surface the failure instead of silently swallowing it — the previous
+      // empty catch is what made it look like "delete doesn't work".
+      console.error("delete failed", err);
+      alert(`Couldn't delete: ${(err as Error).message ?? err}`);
     }
   }
 

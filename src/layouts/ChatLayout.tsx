@@ -61,6 +61,11 @@ export default function ChatLayout() {
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar
         activeConversationId={id ?? null}
+        // ExoScopy parity: when chatting inside a conversation that belongs
+        // to a project, the sidebar narrows to that project's conversations.
+        // When at the root chat (no projectId on the loaded conversation), we
+        // show only orphans.
+        activeProjectId={chat.conversation?.projectId ?? null}
         streamingConversationId={chat.sending ? id ?? null : null}
         mobileOpen={mobileSidebarOpen}
         onMobileClose={() => setMobileSidebarOpen(false)}

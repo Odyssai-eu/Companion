@@ -215,13 +215,28 @@ conversationsRoute.get("/:id/export.md", async (c) => {
 conversationsRoute.delete("/:id", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");
-  const rows = await db
-    .delete(conversations)
+  // Verify ownership *before* deleting, otherwise a wrong user could nuke a
+  // conversation by accident. Also keeps the response codes meaningful: 404
+  // means "didn't exist or wasn't yours".
+  const [existing] = await db
+    .select({ userId: conversations.userId })
+    .from(conversations)
     .where(eq(conversations.id, id))
-    .returning({ id: conversations.id, userId: conversations.userId });
-  const row = rows[0];
-  if (!row || row.userId !== userId) {
+    .limit(1);
+  if (!existing || existing.userId !== userId) {
     return c.json({ error: "not_found" }, 404);
+  }
+  try {
+    await db.delete(conversations).where(eq(conversations.id, id));
+  } catch (err) {
+    console.error("conversation delete failed", err);
+    return c.json(
+      {
+        error: "delete_failed",
+        detail: (err as Error).message,
+      },
+      500,
+    );
   }
   return c.body(null, 204);
 });

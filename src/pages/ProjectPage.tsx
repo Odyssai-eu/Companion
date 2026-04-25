@@ -127,7 +127,12 @@ export default function ProjectPage() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-gray-50">
-      <Sidebar activeConversationId={null} />
+      <Sidebar
+        activeConversationId={null}
+        // While viewing a project, the sidebar lists *that* project's
+        // conversations only.
+        activeProjectId={isNew ? null : id ?? null}
+      />
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-[820px] flex-col gap-10 px-14 py-16">
           <header className="flex items-start justify-between gap-6">
