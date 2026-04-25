@@ -1,12 +1,14 @@
 # Feature parity — ExoScopy → Thecomp.ai
 
-Audit initial Saturday 2026-04-25 sur v0.0.38. **Mis à jour le même jour sur v0.0.45** : la majorité des régressions P0/P1/P2 est livrée.
+Audit initial Saturday 2026-04-25 sur v0.0.38. **Mis à jour le même jour sur v0.0.52** : P0/P1/P2 livrés + petit restant (cost, vision warning, instructions) + syntax highlighting + easter egg.
 
 ## Quick status board
 
 | Catégorie | État au 2026-04-25 |
 |---|---|
-| Markdown rendering | ✅ marked + sanitisation |
+| Markdown rendering (GFM, tables, links, blockquotes, lists) | ✅ marked + sanitisation |
+| Syntax highlighting (hljs, ~35 langues) + copy button | ✅ |
+| Strip markdown avant TTS | ✅ `stripMarkdownForTts` |
 | Code blocks export (.md, individual files, .zip) | ✅ |
 | Attachments (text/code, images, PDF up to 20p) | ✅ |
 | Drag & drop + paste image | ✅ |
@@ -26,7 +28,9 @@ Audit initial Saturday 2026-04-25 sur v0.0.38. **Mis à jour le même jour sur v
 | TTS Voxtral streaming WAV | ✅ (upgrade vs ExoScopy speechSynthesis) |
 | Project view = sidebar identique au chat | ✅ |
 | Auto-fill systemPrompt depuis category | ✅ déjà en place dans ProjectPage |
-| Cost tracking OpenRouter | 🟡 marker "X tok · cloud" — pas de $ table |
+| Cost tracking OpenRouter | ✅ table de prix statique ~35 modèles, fallback "X tok · cloud" |
+| Vision model warning | ✅ bannière amber si image attachée sur modèle sans vision |
+| Instructions field (notes privées, non envoyées) | ✅ intentionnellement pas transmis au moteur |
 | Web tools (web_search, web_fetch) | 🔴 hors P3 (gros chantier) |
 | Magic link / Password reset / OAuth | 🔴 P3 (besoin SMTP / creds) |
 | MCP execution | 🔴 P3 (gros chantier) |
@@ -74,7 +78,7 @@ Audit initial Saturday 2026-04-25 sur v0.0.38. **Mis à jour le même jour sur v
 | PDF jusqu'à 20 pages | ✅ | v0.0.38 — pdf.js, texte + raster PNG par page |
 | **Drag & drop sur la zone d'input** | 🔴 | ExoScopy gère `onDragOver` + `onDrop` sur la textarea. À porter dans `Input.tsx`. |
 | **Paste image depuis le presse-papier** | 🔴 | ExoScopy : `onPaste` lit `e.clipboardData.items[].getAsFile()`. À ajouter dans `Input.tsx`. |
-| **Vision model warning** | 🔴 | ExoScopy avertit si tu attaches une image sur un modèle non-vision (`model.vision === false`). Dépend du metadata models. À ajouter quand on aura le flag `vision` dans `ApiGlobalModel`. |
+| **Vision model warning** | ✅ | Bannière amber dans l'input si image attachée + `capabilities.vision === false`. Capabilities détectées par regex sur model id. |
 
 **Choix technique ExoScopy** : le drop+paste se fait sur la textarea elle-même, pas sur un overlay séparé. `e.preventDefault()` + appelle le même `processFile()` que le file input.
 
@@ -83,15 +87,15 @@ Audit initial Saturday 2026-04-25 sur v0.0.38. **Mis à jour le même jour sur v
 | Feature | État | Notes |
 |---|---|---|
 | Whitespace preserved (`pre-wrap`) | ✅ | OK pour du texte simple |
-| **Markdown → HTML rendering** | 🔴 | **Régression majeure**. ExoScopy utilise `marked.parse(text, {breaks:true, gfm:true})`. Thecomp.ai affiche du markdown brut (les `**`, `##`, ```, etc. apparaissent tels quels). |
-| **Tables markdown** | 🔴 | Idem — pas de rendering du tout |
-| **Liens cliquables** | 🔴 | Idem |
-| **Code blocks stylés** (fond sombre, mono) | 🔴 | Idem — devrait être un `<pre><code class="language-x">` avec syntax highlight |
-| **Blockquotes** | 🔴 | Idem |
-| **Inline code styling** | 🔴 | Idem |
-| **Listes (ordered/unordered)** | 🔴 | Idem |
-| **`<think>` blocks → `<details>` collapsible** | 🟢 | Thecomp.ai a un ReasoningBlock séparé qui lit `message.reasoning` (Anthropic-style). ExoScopy parse `<think>...</think>` du contenu. Choix différent mais pas une régression. |
-| **Math/LaTeX rendering** | 🔴 | ExoScopy n'a pas KaTeX non plus, donc à vrai dire les deux sont au même niveau. À ajouter si besoin. |
+| **Markdown → HTML rendering** | ✅ | `marked` + GFM + `breaks:true`. Sanitisation custom (`ALLOWED_TAGS`/`ALLOWED_ATTRS`). |
+| **Tables markdown** | ✅ | GFM inclus |
+| **Liens cliquables** | ✅ | `target="_blank" rel="noopener"` auto-ajouté |
+| **Code blocks stylés** (fond sombre, mono, syntax highlight) | ✅ | `highlight.js` (common, ~35 langues) + renderer custom `<div class="code-block">` + label + Copy button |
+| **Blockquotes** | ✅ | Border-left cyan |
+| **Inline code styling** | ✅ | Background rgba navy |
+| **Listes (ordered/unordered)** | ✅ | OK |
+| **`<think>` blocks → `<details>` collapsible** | ✅ | `liftThinkBlocks()` preprocess + `ReasoningBlock` pour le streaming Anthropic |
+| **Math/LaTeX rendering** | 🔴 | ExoScopy n'a pas KaTeX non plus. À ajouter si besoin. |
 | **Mermaid diagrams** | 🔴 | Pas dans ExoScopy non plus. |
 
 **Choix technique ExoScopy à reprendre** :
@@ -127,7 +131,7 @@ Audit initial Saturday 2026-04-25 sur v0.0.38. **Mis à jour le même jour sur v
 | Voice mode (auto-speak) | ✅ | `useVoiceMode` |
 | Save WAV | ✅ | OK |
 | **Lib** | 🟢 | ExoScopy = `speechSynthesis` browser. Thecomp.ai = mlx-audio VibeVoice (qualité supérieure). C'est un upgrade, pas une régression. |
-| **Auto-strip markdown avant lecture** | 🔴 | ExoScopy retire les `**`, `\``, blocs de code, etc. avant la synthèse pour pas que la voix dise "asterisk asterisk". À porter — voir `public/index.html:371-423`. |
+| **Auto-strip markdown avant lecture** | ✅ | `stripMarkdownForTts()` dans `lib/markdown.ts` — retire `**`, `` ` ``, blocs de code, liens, balises HTML. |
 
 **Choix technique ExoScopy** : preprocess regex avant TTS :
 ```js
@@ -174,7 +178,7 @@ text.replace(/```[\s\S]*?```/g, ' code block ')
 | Feature | État | Notes |
 |---|---|---|
 | TTFT, tokens, speed | ✅ | StatsRow |
-| Cost | 🟢 | Affiché "$0.00 · local" hardcodé. À calculer pour OpenRouter (les modèles ont un prix). |
+| Cost | ✅ | Calculé depuis table statique (~35 modèles OR/Anthropic/OpenAI). Fallback "X tok · cloud" si modèle inconnu. |
 | **Prompt tokens / Completion tokens séparés** | 🔴 | ExoScopy split prompt vs completion. Thecomp.ai : juste "tokens" total. Source = `usage` dans le SSE final. À étendre `StreamChatResult`. |
 | **Generation time / Total time / Chunk count / Chunk rate** | 🔴 | ExoScopy expose tous ces compteurs. À étendre `StreamChatResult` et StatsRow. |
 
@@ -209,7 +213,7 @@ text.replace(/```[\s\S]*?```/g, ' code block ')
 | Export project `.md` | ✅ | OK |
 | Project-level system prompt override session | ✅ | OK |
 | **"All Chats" filter (montrer seulement les conversations sans projet)** | 🔴 | ExoScopy : `activeProjectId === null` montre seulement les non-assignées. Thecomp.ai : à vérifier. |
-| **Instructions field** (séparé du system prompt) | 🟢 | Schéma DB l'a, mais pas certain qu'il soit consommé dans le chat. À vérifier `useChat`. |
+| **Instructions field** (séparé du system prompt) | ✅ | Intentionnellement *non* envoyé au moteur — c'est une note privée pour l'utilisateur (label "not sent to engine"). Comportement correct. |
 
 ---
 
@@ -289,6 +293,7 @@ text.replace(/```[\s\S]*?```/g, ' code block ')
 | Feature | État | Notes |
 |---|---|---|
 | IndicAI / AI Score | ✅ | TopBar + endpoint |
+| **Easter egg Space Invaders** | ✅ | Chat vierge → taper `atari` → jeu pixel-art 10×4 invaders, vies, score. ESC ferme. |
 | **Cmd/Ctrl+K → New conversation** | 🔴 | Documenté dans ShortcutsPage mais **pas wiré** (pas de listener global). |
 | **Cmd/Ctrl+, → Settings** | 🔴 | Idem documenté mais pas wiré |
 | **Cmd/Ctrl+N → New** | 🔴 | Idem |
@@ -307,10 +312,10 @@ text.replace(/```[\s\S]*?```/g, ' code block ')
 
 ### P0 — régressions qui cassent l'UX de base (à faire en priorité)
 
-1. **Markdown rendering** — sans ça, tout le reste ressemble à du texte brut. Lib : `marked` + petit preprocess pour `<think>`.
+1. ~~**Markdown rendering**~~ ✅ — `marked` + GFM + `liftThinkBlocks` + sanitisation.
 2. **Search dans la sidebar conversations** — filtre client-side trivial.
-3. **Code blocks stylés** — corollaire du markdown rendering, mais dégager un fond sombre + mono pour les `<pre><code>`.
-4. **Strip markdown avant TTS** — sinon Voxtral lit "asterisk asterisk".
+3. ~~**Code blocks stylés**~~ ✅ — `highlight.js` + renderer custom + copy button.
+4. ~~**Strip markdown avant TTS**~~ ✅ — `stripMarkdownForTts()`.
 5. **Drag & drop + paste image** dans la zone d'input — workflow standard, déjà attendu par tout utilisateur.
 
 ### P1 — gros confort, peu d'effort
