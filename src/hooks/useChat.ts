@@ -8,6 +8,7 @@ import {
   type ApiServer,
 } from "~/lib/api";
 import { streamChat, type ChatMessage } from "~/lib/chat-stream";
+import { buildUserMessage, type Attachment } from "~/lib/file-attach";
 
 export type InferenceParams = {
   temperature: number;
@@ -184,7 +185,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     servers.find((s) => s.id === activeServerId) ?? servers[0] ?? null;
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, attachments: Attachment[] = []) => {
       // Prefer the server attached to the user's picked model. Falls back to
       // the active server (set by conversation load or by hand). Without this,
       // picking an OpenRouter model on a conversation that was started with
@@ -198,17 +199,21 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         servers.find((s) => s.id === targetServerId) ?? activeServer;
       if (!targetServer || sending) return;
       const trimmed = text.trim();
-      if (!trimmed) return;
+      if (!trimmed && attachments.length === 0) return;
+
+      const built = buildUserMessage(trimmed, attachments);
 
       setError(null);
 
       // Ensure we have a conversation to write into
       let convId = conversationId ?? conversation?.id ?? null;
+      const titleSeed =
+        trimmed || attachments.map((a) => a.name).join(", ") || "New";
       if (!convId) {
         try {
           const created = await api.createConversation({
             serverId: targetServer.id,
-            title: trimmed.slice(0, 80),
+            title: titleSeed.slice(0, 80),
           });
           convId = created.conversation.id;
           setConversation(created.conversation);
@@ -222,7 +227,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       const userMsg: UIMessage = {
         id: crypto.randomUUID(),
         role: "user",
-        content: trimmed,
+        content: built.persistText,
       };
       const assistantId = crypto.randomUUID();
       const placeholder: UIMessage = {
@@ -240,15 +245,19 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         navigate(`/c/${convId}`, { replace: true });
       }
 
-      // Persist user message (fire and forget — don't block the stream)
+      // Persist user message (fire and forget — don't block the stream).
+      // We persist the flat text version so the DB stays sane (no 5 MB image
+      // data URLs); the multimodal version only goes to the model in-flight.
       api
-        .appendMessage(convId, { role: "user", content: trimmed })
+        .appendMessage(convId, { role: "user", content: built.persistText })
         .catch((e) => console.warn("persist user failed", e));
 
-      const convoForModel: ChatMessage[] = [...messages, userMsg].map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
+      // Send prior messages as-is (they're plain strings on reload), and
+      // attach the multimodal payload only on the new user turn.
+      const convoForModel: ChatMessage[] = [
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user", content: built.content },
+      ];
 
       const controller = new AbortController();
       abortRef.current = controller;
