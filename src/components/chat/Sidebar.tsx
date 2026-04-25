@@ -11,6 +11,7 @@ type Props = {
 export default function Sidebar({ activeConversationId }: Props) {
   const [conversations, setConversations] = useState<ApiConversation[]>([]);
   const [projectsList, setProjectsList] = useState<ApiProject[]>([]);
+  const [search, setSearch] = useState("");
   const navigate = useNavigate();
   const params = useParams<{ projectId?: string }>();
   const activeProjectId = params.projectId ?? null;
@@ -42,7 +43,16 @@ export default function Sidebar({ activeConversationId }: Props) {
     };
   }, [activeConversationId]);
 
-  const groups = groupByBucket(conversations);
+  const filtered = search.trim()
+    ? conversations.filter((c) => {
+        const q = search.trim().toLowerCase();
+        return (
+          c.title.toLowerCase().includes(q) ||
+          (c.lastMessage ?? "").toLowerCase().includes(q)
+        );
+      })
+    : conversations;
+  const groups = groupByBucket(filtered);
 
   return (
     <aside className="flex h-full w-[280px] flex-col border-r border-gray-200 bg-white">
@@ -51,7 +61,7 @@ export default function Sidebar({ activeConversationId }: Props) {
       </header>
 
       <div className="px-3 pb-3">
-        <SearchInput />
+        <SearchInput value={search} onChange={setSearch} />
       </div>
 
       <div className="px-3 pb-4">
@@ -422,16 +432,35 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-function SearchInput() {
+function SearchInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
+    <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 focus-within:border-cyan">
       <SearchIcon />
       <input
         type="text"
-        placeholder="Search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Search conversations"
         className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-gray-400"
       />
-      <kbd className="font-mono text-[10px] text-gray-400">⌘K</kbd>
+      {value ? (
+        <button
+          type="button"
+          aria-label="Clear search"
+          onClick={() => onChange("")}
+          className="font-mono text-[12px] text-gray-400 hover:text-ink"
+        >
+          ✕
+        </button>
+      ) : (
+        <kbd className="font-mono text-[10px] text-gray-400">⌘K</kbd>
+      )}
     </div>
   );
 }

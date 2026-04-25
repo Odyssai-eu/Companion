@@ -7,6 +7,7 @@ import {
   extractCodeBlocks,
   messageMdFilename,
 } from "~/lib/file-export";
+import { renderMarkdown } from "~/lib/markdown";
 import { tts } from "~/lib/tts";
 
 export default function Messages({
@@ -108,13 +109,15 @@ function AssistantMessage({ message }: { message: UIMessage }) {
             thinking={thinking}
           />
         )}
-        <div className="flex flex-col gap-4 text-[15px] leading-relaxed text-ink">
+        <div className="text-[15px] leading-relaxed text-ink">
           {message.content ? (
-            message.content.split("\n\n").map((para, i) => (
-              <p key={i} className="whitespace-pre-wrap">
-                {para}
-              </p>
-            ))
+            <div
+              className="md-body"
+              // Sanitised in renderMarkdown — see src/lib/markdown.ts
+              dangerouslySetInnerHTML={{
+                __html: renderMarkdown(message.content),
+              }}
+            />
           ) : (
             !message.reasoning && (
               <span className="inline-flex items-center gap-2 text-[14px] text-gray-400">

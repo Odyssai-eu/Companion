@@ -23,6 +23,7 @@ export default function Input({
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState<VoiceInputState>({ status: "idle" });
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -64,6 +65,10 @@ export default function Input({
   async function onFilesSelected(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = ""; // allow same file to be re-selected later
+    await ingestFiles(files);
+  }
+
+  async function ingestFiles(files: File[]) {
     if (files.length === 0) return;
 
     for (const file of files) {
@@ -116,9 +121,45 @@ export default function Input({
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   }
 
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const files: File[] = [];
+    for (const it of items) {
+      if (it.kind === "file") {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      void ingestFiles(files);
+    }
+  }
+
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length > 0) void ingestFiles(files);
+  }
+
   return (
     <div className="flex flex-col items-center gap-2 px-8 pt-4 pb-6">
-      <div className="flex w-full max-w-3xl flex-col gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-[0_1px_2px_rgba(10,10,10,0.04)]">
+      <div
+        onDragOver={(e) => {
+          if (e.dataTransfer?.types?.includes("Files")) {
+            e.preventDefault();
+            setDragOver(true);
+          }
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+        className={`flex w-full max-w-3xl flex-col gap-2 rounded-2xl border bg-white px-4 py-3 shadow-[0_1px_2px_rgba(10,10,10,0.04)] transition-colors ${
+          dragOver
+            ? "border-cyan ring-2 ring-[rgba(79,179,217,0.25)]"
+            : "border-gray-200"
+        }`}
+      >
         {attachments.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
             {attachments.map((a) => (
@@ -152,6 +193,7 @@ export default function Input({
             value={listening ? interim : value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
             disabled={disabled || listening}
             rows={1}
             placeholder={
