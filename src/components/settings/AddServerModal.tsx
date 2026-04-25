@@ -10,6 +10,8 @@ type Props = {
 
 export default function AddServerModal({ open, onClose, onCreated }: Props) {
   const navigate = useNavigate();
+  type Preset = "custom" | "openrouter" | "anthropic";
+  const [preset, setPreset] = useState<Preset>("custom");
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [engineKind, setEngineKind] = useState<"openai-compat" | "anthropic">(
@@ -19,6 +21,29 @@ export default function AddServerModal({ open, onClose, onCreated }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function applyPreset(next: Preset) {
+    setPreset(next);
+    if (next === "openrouter") {
+      setName("OpenRouter");
+      setAddress("openrouter.ai:443");
+      setEngineKind("openai-compat");
+      setShowAdvanced(true);
+      setError(null);
+    } else if (next === "anthropic") {
+      setName("Anthropic");
+      setAddress("api.anthropic.com:443");
+      setEngineKind("anthropic");
+      setShowAdvanced(true);
+      setError(null);
+    } else {
+      setName("");
+      setAddress("");
+      setEngineKind("openai-compat");
+      setAuthBearer("");
+      setShowAdvanced(false);
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -31,6 +56,7 @@ export default function AddServerModal({ open, onClose, onCreated }: Props) {
 
   useEffect(() => {
     if (open) {
+      setPreset("custom");
       setName("");
       setAddress("");
       setEngineKind("openai-compat");
@@ -121,6 +147,32 @@ export default function AddServerModal({ open, onClose, onCreated }: Props) {
         </header>
 
         <div className="flex flex-col gap-5 px-7 py-6">
+          <div className="flex flex-col gap-2">
+            <span className="font-sans text-[11px] font-medium tracking-[0.08em] text-gray-400 uppercase">
+              Quick connect
+            </span>
+            <div className="grid grid-cols-3 gap-2">
+              <PresetCard
+                label="Custom"
+                hint="Local exo, Ollama, vLLM…"
+                active={preset === "custom"}
+                onClick={() => applyPreset("custom")}
+              />
+              <PresetCard
+                label="OpenRouter"
+                hint="Cloud, OpenAI-compat"
+                active={preset === "openrouter"}
+                onClick={() => applyPreset("openrouter")}
+              />
+              <PresetCard
+                label="Anthropic"
+                hint="Cloud, messages API"
+                active={preset === "anthropic"}
+                onClick={() => applyPreset("anthropic")}
+              />
+            </div>
+          </div>
+
           <Field label="Server name">
             <input
               value={name}
@@ -222,6 +274,33 @@ export default function AddServerModal({ open, onClose, onCreated }: Props) {
         </footer>
       </form>
     </div>
+  );
+}
+
+function PresetCard({
+  label,
+  hint,
+  active,
+  onClick,
+}: {
+  label: string;
+  hint: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex flex-col items-start gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors ${
+        active
+          ? "border-cyan bg-[rgba(79,179,217,0.08)] text-navy"
+          : "border-gray-200 bg-white text-gray-600 hover:border-gray-300"
+      }`}
+    >
+      <span className="text-[13px] font-medium">{label}</span>
+      <span className="text-[11px] text-gray-500">{hint}</span>
+    </button>
   );
 }
 

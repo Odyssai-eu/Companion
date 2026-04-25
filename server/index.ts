@@ -15,6 +15,7 @@ import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
 import indicaiRoute from "./routes/indicai";
 import licenseRoute from "./routes/license";
+import modelsRoute from "./routes/models";
 import projectsRoute from "./routes/projects";
 import serversRoute from "./routes/servers";
 import ttsRoute from "./routes/tts";
@@ -53,6 +54,8 @@ app.use("/api/projects/*", licenseGate, requireUser);
 app.use("/api/tts/*", licenseGate, requireUser);
 app.use("/api/addons/*", licenseGate, requireUser);
 app.use("/api/indicai/*", licenseGate, requireUser);
+app.use("/api/models/*", licenseGate, requireUser);
+app.use("/api/models", licenseGate, requireUser);
 
 app.route("/api/servers", serversRoute);
 app.route("/api/conversations", conversationsRoute);
@@ -61,6 +64,7 @@ app.route("/api/projects", projectsRoute);
 app.route("/api/tts", ttsRoute);
 app.route("/api/addons", addonsRoute);
 app.route("/api/indicai", indicaiRoute);
+app.route("/api/models", modelsRoute);
 
 if (process.env.NODE_ENV === "production") {
   app.use("/*", serveStatic({ root: "./dist/client" }));

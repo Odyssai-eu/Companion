@@ -1,15 +1,15 @@
 import { useIndicAI } from "~/hooks/useIndicAI";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
 import type { ApiServer } from "~/lib/api";
-import ModelPicker from "./ModelPicker";
+import ModelPicker, { type SelectedModel } from "./ModelPicker";
 import ToolsMenu from "./ToolsMenu";
 
 export type ChatStyle = "Creative" | "Normal" | "Code" | "Custom";
 
 type Props = {
   activeServer: ApiServer | null;
-  model: string | null;
-  onModelChange: (model: string) => void;
+  modelSelection: SelectedModel;
+  onModelChange: (m: SelectedModel) => void;
   activeStyle: ChatStyle;
   onStyleChange: (style: ChatStyle) => void;
   onTogglePanel: () => void;
@@ -18,7 +18,7 @@ type Props = {
 
 export default function TopBar({
   activeServer,
-  model,
+  modelSelection,
   onModelChange,
   activeStyle,
   onStyleChange,
@@ -40,11 +40,7 @@ export default function TopBar({
           ) : (
             <EngineBadge engine="No server" detail="Add one in Settings" />
           )}
-          <ModelPicker
-            serverId={activeServer?.id ?? null}
-            model={model}
-            onChange={onModelChange}
-          />
+          <ModelPicker selected={modelSelection} onChange={onModelChange} />
         </div>
         <IndicAIPill
           level={indicai?.level ?? 1}
@@ -52,14 +48,16 @@ export default function TopBar({
         />
       </div>
 
-      {/* Line 2 — style tabs + Tools / Voice icon */}
+      {/* Line 2 — style tabs / Tools + Voice icon */}
       <div className="flex items-center justify-between gap-3 px-6 pt-1 pb-3">
         <div className="flex items-center gap-3">
           <StyleTabs active={activeStyle} onChange={onStyleChange} />
           <button
             type="button"
             onClick={onTogglePanel}
-            aria-label={panelOpen ? "Close inference settings" : "Open inference settings"}
+            aria-label={
+              panelOpen ? "Close inference settings" : "Open inference settings"
+            }
             className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
               panelOpen
                 ? "border-navy bg-navy text-white"
@@ -69,22 +67,28 @@ export default function TopBar({
           >
             <SlidersIcon />
           </button>
-          <ToolsMenu />
         </div>
-        <button
-          type="button"
-          onClick={voiceMode.toggle}
-          aria-label="Voice mode"
-          aria-pressed={voiceMode.enabled}
-          title={voiceMode.enabled ? "Voice mode ON — answers spoken" : "Voice mode OFF"}
-          className={`flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${
-            voiceMode.enabled
-              ? "border-cyan bg-cyan text-white"
-              : "border-gray-200 bg-white text-ink hover:bg-gray-50"
-          }`}
-        >
-          <VoiceIcon />
-        </button>
+        <div className="flex items-center gap-3">
+          <ToolsMenu />
+          <button
+            type="button"
+            onClick={voiceMode.toggle}
+            aria-label="Voice mode"
+            aria-pressed={voiceMode.enabled}
+            title={
+              voiceMode.enabled
+                ? "Voice mode ON — answers spoken"
+                : "Voice mode OFF"
+            }
+            className={`flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${
+              voiceMode.enabled
+                ? "border-cyan bg-cyan text-white"
+                : "border-gray-200 bg-white text-ink hover:bg-gray-50"
+            }`}
+          >
+            <VoiceIcon />
+          </button>
+        </div>
       </div>
     </header>
   );
@@ -98,7 +102,7 @@ function EngineBadge({ engine, detail }: { engine: string; detail: string }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5">
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-      <span className="max-w-[180px] truncate font-mono text-[12px] font-medium text-ink">
+      <span className="max-w-[200px] truncate font-mono text-[12px] font-medium text-ink">
         {engine}
       </span>
       <span className="font-mono text-[11px] text-gray-400">· {detail}</span>

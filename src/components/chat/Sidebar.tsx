@@ -15,24 +15,27 @@ export default function Sidebar({ activeConversationId }: Props) {
   const params = useParams<{ projectId?: string }>();
   const activeProjectId = params.projectId ?? null;
 
+  const refresh = async () => {
+    try {
+      const [{ conversations }, { projects }] = await Promise.all([
+        api.listConversations(),
+        api.listProjects(),
+      ]);
+      setConversations(conversations);
+      setProjectsList(projects);
+    } catch {
+      // ignore; empty lists are fine for the shell
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
-    async function refresh() {
-      try {
-        const [{ conversations }, { projects }] = await Promise.all([
-          api.listConversations(),
-          api.listProjects(),
-        ]);
-        if (!cancelled) {
-          setConversations(conversations);
-          setProjectsList(projects);
-        }
-      } catch {
-        // ignore; empty lists are fine for the shell
-      }
+    async function safeRefresh() {
+      if (cancelled) return;
+      await refresh();
     }
-    refresh();
-    const i = setInterval(refresh, 5000);
+    safeRefresh();
+    const i = setInterval(safeRefresh, 5000);
     return () => {
       cancelled = true;
       clearInterval(i);
@@ -99,6 +102,7 @@ export default function Sidebar({ activeConversationId }: Props) {
                 key={c.id}
                 conversation={c}
                 active={c.id === activeConversationId}
+                onChange={refresh}
               />
             ))}
           </Section>
@@ -219,32 +223,154 @@ function PlusIcon() {
 function ConversationRow({
   conversation,
   active,
+  onChange,
 }: {
   conversation: ApiConversation;
   active: boolean;
+  onChange: () => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(conversation.title);
   const time = new Date(conversation.updatedAt).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   });
+
+  async function commitRename() {
+    setRenaming(false);
+    const trimmed = draftTitle.trim();
+    if (!trimmed || trimmed === conversation.title) return;
+    try {
+      await api.renameConversation(conversation.id, trimmed);
+      onChange();
+    } catch {
+      // ignore
+    }
+  }
+
+  async function onDelete() {
+    if (!confirm(`Delete "${conversation.title}"?`)) return;
+    try {
+      await api.deleteConversation(conversation.id);
+      onChange();
+    } catch {
+      // ignore
+    }
+  }
+
+  if (renaming) {
+    return (
+      <div
+        className={`flex w-full items-center rounded-md px-2 py-2 ${
+          active ? "bg-[rgba(79,179,217,0.12)]" : "bg-gray-50"
+        }`}
+      >
+        <input
+          autoFocus
+          value={draftTitle}
+          onChange={(e) => setDraftTitle(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename();
+            if (e.key === "Escape") {
+              setDraftTitle(conversation.title);
+              setRenaming(false);
+            }
+          }}
+          className="w-full bg-transparent text-[13px] font-medium text-ink outline-none"
+        />
+      </div>
+    );
+  }
+
   return (
-    <Link
-      to={`/c/${conversation.id}`}
-      className={`flex w-full flex-col gap-0.5 rounded-md px-2 py-2 text-left transition-colors ${
+    <div
+      className={`group relative flex w-full items-center rounded-md transition-colors ${
         active
           ? "bg-[rgba(79,179,217,0.12)] text-navy"
           : "text-ink hover:bg-gray-50"
       }`}
     >
-      <span
-        className={`truncate text-[13px] ${active ? "font-medium" : "font-normal"}`}
+      <Link
+        to={`/c/${conversation.id}`}
+        className="flex flex-1 min-w-0 flex-col gap-0.5 px-2 py-2 text-left"
       >
-        {conversation.title}
-      </span>
-      <span className="font-mono text-[11px] text-gray-400">
-        {conversation.model ? `${conversation.model} · ${time}` : time}
-      </span>
-    </Link>
+        <span
+          className={`truncate text-[13px] ${active ? "font-medium" : "font-normal"}`}
+        >
+          {conversation.title}
+        </span>
+        <span className="font-mono text-[11px] text-gray-400">
+          {conversation.model ? `${conversation.model} · ${time}` : time}
+        </span>
+      </Link>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setMenuOpen((v) => !v);
+        }}
+        aria-label="Conversation actions"
+        className={`mr-1 flex h-6 w-6 items-center justify-center rounded text-gray-400 transition-opacity ${
+          menuOpen
+            ? "opacity-100"
+            : "opacity-0 group-hover:opacity-100"
+        } hover:bg-gray-100 hover:text-ink`}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="5" r="1.5" />
+          <circle cx="12" cy="12" r="1.5" />
+          <circle cx="12" cy="19" r="1.5" />
+        </svg>
+      </button>
+      {menuOpen && (
+        <div
+          className="absolute top-full right-0 z-30 mt-1 w-[160px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-[0_10px_24px_rgba(10,10,10,0.1)]"
+          onMouseLeave={() => setMenuOpen(false)}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setMenuOpen(false);
+              setDraftTitle(conversation.title);
+              setRenaming(true);
+            }}
+            className="block w-full px-3 py-2 text-left text-[13px] text-ink hover:bg-gray-50"
+          >
+            Rename
+          </button>
+          <a
+            href={api.exportConversationUrl(conversation.id)}
+            download
+            onClick={() => setMenuOpen(false)}
+            className="block w-full px-3 py-2 text-left text-[13px] text-ink hover:bg-gray-50"
+          >
+            Export .md
+          </a>
+          <button
+            type="button"
+            onClick={() => {
+              setMenuOpen(false);
+              onDelete();
+            }}
+            className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[13px] text-red-600 hover:bg-red-50"
+          >
+            Delete
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

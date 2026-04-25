@@ -2,6 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db/index";
 import { endpoints, servers } from "../db/schema";
+import { buildBase } from "../lib/url";
 import { handleAnthropicChat } from "./chat-anthropic";
 
 const chatRoute = new Hono();
@@ -63,7 +64,7 @@ chatRoute.post("/completions", async (c) => {
     return c.json({ error: "no_endpoint" }, 400);
   }
 
-  const base = `http://${primary.ip}:${primary.port}`;
+  const base = buildBase(primary.ip, primary.port);
 
   // Prepend system prompt if provided (OpenAI format; Anthropic handler
   // extracts it into its native field).

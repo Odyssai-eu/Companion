@@ -143,6 +143,48 @@ projectsRoute.patch(
   },
 );
 
+projectsRoute.get("/:id/export.md", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, id))
+    .limit(1);
+  if (!project || project.userId !== userId) {
+    return c.json({ error: "not_found" }, 404);
+  }
+  const lines: string[] = [];
+  lines.push(`# ${project.name}`);
+  lines.push("");
+  lines.push(`> Exported ${new Date().toISOString()}`);
+  lines.push(`> Category: ${project.category}`);
+  lines.push(`> Created ${project.createdAt}`);
+  lines.push("");
+  if (project.systemPrompt) {
+    lines.push("## System prompt");
+    lines.push("");
+    lines.push(project.systemPrompt);
+    lines.push("");
+  }
+  if (project.instructions) {
+    lines.push("## Instructions");
+    lines.push("");
+    lines.push(project.instructions);
+    lines.push("");
+  }
+  const md = lines.join("\n");
+  const filename = `${project.name
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .toLowerCase()
+    .slice(0, 80) || "project"}.md`;
+  c.header("Content-Type", "text/markdown; charset=utf-8");
+  c.header("Content-Disposition", `attachment; filename="${filename}"`);
+  return c.body(md);
+});
+
 projectsRoute.delete("/:id", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");

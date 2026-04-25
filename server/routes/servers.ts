@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "../db/index";
 import { endpoints, servers } from "../db/schema";
 import type { Endpoint } from "../db/schema";
+import { buildBase } from "../lib/url";
 
 const serversRoute = new Hono();
 
@@ -38,7 +39,7 @@ serversRoute.post("/", zValidator("json", createServerSchema), async (c) => {
   const userId = c.get("userId");
   const { name, ip, port, hint, description } = c.req.valid("json");
 
-  const url = `http://${ip}:${port}`;
+  const url = buildBase(ip, port);
 
   const [server] = await db
     .insert(servers)
@@ -165,7 +166,7 @@ async function pingEndpoint(
   const timer = setTimeout(() => controller.abort(), 3000);
   const start = Date.now();
   try {
-    const res = await fetch(`http://${ep.ip}:${ep.port}/`, {
+    const res = await fetch(`${buildBase(ep.ip, ep.port)}/`, {
       method: "GET",
       signal: controller.signal,
       redirect: "manual",
@@ -234,7 +235,7 @@ serversRoute.get("/:id/models", async (c) => {
   return c.json({ models });
 });
 
-type ModelEntry = {
+export type ModelEntry = {
   id: string;
   name: string;
   loaded: boolean;
@@ -251,7 +252,7 @@ type ModelEntry = {
  * list of endpoints that carry it). `name` is the model id without the `maker/`
  * prefix so the UI doesn't have to parse it.
  */
-async function listModelsForServer(
+export async function listModelsForServer(
   eps: Endpoint[],
   headers: Record<string, string>,
   engineKind: string,
@@ -259,7 +260,7 @@ async function listModelsForServer(
   if (engineKind === "anthropic") {
     // Anthropic-style: primary endpoint only, /v1/models
     const primary = eps.find((e) => e.role === "primary") ?? eps[0];
-    const base = `http://${primary.ip}:${primary.port}`;
+    const base = buildBase(primary.ip, primary.port);
     const res = await fetch(`${base}/v1/models`, { headers }).catch(() => null);
     if (!res || !res.ok) return [];
     const body = (await res.json()) as { data?: { id?: string }[] };
@@ -321,7 +322,7 @@ async function fetchEndpointModels(
   loaded: string[];
   downloaded: string[];
 }> {
-  const base = `http://${ep.ip}:${ep.port}`;
+  const base = buildBase(ep.ip, ep.port);
   const label = ep.node ?? ep.ip;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 4500);

@@ -18,6 +18,15 @@ export type ApiModel = {
   endpoints: string[];
 };
 
+export type ApiGlobalModel = {
+  id: string;
+  name: string;
+  loaded: boolean;
+  serverId: string;
+  serverName: string;
+  engineKind: "openai-compat" | "anthropic";
+};
+
 export type ApiConversation = {
   id: string;
   userId: string;
@@ -162,6 +171,8 @@ export const api = {
     request<{ models: ApiModel[]; error?: string }>(
       `/api/servers/${serverId}/models`,
     ),
+  listAllModels: () =>
+    request<{ models: ApiGlobalModel[] }>("/api/models"),
   addEndpoint: (
     serverId: string,
     body: {
@@ -242,6 +253,9 @@ export const api = {
       `/api/conversations/${conversationId}/messages`,
       { method: "POST", body: JSON.stringify(body) },
     ),
+  exportConversationUrl: (id: string) =>
+    `/api/conversations/${id}/export.md`,
+  exportProjectUrl: (id: string) => `/api/projects/${id}/export.md`,
 
   // Projects
   listProjects: () =>

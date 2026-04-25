@@ -30,8 +30,8 @@ export default function ChatLayout() {
       <main className="flex flex-1 flex-col bg-gray-50">
         <TopBar
           activeServer={chat.activeServer}
-          model={chat.model}
-          onModelChange={chat.setModel}
+          modelSelection={chat.modelSelection}
+          onModelChange={chat.setModelSelection}
           activeStyle={style}
           onStyleChange={onStyleChange}
           onTogglePanel={() => setPanelOpen((v) => !v)}

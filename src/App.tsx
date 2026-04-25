@@ -10,7 +10,6 @@ import AddonsPage from "./pages/settings/AddonsPage";
 import AppearancePage from "./pages/settings/AppearancePage";
 import ComingSoonPage from "./pages/settings/ComingSoonPage";
 import DevicesPage from "./pages/settings/DevicesPage";
-import EnginesPage from "./pages/settings/EnginesPage";
 import ProfilePage from "./pages/settings/ProfilePage";
 import ServerDetailPage from "./pages/settings/ServerDetailPage";
 import ServersPage from "./pages/settings/ServersPage";
@@ -61,7 +60,7 @@ export default function App() {
         <Route path="servers/:id" element={<ServerDetailPage />} />
         <Route path="profile" element={<ProfilePage />} />
         <Route path="security" element={<ComingSoonPage title="Security" />} />
-        <Route path="engines" element={<EnginesPage />} />
+        <Route path="engines" element={<Navigate to="/settings/servers" replace />} />
         <Route path="devices" element={<DevicesPage />} />
         <Route path="appearance" element={<AppearancePage />} />
         <Route path="accessibility" element={<AccessibilityPage />} />

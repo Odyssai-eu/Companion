@@ -76,17 +76,42 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     null,
   );
   const [project, setProject] = useState<ApiProject | null>(null);
-  const [model, setModel] = useState<string>(() => {
-    if (typeof window === "undefined") return "auto";
-    return window.localStorage.getItem("thecompai:model") ?? "auto";
+  type ModelSelection = { id: string; serverId: string | null };
+  const [modelSelection, setModelSelection] = useState<ModelSelection>(() => {
+    if (typeof window === "undefined") return { id: "auto", serverId: null };
+    try {
+      const raw = window.localStorage.getItem("thecompai:modelSelection");
+      if (raw) {
+        const parsed = JSON.parse(raw) as ModelSelection;
+        if (parsed && typeof parsed.id === "string") return parsed;
+      }
+      // Migration from old shape (just a string)
+      const old = window.localStorage.getItem("thecompai:model");
+      if (old) return { id: old, serverId: null };
+    } catch {
+      // ignore
+    }
+    return { id: "auto", serverId: null };
   });
 
-  const setModelAndPersist = useCallback((m: string) => {
-    setModel(m);
+  const setModelAndPersist = useCallback((m: ModelSelection) => {
+    setModelSelection(m);
     if (typeof window !== "undefined") {
-      window.localStorage.setItem("thecompai:model", m);
+      window.localStorage.setItem(
+        "thecompai:modelSelection",
+        JSON.stringify(m),
+      );
     }
   }, []);
+
+  // When the user picks a specific model, the server it lives on becomes the
+  // active server for chat. "auto" leaves the activeServer logic alone (first
+  // server or whatever the conversation was tied to).
+  useEffect(() => {
+    if (modelSelection.serverId) {
+      setActiveServerId(modelSelection.serverId);
+    }
+  }, [modelSelection.serverId]);
 
   const [inference, setInference] = useState<InferenceParams>(() => {
     if (typeof window === "undefined") return DEFAULT_INFERENCE;
@@ -227,7 +252,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       const result = await streamChat({
         serverId: activeServer.id,
         messages: convoForModel,
-        model: model === "auto" ? undefined : model,
+        model:
+          modelSelection.id === "auto" ? undefined : modelSelection.id,
         inference: effectiveInference,
         signal: controller.signal,
         onDelta: (delta) => {
@@ -305,7 +331,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       conversationId,
       inference,
       messages,
-      model,
+      modelSelection.id,
       navigate,
       project,
       sending,
@@ -329,8 +355,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     setActiveServerId,
     conversation,
     project,
-    model,
-    setModel: setModelAndPersist,
+    modelSelection,
+    setModelSelection: setModelAndPersist,
     inference,
     setInference: updateInference,
     sendMessage,

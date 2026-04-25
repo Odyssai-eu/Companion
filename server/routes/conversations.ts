@@ -99,6 +99,58 @@ conversationsRoute.patch(
   },
 );
 
+conversationsRoute.get("/:id/export.md", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const [conv] = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.id, id))
+    .limit(1);
+  if (!conv || conv.userId !== userId) {
+    return c.json({ error: "not_found" }, 404);
+  }
+  const msgs = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, id))
+    .orderBy(asc(messages.createdAt));
+
+  const lines: string[] = [];
+  lines.push(`# ${conv.title}`);
+  lines.push("");
+  lines.push(`> Exported ${new Date().toISOString()}`);
+  lines.push(`> Created ${conv.createdAt}`);
+  if (conv.model) lines.push(`> Model: \`${conv.model}\``);
+  lines.push("");
+  for (const m of msgs) {
+    lines.push(
+      m.role === "user" ? "## You" : m.role === "assistant" ? "## Assistant" : "## System",
+    );
+    lines.push("");
+    if (m.reasoning) {
+      lines.push("<details><summary>Thought</summary>");
+      lines.push("");
+      lines.push(m.reasoning);
+      lines.push("");
+      lines.push("</details>");
+      lines.push("");
+    }
+    lines.push(m.content || "_(empty)_");
+    lines.push("");
+  }
+  const md = lines.join("\n");
+  const filename = `${(conv.title || "conversation")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .toLowerCase()
+    .slice(0, 80) || "conversation"}.md`;
+  c.header("Content-Type", "text/markdown; charset=utf-8");
+  c.header("Content-Disposition", `attachment; filename="${filename}"`);
+  return c.body(md);
+});
+
 conversationsRoute.delete("/:id", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");

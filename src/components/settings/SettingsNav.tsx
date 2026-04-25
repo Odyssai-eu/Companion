@@ -15,7 +15,6 @@ const sections: NavSection[] = [
     title: "Infrastructure",
     items: [
       { to: "/settings/servers", label: "Servers" },
-      { to: "/settings/engines", label: "Engines" },
       { to: "/settings/devices", label: "Devices & sync" },
     ],
   },
