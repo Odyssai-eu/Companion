@@ -340,23 +340,52 @@ function TypingDots() {
 }
 
 function StatsRow({ stats }: { stats: NonNullable<UIMessage["stats"]> }) {
-  const items = [
-    stats.ttft && ["TTFT", stats.ttft],
-    stats.tokens !== undefined && ["Tokens", String(stats.tokens)],
-    stats.speed && ["Speed", stats.speed],
-    stats.cost && ["Cost", stats.cost],
-  ].filter(Boolean) as [string, string][];
+  const items: [string, string][] = [];
+  if (stats.ttft) items.push(["TTFT", stats.ttft]);
+  if (stats.durationMs !== undefined)
+    items.push(["Duration", `${(stats.durationMs / 1000).toFixed(2)}s`]);
+  if (stats.promptTokens !== undefined)
+    items.push(["Prompt", `${stats.promptTokens} tok`]);
+  if (stats.completionTokens !== undefined)
+    items.push(["Completion", `${stats.completionTokens} tok`]);
+  if (
+    stats.reasoningTokens !== undefined &&
+    stats.reasoningTokens > 0
+  )
+    items.push(["Reasoning", `${stats.reasoningTokens} tok`]);
+  if (
+    stats.tokens !== undefined &&
+    stats.promptTokens === undefined &&
+    stats.completionTokens === undefined
+  )
+    items.push(["Tokens", `${stats.tokens} tok`]);
+  if (stats.speed) items.push(["Speed", stats.speed]);
+  if (stats.chunks !== undefined) items.push(["Chunks", String(stats.chunks)]);
+  if (stats.cost) items.push(["Cost", stats.cost]);
 
   if (items.length === 0) return null;
 
+  function onCopy() {
+    const line = items.map(([k, v]) => `${k}: ${v}`).join(" · ");
+    navigator.clipboard?.writeText(line).catch(() => undefined);
+  }
+
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-gray-200 bg-white px-5 py-3 font-mono text-[12px] text-gray-600">
+    <div className="group/stats flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-gray-200 bg-white px-5 py-3 font-mono text-[12px] text-gray-600">
       {items.map(([label, value]) => (
         <span key={label} className="flex items-center gap-2">
           <span className="text-gray-400">{label}</span>
           <span className="text-ink">{value}</span>
         </span>
       ))}
+      <button
+        type="button"
+        onClick={onCopy}
+        title="Copy stats"
+        className="ml-auto text-[11px] text-gray-300 hover:text-ink"
+      >
+        Copy
+      </button>
     </div>
   );
 }

@@ -39,7 +39,15 @@ export type StreamChatResult = {
   error?: string;
   ttftMs?: number;
   durationMs?: number;
+  /** Estimated total tokens (prompt+completion) when upstream doesn't
+   *  send `usage`, otherwise the upstream value. */
   tokens?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  reasoningTokens?: number;
+  /** Number of SSE chunks received with content. Useful as a coarse
+   *  "the model was producing" signal vs total wallclock. */
+  chunks?: number;
 };
 
 export async function streamChat(
@@ -48,6 +56,10 @@ export async function streamChat(
   const start = performance.now();
   let firstContentAt: number | null = null;
   let tokenCount = 0;
+  let chunkCount = 0;
+  let usagePrompt: number | undefined;
+  let usageCompletion: number | undefined;
+  let usageReasoning: number | undefined;
 
   let res: Response;
   try {
@@ -111,17 +123,33 @@ export async function streamChat(
           choices?: {
             delta?: { content?: string | null; reasoning_content?: string | null };
           }[];
+          usage?: {
+            prompt_tokens?: number;
+            completion_tokens?: number;
+            reasoning_tokens?: number;
+            total_tokens?: number;
+          };
         };
+        if (chunk.usage) {
+          if (typeof chunk.usage.prompt_tokens === "number")
+            usagePrompt = chunk.usage.prompt_tokens;
+          if (typeof chunk.usage.completion_tokens === "number")
+            usageCompletion = chunk.usage.completion_tokens;
+          if (typeof chunk.usage.reasoning_tokens === "number")
+            usageReasoning = chunk.usage.reasoning_tokens;
+        }
         const delta = chunk.choices?.[0]?.delta;
         if (!delta) continue;
 
         if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
           tokenCount += estimateTokens(delta.reasoning_content);
+          chunkCount++;
           opts.onDelta({ type: "reasoning", text: delta.reasoning_content });
         }
         if (typeof delta.content === "string" && delta.content) {
           if (firstContentAt === null) firstContentAt = performance.now();
           tokenCount += estimateTokens(delta.content);
+          chunkCount++;
           opts.onDelta({ type: "content", text: delta.content });
         }
       } catch {
@@ -136,7 +164,20 @@ export async function streamChat(
     const durationMs = Math.round(performance.now() - start);
     const ttftMs =
       firstContentAt !== null ? Math.round(firstContentAt - start) : undefined;
-    return { ok: true, ttftMs, durationMs, tokens: tokenCount };
+    const total =
+      usagePrompt !== undefined && usageCompletion !== undefined
+        ? usagePrompt + usageCompletion + (usageReasoning ?? 0)
+        : tokenCount;
+    return {
+      ok: true,
+      ttftMs,
+      durationMs,
+      tokens: total,
+      promptTokens: usagePrompt,
+      completionTokens: usageCompletion,
+      reasoningTokens: usageReasoning,
+      chunks: chunkCount,
+    };
   }
 }
 

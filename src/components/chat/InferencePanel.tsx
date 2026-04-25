@@ -1,4 +1,7 @@
+import { useEffect, useRef, useState } from "react";
 import type { InferenceParams } from "~/hooks/useChat";
+import { downloadFile } from "~/lib/file-export";
+import { promptLibrary, type StoredPrompt } from "~/lib/prompt-library";
 
 type Props = {
   params: InferenceParams;
@@ -109,31 +112,156 @@ export default function InferencePanel({ params, onChange, onClose }: Props) {
         </Column>
       </div>
 
-      <div className="mt-5 border-t border-gray-100 pt-4">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="font-sans text-[11px] font-medium tracking-[0.08em] text-gray-400 uppercase">
-            System prompt
-          </span>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-gray-400">
-              {params.systemPromptEnabled ? "included" : "not included"}
-            </span>
-            <Toggle
-              label=""
-              value={params.systemPromptEnabled}
-              onChange={(v) => onChange({ systemPromptEnabled: v })}
-            />
-          </div>
-        </div>
-        <textarea
-          value={params.systemPrompt}
-          onChange={(e) => onChange({ systemPrompt: e.target.value })}
-          placeholder="You are a helpful assistant. Answer in concise markdown."
-          rows={3}
-          className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3 py-2 text-[13px] text-ink outline-none placeholder:text-gray-400 focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
-        />
-      </div>
+      <SystemPromptSection params={params} onChange={onChange} />
     </section>
+  );
+}
+
+function SystemPromptSection({
+  params,
+  onChange,
+}: {
+  params: InferenceParams;
+  onChange: (next: Partial<InferenceParams>) => void;
+}) {
+  const [library, setLibrary] = useState<StoredPrompt[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setLibrary(promptLibrary.list());
+  }, []);
+
+  function refresh() {
+    setLibrary(promptLibrary.list());
+  }
+
+  function onSaveCurrent() {
+    const name = window.prompt("Name this prompt:", "")?.trim();
+    if (!name) return;
+    if (!params.systemPrompt.trim()) return;
+    promptLibrary.add(name, params.systemPrompt);
+    refresh();
+  }
+
+  function onLoad(id: string) {
+    const found = library.find((p) => p.id === id);
+    if (!found) return;
+    onChange({ systemPrompt: found.content, systemPromptEnabled: true });
+  }
+
+  function onDelete(id: string) {
+    if (!confirm("Delete this saved prompt?")) return;
+    promptLibrary.remove(id);
+    refresh();
+  }
+
+  function onExport() {
+    downloadFile(
+      "thecompai-prompts.json",
+      promptLibrary.exportJson(),
+      "application/json",
+    );
+  }
+
+  function onImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    file.text().then((text) => {
+      const n = promptLibrary.importJson(text);
+      refresh();
+      if (n > 0) alert(`Imported ${n} prompt${n > 1 ? "s" : ""}.`);
+      else alert("Couldn't import — file format wasn't recognized.");
+    });
+  }
+
+  return (
+    <div className="mt-5 border-t border-gray-100 pt-4">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="font-sans text-[11px] font-medium tracking-[0.08em] text-gray-400 uppercase">
+          System prompt
+        </span>
+        <div className="flex items-center gap-3">
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) onLoad(e.target.value);
+            }}
+            className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:border-gray-300"
+          >
+            <option value="">Load saved…</option>
+            {library.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={onSaveCurrent}
+            disabled={!params.systemPrompt.trim()}
+            className="text-[11px] text-cyan hover:text-navy disabled:opacity-40"
+          >
+            Save current
+          </button>
+          <button
+            type="button"
+            onClick={onExport}
+            className="text-[11px] text-gray-400 hover:text-ink"
+          >
+            Export
+          </button>
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="text-[11px] text-gray-400 hover:text-ink"
+          >
+            Import
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,application/json"
+            onChange={onImport}
+            className="hidden"
+          />
+          <span className="text-[10px] text-gray-400">
+            {params.systemPromptEnabled ? "included" : "not included"}
+          </span>
+          <Toggle
+            label=""
+            value={params.systemPromptEnabled}
+            onChange={(v) => onChange({ systemPromptEnabled: v })}
+          />
+        </div>
+      </div>
+      <textarea
+        value={params.systemPrompt}
+        onChange={(e) => onChange({ systemPrompt: e.target.value })}
+        placeholder="You are a helpful assistant. Answer in concise markdown."
+        rows={3}
+        className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3 py-2 text-[13px] text-ink outline-none placeholder:text-gray-400 focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
+      />
+      {library.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {library.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onContextMenu={(e) => {
+                e.preventDefault();
+                onDelete(p.id);
+              }}
+              onClick={() => onLoad(p.id)}
+              title={`Right-click to delete · ${p.content.slice(0, 80)}…`}
+              className="rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-[11px] text-gray-600 hover:border-cyan hover:text-navy"
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -56,6 +56,11 @@ export type UIMessage = {
   stats?: {
     ttft?: string;
     tokens?: number;
+    promptTokens?: number;
+    completionTokens?: number;
+    reasoningTokens?: number;
+    chunks?: number;
+    durationMs?: number;
     speed?: string;
     cost?: string;
   };
@@ -318,11 +323,21 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
             ttft:
               result.ttftMs !== undefined ? `${result.ttftMs}ms` : undefined,
             tokens: result.tokens,
+            promptTokens: result.promptTokens,
+            completionTokens: result.completionTokens,
+            reasoningTokens: result.reasoningTokens,
+            chunks: result.chunks,
+            durationMs: result.durationMs,
             speed:
-              result.durationMs && result.tokens
-                ? `${((result.tokens / result.durationMs) * 1000).toFixed(1)} tok/s`
+              result.durationMs && (result.completionTokens ?? result.tokens)
+                ? `${(((result.completionTokens ?? result.tokens ?? 0) / result.durationMs) * 1000).toFixed(1)} tok/s`
                 : undefined,
-            cost: "$0.00 · local",
+            cost: estimateCost(
+              targetServer,
+              modelSelection.id,
+              result.promptTokens,
+              result.completionTokens,
+            ),
           }
         : undefined;
       const finalContent =
@@ -465,6 +480,27 @@ function toUIMessage(m: ApiMessage): UIMessage {
     reasoning: m.reasoning ?? undefined,
     stats: (m.stats as UIMessage["stats"]) ?? undefined,
   };
+}
+
+/**
+ * Best-effort cost estimate. We don't ship an OpenRouter price catalogue
+ * (model list churns) — so for cloud servers we render a placeholder and
+ * trust the user's OR dashboard for billing reality. Local servers are
+ * always "free" from the user's perspective.
+ */
+function estimateCost(
+  server: ApiServer | null,
+  _model: string,
+  prompt?: number,
+  completion?: number,
+): string {
+  if (!server) return "$0.00 · local";
+  const isCloud = /openrouter\.ai|anthropic\.com|openai\.com/.test(server.url);
+  if (!isCloud) return "$0.00 · local";
+  if (prompt !== undefined && completion !== undefined) {
+    return `${prompt + completion} tok · cloud`;
+  }
+  return "— · cloud";
 }
 
 function inferenceToPayload(i: InferenceParams) {
