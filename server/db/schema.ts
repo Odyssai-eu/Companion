@@ -96,6 +96,7 @@ export const conversations = pgTable(
     }),
     title: text("title").notNull().default("New conversation"),
     model: text("model"),
+    pinned: boolean("pinned").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),

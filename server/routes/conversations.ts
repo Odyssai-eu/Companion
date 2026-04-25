@@ -1,5 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
@@ -24,15 +24,39 @@ const appendMessageSchema = z.object({
 const updateSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   model: z.string().max(200).optional(),
+  pinned: z.boolean().optional(),
+  projectId: z.string().uuid().nullish(),
 });
 
 conversationsRoute.get("/", async (c) => {
   const userId = c.get("userId");
+  // Subquery: pull the latest user message content (truncated) as a preview.
+  const lastMsg = sql<string | null>`(
+    SELECT m.content FROM ${messages} m
+    WHERE m.conversation_id = ${conversations.id}
+      AND m.role = 'user'
+    ORDER BY m.created_at DESC
+    LIMIT 1
+  )`.as("last_message");
+
   const rows = await db
-    .select()
+    .select({
+      id: conversations.id,
+      userId: conversations.userId,
+      serverId: conversations.serverId,
+      projectId: conversations.projectId,
+      title: conversations.title,
+      model: conversations.model,
+      pinned: conversations.pinned,
+      createdAt: conversations.createdAt,
+      updatedAt: conversations.updatedAt,
+      lastMessage: lastMsg,
+    })
     .from(conversations)
     .where(eq(conversations.userId, userId))
-    .orderBy(desc(conversations.updatedAt));
+    // Pinned first, then most-recently created (NOT updated — renaming
+    // shouldn't shuffle a 3-day-old conversation back to the top of "Today").
+    .orderBy(desc(conversations.pinned), desc(conversations.createdAt));
   return c.json({ conversations: rows });
 });
 
@@ -90,14 +114,51 @@ conversationsRoute.patch(
     if (!existing || existing.userId !== userId) {
       return c.json({ error: "not_found" }, 404);
     }
+    // Don't bump updatedAt on metadata-only changes (rename, pin, project
+    // move) — only message activity should mark a conversation as "recent".
+    const isMetadataOnly =
+      data.title !== undefined ||
+      data.pinned !== undefined ||
+      data.projectId !== undefined;
+    const patch: Record<string, unknown> = { ...data };
+    if (!isMetadataOnly) patch.updatedAt = new Date();
+    if (data.projectId === null) patch.projectId = null;
+
     const [updated] = await db
       .update(conversations)
-      .set({ ...data, updatedAt: new Date() })
+      .set(patch)
       .where(eq(conversations.id, id))
       .returning();
     return c.json({ conversation: updated });
   },
 );
+
+conversationsRoute.get("/:id/export.json", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const [conv] = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.id, id))
+    .limit(1);
+  if (!conv || conv.userId !== userId) {
+    return c.json({ error: "not_found" }, 404);
+  }
+  const msgs = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, id))
+    .orderBy(asc(messages.createdAt));
+  const filename = `${(conv.title || "conversation")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .toLowerCase()
+    .slice(0, 80) || "conversation"}.json`;
+  c.header("Content-Type", "application/json; charset=utf-8");
+  c.header("Content-Disposition", `attachment; filename="${filename}"`);
+  return c.body(JSON.stringify({ conversation: conv, messages: msgs }, null, 2));
+});
 
 conversationsRoute.get("/:id/export.md", async (c) => {
   const userId = c.get("userId");

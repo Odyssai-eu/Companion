@@ -102,6 +102,7 @@ export default function Sidebar({ activeConversationId }: Props) {
                 key={c.id}
                 conversation={c}
                 active={c.id === activeConversationId}
+                projects={projectsList}
                 onChange={refresh}
               />
             ))}
@@ -121,6 +122,9 @@ export default function Sidebar({ activeConversationId }: Props) {
 }
 
 function groupByBucket(convos: ApiConversation[]) {
+  // Pinned first as their own bucket. Then by createdAt — renaming or
+  // pinning doesn't shuffle a conversation between buckets.
+  const pinned: ApiConversation[] = [];
   const today: ApiConversation[] = [];
   const yesterday: ApiConversation[] = [];
   const older: ApiConversation[] = [];
@@ -134,12 +138,17 @@ function groupByBucket(convos: ApiConversation[]) {
   startOfYesterday.setDate(startOfYesterday.getDate() - 1);
 
   for (const c of convos) {
-    const t = new Date(c.updatedAt);
+    if (c.pinned) {
+      pinned.push(c);
+      continue;
+    }
+    const t = new Date(c.createdAt);
     if (t >= startOfToday) today.push(c);
     else if (t >= startOfYesterday) yesterday.push(c);
     else older.push(c);
   }
   return [
+    { title: "Pinned", items: pinned },
     { title: "Today", items: today },
     { title: "Yesterday", items: yesterday },
     { title: "Older", items: older },
@@ -223,19 +232,19 @@ function PlusIcon() {
 function ConversationRow({
   conversation,
   active,
+  projects,
   onChange,
 }: {
   conversation: ApiConversation;
   active: boolean;
+  projects: ApiProject[];
   onChange: () => void;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draftTitle, setDraftTitle] = useState(conversation.title);
-  const time = new Date(conversation.updatedAt).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const navigate = useNavigate();
+  const time = relativeTime(conversation.createdAt);
+  const preview = conversation.lastMessage?.trim();
 
   async function commitRename() {
     setRenaming(false);
@@ -249,129 +258,168 @@ function ConversationRow({
     }
   }
 
-  async function onDelete() {
-    if (!confirm(`Delete "${conversation.title}"?`)) return;
+  async function onTogglePin(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
     try {
-      await api.deleteConversation(conversation.id);
+      await api.pinConversation(conversation.id, !conversation.pinned);
       onChange();
     } catch {
       // ignore
     }
   }
 
-  if (renaming) {
-    return (
-      <div
-        className={`flex w-full items-center rounded-md px-2 py-2 ${
-          active ? "bg-[rgba(79,179,217,0.12)]" : "bg-gray-50"
-        }`}
-      >
-        <input
-          autoFocus
-          value={draftTitle}
-          onChange={(e) => setDraftTitle(e.target.value)}
-          onBlur={commitRename}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commitRename();
-            if (e.key === "Escape") {
-              setDraftTitle(conversation.title);
-              setRenaming(false);
-            }
-          }}
-          className="w-full bg-transparent text-[13px] font-medium text-ink outline-none"
-        />
-      </div>
-    );
+  async function onDelete(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm(`Delete "${conversation.title}"?`)) return;
+    try {
+      await api.deleteConversation(conversation.id);
+      if (active) navigate("/");
+      onChange();
+    } catch {
+      // ignore
+    }
+  }
+
+  async function onProjectChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const next = e.target.value || null;
+    try {
+      await api.moveConversationToProject(conversation.id, next);
+      onChange();
+    } catch {
+      // ignore
+    }
   }
 
   return (
     <div
-      className={`group relative flex w-full items-center rounded-md transition-colors ${
+      onClick={(e) => {
+        if (renaming) return;
+        if ((e.target as HTMLElement).closest("button,select,a,input")) return;
+        navigate(`/c/${conversation.id}`);
+      }}
+      className={`group flex flex-col gap-1 rounded-lg px-3 py-2 transition-colors ${
         active
           ? "bg-[rgba(79,179,217,0.12)] text-navy"
           : "text-ink hover:bg-gray-50"
-      }`}
+      } cursor-pointer`}
     >
-      <Link
-        to={`/c/${conversation.id}`}
-        className="flex flex-1 min-w-0 flex-col gap-0.5 px-2 py-2 text-left"
-      >
-        <span
-          className={`truncate text-[13px] ${active ? "font-medium" : "font-normal"}`}
-        >
-          {conversation.title}
-        </span>
-        <span className="font-mono text-[11px] text-gray-400">
-          {conversation.model ? `${conversation.model} · ${time}` : time}
-        </span>
-      </Link>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setMenuOpen((v) => !v);
-        }}
-        aria-label="Conversation actions"
-        className={`mr-1 flex h-6 w-6 items-center justify-center rounded text-gray-400 transition-opacity ${
-          menuOpen
-            ? "opacity-100"
-            : "opacity-0 group-hover:opacity-100"
-        } hover:bg-gray-100 hover:text-ink`}
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.75"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <circle cx="12" cy="5" r="1.5" />
-          <circle cx="12" cy="12" r="1.5" />
-          <circle cx="12" cy="19" r="1.5" />
-        </svg>
-      </button>
-      {menuOpen && (
-        <div
-          className="absolute top-full right-0 z-30 mt-1 w-[160px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-[0_10px_24px_rgba(10,10,10,0.1)]"
-          onMouseLeave={() => setMenuOpen(false)}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              setMenuOpen(false);
+      <div className="flex items-start justify-between gap-2">
+        {renaming ? (
+          <input
+            autoFocus
+            value={draftTitle}
+            onChange={(e) => setDraftTitle(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter")
+                (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") {
+                setDraftTitle(conversation.title);
+                setRenaming(false);
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="min-w-0 flex-1 rounded border border-cyan bg-white px-1 py-0 text-[13px] font-medium text-ink outline-none"
+          />
+        ) : (
+          <span
+            onDoubleClick={(e) => {
+              e.stopPropagation();
               setDraftTitle(conversation.title);
               setRenaming(true);
             }}
-            className="block w-full px-3 py-2 text-left text-[13px] text-ink hover:bg-gray-50"
+            className={`flex min-w-0 flex-1 items-center gap-1 truncate text-[13px] ${
+              active ? "font-medium" : "font-normal"
+            }`}
           >
-            Rename
-          </button>
-          <a
-            href={api.exportConversationUrl(conversation.id)}
-            download
-            onClick={() => setMenuOpen(false)}
-            className="block w-full px-3 py-2 text-left text-[13px] text-ink hover:bg-gray-50"
-          >
-            Export .md
-          </a>
+            {conversation.pinned && (
+              <span className="mr-0.5 text-[10px] text-amber-500">📌</span>
+            )}
+            {conversation.title || "New conversation"}
+          </span>
+        )}
+        <span className="flex-shrink-0 font-mono text-[11px] text-gray-400">
+          {time}
+        </span>
+      </div>
+
+      {preview && (
+        <span className="truncate text-[12px] text-gray-400">{preview}</span>
+      )}
+
+      <div className="hidden flex-col gap-1 group-hover:flex">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onTogglePin}
+              className={`text-[10px] ${
+                conversation.pinned ? "text-amber-500" : "text-gray-400"
+              } hover:text-amber-600`}
+            >
+              {conversation.pinned ? "Unpin" : "Pin"}
+            </button>
+            <a
+              href={api.exportConversationUrl(conversation.id)}
+              download
+              onClick={(e) => e.stopPropagation()}
+              className="text-[10px] text-cyan hover:text-navy"
+            >
+              ↓ MD
+            </a>
+            <a
+              href={api.exportConversationJsonUrl(conversation.id)}
+              download
+              onClick={(e) => e.stopPropagation()}
+              className="text-[10px] text-cyan hover:text-navy"
+            >
+              ↓ JSON
+            </a>
+          </div>
           <button
             type="button"
-            onClick={() => {
-              setMenuOpen(false);
-              onDelete();
-            }}
-            className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[13px] text-red-600 hover:bg-red-50"
+            onClick={onDelete}
+            className="text-[10px] text-red-400 hover:text-red-600"
           >
             Delete
           </button>
         </div>
-      )}
+        {projects.length > 0 && (
+          <select
+            value={conversation.projectId ?? ""}
+            onClick={(e) => e.stopPropagation()}
+            onChange={onProjectChange}
+            className="w-full cursor-pointer rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-600"
+          >
+            <option value="">No project</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.icon ?? "📁"} {p.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
     </div>
   );
+}
+
+function relativeTime(iso: string): string {
+  const t = new Date(iso).getTime();
+  const now = Date.now();
+  const diff = Math.max(0, now - t);
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "now";
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d`;
+  const w = Math.floor(d / 7);
+  if (w < 5) return `${w}w`;
+  return new Date(iso).toLocaleDateString();
 }
 
 function SearchInput() {

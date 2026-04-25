@@ -36,6 +36,8 @@ export type ApiConversation = {
   projectId: string | null;
   title: string;
   model: string | null;
+  pinned: boolean;
+  lastMessage?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -240,6 +242,16 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ title }),
     }),
+  pinConversation: (id: string, pinned: boolean) =>
+    request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ pinned }),
+    }),
+  moveConversationToProject: (id: string, projectId: string | null) =>
+    request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ projectId }),
+    }),
   deleteConversation: (id: string) =>
     request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
   appendMessage: (
@@ -257,6 +269,8 @@ export const api = {
     ),
   exportConversationUrl: (id: string) =>
     `/api/conversations/${id}/export.md`,
+  exportConversationJsonUrl: (id: string) =>
+    `/api/conversations/${id}/export.json`,
   exportProjectUrl: (id: string) => `/api/projects/${id}/export.md`,
 
   // Projects
