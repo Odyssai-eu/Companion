@@ -11,8 +11,7 @@ import { renderMarkdown } from "~/lib/markdown";
 import { tts } from "~/lib/tts";
 import SpaceInvaders from "./SpaceInvaders";
 
-// ⌥⇧A ⌥⇧T ⌥⇧A ⌥⇧R ⌥⇧I
-const ATARI_SEQ = ["KeyA", "KeyT", "KeyA", "KeyR", "KeyI"];
+const ATARI_SEQ = ["a", "t", "a", "r", "i"];
 
 export default function Messages({
   messages,
@@ -36,8 +35,11 @@ export default function Messages({
   useEffect(() => {
     if (messages.length > 0) return;
     const handler = (e: KeyboardEvent) => {
-      if (!e.altKey || !e.shiftKey) return;
-      eggBuf.current.push(e.code);
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.length !== 1) return;
+      eggBuf.current.push(e.key.toLowerCase());
       if (eggBuf.current.length > ATARI_SEQ.length) eggBuf.current.shift();
       if (JSON.stringify(eggBuf.current) === JSON.stringify(ATARI_SEQ)) {
         setEasterEgg(true);
