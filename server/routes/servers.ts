@@ -240,6 +240,13 @@ export type ModelEntry = {
   name: string;
   loaded: boolean;
   endpoints: string[];
+  /** Heuristic capability flags. Exo doesn't expose these, so we match the
+   *  modelId against well-known vision/tools patterns. The badge is best-
+   *  effort — false negatives mean "you'll find out when the model errors". */
+  capabilities: {
+    vision: boolean;
+    tools: boolean;
+  };
 };
 
 /**
@@ -275,6 +282,7 @@ export async function listModelsForServer(
         name: stripMakerPrefix(id),
         loaded: true,
         endpoints: [primary.node ?? primary.ip],
+        capabilities: detectCapabilities(id),
       }));
   }
 
@@ -298,6 +306,7 @@ export async function listModelsForServer(
           name: stripMakerPrefix(id),
           loaded: true,
           endpoints: [endpointLabel],
+          capabilities: detectCapabilities(id),
         });
       }
     }
@@ -308,6 +317,7 @@ export async function listModelsForServer(
         name: stripMakerPrefix(id),
         loaded: false,
         endpoints: [endpointLabel],
+        capabilities: detectCapabilities(id),
       });
     }
   }
@@ -392,6 +402,49 @@ async function fetchEndpointModels(
 function stripMakerPrefix(id: string): string {
   const slash = id.indexOf("/");
   return slash === -1 ? id : id.slice(slash + 1);
+}
+
+/** Heuristic vision detection — well-known multimodal families. */
+const VISION_PATTERNS = [
+  /vl(\b|-|_)/i, // qwen-vl, qwen2-vl, …
+  /vision/i,
+  /-mm(\b|-)/i,
+  /multimodal/i,
+  /llava/i,
+  /pixtral/i,
+  /gpt-4o/i,
+  /gpt-4-(vision|turbo-vision)/i,
+  /claude-3/i, // all Claude 3 family is vision
+  /claude-sonnet|claude-opus|claude-haiku/i,
+  /gemini-/i,
+  /gemma-3/i, // Gemma 3 has vision variants
+  /idefics/i,
+  /molmo/i,
+  /minicpm-v/i,
+  /internvl/i,
+  /kimi-vl/i,
+  /llama-3\.2-(\d+B-)?vision/i,
+];
+
+/** Heuristic tools / function-calling detection. */
+const TOOLS_PATTERNS = [
+  /gpt-4/i,
+  /gpt-3\.5-turbo/i,
+  /claude-3/i,
+  /claude-sonnet|claude-opus|claude-haiku/i,
+  /mistral|mixtral/i,
+  /qwen/i,
+  /llama-3/i,
+  /command-r/i,
+  /firefunction/i,
+  /tool-use/i,
+];
+
+function detectCapabilities(id: string): { vision: boolean; tools: boolean } {
+  return {
+    vision: VISION_PATTERNS.some((re) => re.test(id)),
+    tools: TOOLS_PATTERNS.some((re) => re.test(id)),
+  };
 }
 
 /**

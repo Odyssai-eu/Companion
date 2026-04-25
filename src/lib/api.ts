@@ -16,6 +16,7 @@ export type ApiModel = {
   name: string;
   loaded: boolean;
   endpoints: string[];
+  capabilities: { vision: boolean; tools: boolean };
 };
 
 export type ApiGlobalModel = {
@@ -27,6 +28,7 @@ export type ApiGlobalModel = {
   engineKind: "openai-compat" | "anthropic";
   source: "local" | "cloud";
   provider: string | null;
+  capabilities: { vision: boolean; tools: boolean };
 };
 
 export type ApiConversation = {

@@ -144,7 +144,7 @@ export default function Input({
   }
 
   return (
-    <div className="flex flex-col items-center gap-2 px-8 pt-4 pb-6">
+    <div className="flex flex-col items-center gap-2 px-4 pt-4 pb-4 md:px-8 md:pb-6">
       <div
         onDragOver={(e) => {
           if (e.dataTransfer?.types?.includes("Files")) {

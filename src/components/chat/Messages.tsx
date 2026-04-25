@@ -65,8 +65,8 @@ export default function Messages({
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-8 py-10">
-      <div className="mx-auto flex max-w-3xl flex-col gap-10">
+    <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8 md:py-10">
+      <div className="mx-auto flex max-w-3xl flex-col gap-8 md:gap-10">
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 font-mono text-[12px] text-red-700">
             {error}

@@ -14,6 +14,7 @@ type Props = {
   onStyleChange: (style: ChatStyle) => void;
   onTogglePanel: () => void;
   panelOpen: boolean;
+  onOpenMobileSidebar?: () => void;
 };
 
 export default function TopBar({
@@ -24,14 +25,25 @@ export default function TopBar({
   onStyleChange,
   onTogglePanel,
   panelOpen,
+  onOpenMobileSidebar,
 }: Props) {
   const indicai = useIndicAI();
   const voiceMode = useVoiceMode();
   return (
     <header className="flex flex-col border-b border-gray-200 bg-white">
       {/* Line 1 — server + model / IndicAI */}
-      <div className="flex items-center justify-between gap-3 px-6 pt-3 pb-1.5">
+      <div className="flex items-center justify-between gap-3 px-4 pt-3 pb-1.5 md:px-6">
         <div className="flex items-center gap-3">
+          {onOpenMobileSidebar && (
+            <button
+              type="button"
+              onClick={onOpenMobileSidebar}
+              aria-label="Open sidebar"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-ink hover:bg-gray-50 md:hidden"
+            >
+              <HamburgerIcon />
+            </button>
+          )}
           <EngineBadge
             engine={activeServer ? activeServer.name : "No server"}
             connected={!!activeServer}
@@ -179,6 +191,25 @@ function SlidersIcon() {
       <line x1="1" y1="14" x2="7" y2="14" />
       <line x1="9" y1="8" x2="15" y2="8" />
       <line x1="17" y1="16" x2="23" y2="16" />
+    </svg>
+  );
+}
+
+function HamburgerIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="18" x2="21" y2="18" />
     </svg>
   );
 }

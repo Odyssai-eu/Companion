@@ -15,6 +15,7 @@ export default function ChatLayout() {
   const chat = useChat({ conversationId: id });
   const [style, setStyle] = useState<ChatStyle>("Normal");
   const [panelOpen, setPanelOpen] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const navigate = useNavigate();
   const voiceMode = useVoiceMode();
 
@@ -61,6 +62,8 @@ export default function ChatLayout() {
       <Sidebar
         activeConversationId={id ?? null}
         streamingConversationId={chat.sending ? id ?? null : null}
+        mobileOpen={mobileSidebarOpen}
+        onMobileClose={() => setMobileSidebarOpen(false)}
       />
       <main className="flex flex-1 flex-col bg-gray-50">
         <TopBar
@@ -71,6 +74,7 @@ export default function ChatLayout() {
           onStyleChange={onStyleChange}
           onTogglePanel={() => setPanelOpen((v) => !v)}
           panelOpen={panelOpen}
+          onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
         />
         {panelOpen && (
           <InferencePanel

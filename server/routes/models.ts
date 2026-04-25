@@ -16,6 +16,10 @@ export type GlobalModel = {
   engineKind: "openai-compat" | "anthropic";
   source: "local" | "cloud";
   provider: string | null;
+  capabilities: {
+    vision: boolean;
+    tools: boolean;
+  };
 };
 
 /**
@@ -64,6 +68,7 @@ modelsRoute.get("/", async (c) => {
         engineKind: s.engineKind as "openai-compat" | "anthropic",
         source: cloud ? "cloud" : "local",
         provider: cloud ? extractProvider(m.id) : null,
+        capabilities: m.capabilities,
       }));
     }),
   );

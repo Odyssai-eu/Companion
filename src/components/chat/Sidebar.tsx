@@ -8,11 +8,16 @@ type Props = {
   activeConversationId: string | null;
   /** Conversation currently streaming a reply, if any. */
   streamingConversationId?: string | null;
+  /** Mobile drawer open/closed. Desktop ignores this. */
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 };
 
 export default function Sidebar({
   activeConversationId,
   streamingConversationId,
+  mobileOpen = false,
+  onMobileClose,
 }: Props) {
   const [conversations, setConversations] = useState<ApiConversation[]>([]);
   const [projectsList, setProjectsList] = useState<ApiProject[]>([]);
@@ -60,7 +65,18 @@ export default function Sidebar({
   const groups = groupByBucket(filtered);
 
   return (
-    <aside className="flex h-full w-[280px] flex-col border-r border-gray-200 bg-white">
+    <>
+      {mobileOpen && (
+        <div
+          onClick={onMobileClose}
+          className="fixed inset-0 z-30 bg-black/30 md:hidden"
+        />
+      )}
+    <aside
+      className={`fixed top-0 left-0 z-40 flex h-full w-[280px] flex-col border-r border-gray-200 bg-white transition-transform md:static md:translate-x-0 ${
+        mobileOpen ? "translate-x-0" : "-translate-x-full"
+      }`}
+    >
       <header className="px-4 pt-4 pb-3">
         <Wordmark size="sm" />
       </header>
@@ -134,6 +150,7 @@ export default function Sidebar({
 
       <UserFooter />
     </aside>
+    </>
   );
 }
 

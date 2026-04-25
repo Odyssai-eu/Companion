@@ -49,6 +49,18 @@ html.a11y-dyslexia-line body {
   letter-spacing: 0.02em;
 }
 
+/* Mobile: prevent iOS auto-zoom on focused inputs (anything <16px triggers it) */
+@media (max-width: 767px) {
+  textarea,
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="search"] {
+    font-size: 16px !important;
+  }
+}
+
 /* Markdown body — applies to assistant messages rendered via marked */
 .md-body > *:first-child {
   margin-top: 0;

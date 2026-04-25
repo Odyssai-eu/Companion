@@ -234,8 +234,26 @@ export default function ModelPicker({ selected, onChange }: Props) {
                             : "hover:bg-gray-50"
                         }`}
                       >
-                        <span className="truncate font-mono text-[12px] text-ink">
-                          {m.name}
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate font-mono text-[12px] text-ink">
+                            {m.name}
+                          </span>
+                          {m.capabilities?.vision && (
+                            <span
+                              title="Vision-capable"
+                              className="flex-shrink-0 rounded bg-violet-50 px-1.5 py-0.5 font-mono text-[9px] font-medium text-violet-700"
+                            >
+                              👁
+                            </span>
+                          )}
+                          {m.capabilities?.tools && (
+                            <span
+                              title="Function calling"
+                              className="flex-shrink-0 rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[9px] font-medium text-amber-700"
+                            >
+                              ⚒
+                            </span>
+                          )}
                         </span>
                         {m.loaded ? (
                           <span className="flex-shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
