@@ -1,6 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { UIMessage } from "~/hooks/useChat";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
+import {
+  downloadAllAsZip,
+  downloadFile,
+  extractCodeBlocks,
+  messageMdFilename,
+} from "~/lib/file-export";
 import { tts } from "~/lib/tts";
 
 export default function Messages({
@@ -122,9 +128,45 @@ function AssistantMessage({ message }: { message: UIMessage }) {
         </div>
         {message.stats && !message.streaming && <StatsRow stats={message.stats} />}
         {!message.streaming && message.content && (
-          <ActionsRow message={message} />
+          <>
+            <ActionsRow message={message} />
+            <CodeBlockPills message={message} />
+          </>
         )}
       </div>
+    </div>
+  );
+}
+
+function CodeBlockPills({ message }: { message: UIMessage }) {
+  const blocks = useMemo(
+    () => extractCodeBlocks(message.content),
+    [message.content],
+  );
+  if (blocks.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {blocks.map((b, j) => (
+        <button
+          key={j}
+          type="button"
+          onClick={() => downloadFile(b.filename, b.code)}
+          className="flex items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-[11px] text-gray-600 hover:bg-gray-100 hover:text-ink"
+        >
+          <FileIcon />
+          <span>{b.filename}</span>
+        </button>
+      ))}
+      {blocks.length > 1 && (
+        <button
+          type="button"
+          onClick={() => downloadAllAsZip(blocks)}
+          className="flex items-center gap-1.5 rounded-md border border-cyan/30 bg-cyan/10 px-2 py-1 font-mono text-[11px] text-cyan-700 hover:bg-cyan/20"
+        >
+          <DownloadIcon />
+          <span>Save all (.zip)</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -235,7 +277,16 @@ function ActionsRow({ message }: { message: UIMessage }) {
     }
   }
 
-  function onSave() {
+  function onSaveMd() {
+    if (!message.content) return;
+    downloadFile(
+      messageMdFilename(message.id),
+      message.content,
+      "text/markdown",
+    );
+  }
+
+  function onSaveWav() {
     tts
       .save(message.content, `thecompai-${message.id.slice(0, 8)}.wav`)
       .catch(() => undefined);
@@ -243,6 +294,14 @@ function ActionsRow({ message }: { message: UIMessage }) {
 
   return (
     <div className="flex items-center gap-5 text-[12px] text-gray-400">
+      <button
+        type="button"
+        onClick={onSpeak}
+        className={`flex items-center gap-1.5 hover:text-ink ${speaking ? "text-cyan" : ""}`}
+      >
+        <SpeakIcon />
+        <span>{speaking ? "Stop" : "Listen"}</span>
+      </button>
       <button
         type="button"
         onClick={onCopy}
@@ -253,28 +312,80 @@ function ActionsRow({ message }: { message: UIMessage }) {
       </button>
       <button
         type="button"
-        className="flex items-center gap-1.5 hover:text-ink"
-      >
-        <RegenerateIcon />
-        <span>Regenerate</span>
-      </button>
-      <button
-        type="button"
-        onClick={onSpeak}
-        className={`flex items-center gap-1.5 hover:text-ink ${speaking ? "text-cyan" : ""}`}
-      >
-        <SpeakIcon />
-        <span>{speaking ? "Stop" : "Speak"}</span>
-      </button>
-      <button
-        type="button"
-        onClick={onSave}
+        onClick={onSaveMd}
         className="flex items-center gap-1.5 hover:text-ink"
       >
         <SaveIcon />
+        <span>Save</span>
+      </button>
+      <button
+        type="button"
+        onClick={onSaveWav}
+        className="flex items-center gap-1.5 hover:text-ink"
+        title="Save spoken audio (.wav)"
+      >
+        <WaveIcon />
         <span>Save WAV</span>
       </button>
     </div>
+  );
+}
+
+function FileIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
+function WaveIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="3" y1="12" x2="5" y2="12" />
+      <line x1="7" y1="8" x2="7" y2="16" />
+      <line x1="11" y1="4" x2="11" y2="20" />
+      <line x1="15" y1="8" x2="15" y2="16" />
+      <line x1="19" y1="12" x2="21" y2="12" />
+    </svg>
   );
 }
 
@@ -292,26 +403,6 @@ function CopyIcon() {
     >
       <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-    </svg>
-  );
-}
-
-function RegenerateIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
-      <path d="M21 3v5h-5" />
-      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
-      <path d="M3 21v-5h5" />
     </svg>
   );
 }
