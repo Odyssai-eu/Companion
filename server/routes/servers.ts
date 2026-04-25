@@ -5,7 +5,7 @@ import { z } from "zod";
 import { db } from "../db/index";
 import { endpoints, servers } from "../db/schema";
 import type { Endpoint } from "../db/schema";
-import { buildBase } from "../lib/url";
+import { buildBase, isCloudHost } from "../lib/url";
 
 const serversRoute = new Hono();
 
@@ -257,14 +257,17 @@ export async function listModelsForServer(
   headers: Record<string, string>,
   engineKind: string,
 ): Promise<ModelEntry[]> {
-  if (engineKind === "anthropic") {
-    // Anthropic-style: primary endpoint only, /v1/models
-    const primary = eps.find((e) => e.role === "primary") ?? eps[0];
+  const primary = eps.find((e) => e.role === "primary") ?? eps[0];
+  if (!primary) return [];
+
+  // Cloud paths (Anthropic, OpenRouter, OpenAI): models are always served, no
+  // download/place lifecycle. Hit /v1/models on the primary, mark all loaded.
+  if (engineKind === "anthropic" || isCloudHost(primary.ip)) {
     const base = buildBase(primary.ip, primary.port);
     const res = await fetch(`${base}/v1/models`, { headers }).catch(() => null);
     if (!res || !res.ok) return [];
-    const body = (await res.json()) as { data?: { id?: string }[] };
-    return (body.data ?? [])
+    const body = await safeJson<{ data?: { id?: string }[] }>(res);
+    return (body?.data ?? [])
       .map((m) => m.id)
       .filter((id): id is string => !!id)
       .map<ModelEntry>((id) => ({
@@ -275,7 +278,8 @@ export async function listModelsForServer(
       }));
   }
 
-  // OpenAI-compat path — merge across every endpoint in parallel.
+  // OpenAI-compat local path (exo, Ollama, LM Studio, vLLM) — merge across
+  // every endpoint in parallel.
   const perEndpoint = await Promise.all(
     eps.map((ep) => fetchEndpointModels(ep, headers)),
   );
@@ -340,7 +344,7 @@ async function fetchEndpointModels(
 
     const loaded: string[] = [];
     if (stateRes?.ok) {
-      const state = (await stateRes.json()) as {
+      const state = await safeJson<{
         instances?: Record<
           string,
           {
@@ -348,8 +352,8 @@ async function fetchEndpointModels(
             MlxInstance?: { shardAssignments?: { modelId?: string } };
           }
         >;
-      };
-      for (const inst of Object.values(state.instances ?? {})) {
+      }>(stateRes);
+      for (const inst of Object.values(state?.instances ?? {})) {
         const inner = inst.MlxJacclInstance ?? inst.MlxInstance;
         const modelId = inner?.shardAssignments?.modelId;
         if (modelId && !loaded.includes(modelId)) loaded.push(modelId);
@@ -358,24 +362,23 @@ async function fetchEndpointModels(
 
     const downloaded: string[] = [];
     if (downloadedRes?.ok) {
-      const body = (await downloadedRes.json()) as {
-        data?: { id?: string }[];
-      };
-      for (const m of body.data ?? []) {
+      const body = await safeJson<{ data?: { id?: string }[] }>(downloadedRes);
+      for (const m of body?.data ?? []) {
         if (m.id && !downloaded.includes(m.id)) downloaded.push(m.id);
       }
     }
 
-    // Fallback for non-exo OpenAI-compat: /v1/models without the filter
+    // Fallback for non-exo OpenAI-compat servers that don't expose /state or
+    // the ?status=downloaded filter: hit plain /v1/models, mark all loaded.
     if (loaded.length === 0 && downloaded.length === 0) {
       const plain = await fetch(`${base}/v1/models`, {
         headers,
         signal: controller.signal,
       }).catch(() => null);
       if (plain?.ok) {
-        const body = (await plain.json()) as { data?: { id?: string }[] };
-        for (const m of body.data ?? []) {
-          if (m.id) loaded.push(m.id); // assume served = loaded for cloud
+        const body = await safeJson<{ data?: { id?: string }[] }>(plain);
+        for (const m of body?.data ?? []) {
+          if (m.id) loaded.push(m.id);
         }
       }
     }
@@ -389,6 +392,22 @@ async function fetchEndpointModels(
 function stripMakerPrefix(id: string): string {
   const slash = id.indexOf("/");
   return slash === -1 ? id : id.slice(slash + 1);
+}
+
+/**
+ * Some servers (notably OpenRouter at /api/state) return HTML for endpoints
+ * we expect to be JSON. Avoid letting that crash the whole listing.
+ */
+async function safeJson<T>(res: Response): Promise<T | null> {
+  try {
+    const ct = res.headers.get("content-type") ?? "";
+    if (!ct.includes("application/json") && !ct.includes("text/json")) {
+      return null;
+    }
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
 }
 
 const updateEndpointSchema = z.object({
