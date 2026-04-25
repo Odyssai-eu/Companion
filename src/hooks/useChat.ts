@@ -269,6 +269,14 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         effectiveInference.system_prompt = project.systemPrompt;
       }
 
+      // Accumulate stream chunks in local closure vars rather than reading
+      // them back out of React state. With React 19 concurrent rendering, a
+      // setState updater can be deferred — so building `finalAssistant` from
+      // *inside* a setMessages updater used to leave it null at persist time,
+      // which is why assistant replies were never written to the DB.
+      let streamedContent = "";
+      let streamedReasoning = "";
+
       const result = await streamChat({
         serverId: targetServer.id,
         messages: convoForModel,
@@ -277,14 +285,21 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         inference: effectiveInference,
         signal: controller.signal,
         onDelta: (delta) => {
+          if (delta.type === "reasoning") {
+            streamedReasoning += delta.text;
+          } else {
+            streamedContent += delta.text;
+          }
           setMessages((prev) =>
-            prev.map((m) => {
-              if (m.id !== assistantId) return m;
-              if (delta.type === "reasoning") {
-                return { ...m, reasoning: (m.reasoning ?? "") + delta.text };
-              }
-              return { ...m, content: m.content + delta.text };
-            }),
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    content: streamedContent,
+                    reasoning: streamedReasoning || undefined,
+                  }
+                : m,
+            ),
           );
         },
       });
@@ -292,55 +307,48 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       abortRef.current = null;
       setSending(false);
 
-      // Snapshot the final assistant message from state to persist
-      let finalAssistant: UIMessage | null = null;
-      setMessages((prev) => {
-        const next = prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          const stats = result.ok
-            ? {
-                ttft:
-                  result.ttftMs !== undefined
-                    ? `${result.ttftMs}ms`
-                    : undefined,
-                tokens: result.tokens,
-                speed:
-                  result.durationMs && result.tokens
-                    ? `${((result.tokens / result.durationMs) * 1000).toFixed(1)} tok/s`
-                    : undefined,
-                cost: "$0.00 · local",
-              }
-            : undefined;
-          const aborted = controller.signal.aborted;
-          const finalContent =
-            !result.ok && !m.content
-              ? aborted
-                ? "⏹ Stopped"
-                : `⚠︎ ${result.error ?? "Couldn't reach the engine."}`
-              : m.content;
-          const updated = {
-            ...m,
-            content: finalContent,
-            streaming: false,
-            stats,
-          };
-          finalAssistant = updated;
-          return updated;
-        });
-        return next;
-      });
+      const aborted = controller.signal.aborted;
+      const stats = result.ok
+        ? {
+            ttft:
+              result.ttftMs !== undefined ? `${result.ttftMs}ms` : undefined,
+            tokens: result.tokens,
+            speed:
+              result.durationMs && result.tokens
+                ? `${((result.tokens / result.durationMs) * 1000).toFixed(1)} tok/s`
+                : undefined,
+            cost: "$0.00 · local",
+          }
+        : undefined;
+      const finalContent =
+        !result.ok && !streamedContent
+          ? aborted
+            ? "⏹ Stopped"
+            : `⚠︎ ${result.error ?? "Couldn't reach the engine."}`
+          : streamedContent;
+      const finalAssistant: UIMessage = {
+        id: assistantId,
+        role: "assistant",
+        content: finalContent,
+        reasoning: streamedReasoning || undefined,
+        streaming: false,
+        stats,
+      };
+
+      setMessages((prev) =>
+        prev.map((m) => (m.id === assistantId ? finalAssistant : m)),
+      );
 
       if (!result.ok) setError(result.error ?? null);
 
-      // Persist the assistant message (best effort)
-      if (finalAssistant && convId) {
-        const msg = finalAssistant as UIMessage;
+      // Persist the assistant message (best effort, fire and forget)
+      if (convId && finalContent) {
         api
           .appendMessage(convId, {
             role: "assistant",
-            content: msg.content,
-            reasoning: msg.reasoning,
-            stats: msg.stats as Record<string, unknown> | undefined,
+            content: finalContent,
+            reasoning: streamedReasoning || undefined,
+            stats: stats as Record<string, unknown> | undefined,
           })
           .catch((e) => console.warn("persist assistant failed", e));
       }

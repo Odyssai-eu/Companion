@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import IconRail from "~/components/settings/IconRail";
+import Sidebar from "~/components/chat/Sidebar";
 import {
   api,
   type ApiConversation,
@@ -127,7 +127,7 @@ export default function ProjectPage() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-gray-50">
-      <IconRail />
+      <Sidebar activeConversationId={null} />
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-[820px] flex-col gap-10 px-14 py-16">
           <header className="flex items-start justify-between gap-6">
