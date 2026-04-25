@@ -185,7 +185,18 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
   const sendMessage = useCallback(
     async (text: string) => {
-      if (!activeServer || sending) return;
+      // Prefer the server attached to the user's picked model. Falls back to
+      // the active server (set by conversation load or by hand). Without this,
+      // picking an OpenRouter model on a conversation that was started with
+      // exo would still send to exo and 404.
+      const targetServerId =
+        modelSelection.serverId ??
+        activeServer?.id ??
+        servers[0]?.id ??
+        null;
+      const targetServer =
+        servers.find((s) => s.id === targetServerId) ?? activeServer;
+      if (!targetServer || sending) return;
       const trimmed = text.trim();
       if (!trimmed) return;
 
@@ -196,7 +207,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       if (!convId) {
         try {
           const created = await api.createConversation({
-            serverId: activeServer.id,
+            serverId: targetServer.id,
             title: trimmed.slice(0, 80),
           });
           convId = created.conversation.id;
@@ -250,7 +261,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       }
 
       const result = await streamChat({
-        serverId: activeServer.id,
+        serverId: targetServer.id,
         messages: convoForModel,
         model:
           modelSelection.id === "auto" ? undefined : modelSelection.id,
