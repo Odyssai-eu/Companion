@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
 import { conversations, messages } from "../db/schema";
+import { triggerCompile } from "../lib/memory";
 
 const conversationsRoute = new Hono();
 
@@ -306,6 +307,13 @@ conversationsRoute.post(
         .update(conversations)
         .set({ updatedAt: new Date() })
         .where(eq(conversations.id, id));
+    }
+
+    // After an assistant message lands, ask the memory service to recompile.
+    // Fire-and-forget, debounced server-side; chat is unaffected if the
+    // memory service is down.
+    if (data.role === "assistant" && data.content.trim().length > 0) {
+      triggerCompile(userId, id);
     }
 
     return c.json({ message }, 201);

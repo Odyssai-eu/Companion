@@ -1,7 +1,8 @@
 import { asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db/index";
-import { endpoints, servers } from "../db/schema";
+import { conversations, endpoints, servers } from "../db/schema";
+import { getMemoryContext } from "../lib/memory";
 import { buildBase } from "../lib/url";
 import { handleAnthropicChat } from "./chat-anthropic";
 
@@ -14,6 +15,7 @@ chatRoute.post("/completions", async (c) => {
   }
   const {
     serverId,
+    conversationId,
     messages,
     model,
     temperature,
@@ -28,6 +30,7 @@ chatRoute.post("/completions", async (c) => {
     system_prompt,
   } = body as {
     serverId?: string;
+    conversationId?: string;
     messages?: unknown;
     model?: string;
     temperature?: number;
@@ -66,12 +69,40 @@ chatRoute.post("/completions", async (c) => {
 
   const base = buildBase(primary.ip, primary.port);
 
-  // Prepend system prompt if provided (OpenAI format; Anthropic handler
-  // extracts it into its native field).
+  // Pull "what I remember about you" from the memory service, scoped to this
+  // user (and the active project, if any). Best-effort: if the memory service
+  // is down or slow we fall through with an empty string.
+  let memoryBlock = "";
+  let projectId: string | null = null;
+  if (conversationId) {
+    try {
+      const [conv] = await db
+        .select({ projectId: conversations.projectId, userId: conversations.userId })
+        .from(conversations)
+        .where(eq(conversations.id, conversationId))
+        .limit(1);
+      if (conv && conv.userId === userId) {
+        projectId = conv.projectId;
+        memoryBlock = await getMemoryContext(userId, projectId);
+      }
+    } catch (err) {
+      console.warn("[chat] memory lookup failed:", (err as Error).message);
+    }
+  }
+
+  // Compose the system prompt: user-supplied prompt first (highest priority),
+  // memory block second (background context the assistant uses to stay
+  // consistent across conversations).
+  const systemSegments: string[] = [];
+  if (system_prompt && system_prompt.trim().length > 0)
+    systemSegments.push(system_prompt.trim());
+  if (memoryBlock.trim().length > 0) systemSegments.push(memoryBlock);
+  const composedSystem = systemSegments.join("\n\n---\n\n");
+
   const withSystem =
-    system_prompt && system_prompt.trim().length > 0
+    composedSystem.length > 0
       ? [
-          { role: "system", content: system_prompt.trim() },
+          { role: "system", content: composedSystem },
           ...(messages as { role: string; content: string }[]),
         ]
       : (messages as { role: "user" | "assistant" | "system"; content: string }[]);

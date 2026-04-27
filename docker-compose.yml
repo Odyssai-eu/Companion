@@ -10,8 +10,13 @@ services:
       NODE_ENV: production
       DEV_LICENSE_BYPASS: "1"
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-3u20k0CdiFcCWfkYzRn8fpCSCgDxpOBwCv8kh_FTBf6R93aRJ_8G-9QSRJa52vKn}
+      # The memory service is deployed independently (see thecompai-memory
+      # repo). Defaults assume it runs on the same host on port 8001.
+      MEMORY_SERVICE_URL: ${MEMORY_SERVICE_URL:-http://host.docker.internal:8001}
     ports:
       - "${HOST_PORT:-3000}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy

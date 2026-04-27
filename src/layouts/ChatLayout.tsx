@@ -108,6 +108,7 @@ export default function ChatLayout() {
               ? `Ask ${chat.activeServer.name}…`
               : "Add a server first"
           }
+          modelHasVision={chat.activeModelCapabilities.vision}
         />
       </main>
     </div>

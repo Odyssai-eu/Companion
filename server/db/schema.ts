@@ -192,3 +192,66 @@ export type Addon = typeof addons.$inferSelect;
 export type NewServer = typeof servers.$inferInsert;
 export type NewEndpoint = typeof endpoints.$inferInsert;
 export type NewMessage = typeof messages.$inferInsert;
+
+// ── Memory (LLM wiki) ─────────────────────────────────────────────────
+// Compiled by the thecompai-memory Python service. The backend reads
+// memory_articles to inject "what I remember about you" into the system
+// prompt, and writes only via the lock endpoint when a user edits an article.
+
+export const memoryArticles = pgTable(
+  "memory_articles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    path: text("path").notNull(), // e.g. "profile/identity.md"
+    title: text("title").notNull(),
+    summary: text("summary").notNull(),
+    body: text("body").notNull(),
+    hash: text("hash").notNull(),
+    editedByUser: boolean("edited_by_user").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    // One article per (user, project, path). project_id NULL = global scope.
+    uniqUserProjectPath: uniqueIndex("memory_articles_user_project_path_idx").on(
+      t.userId,
+      t.projectId,
+      t.path,
+    ),
+    userUpdatedIdx: index("memory_articles_user_updated_idx").on(
+      t.userId,
+      t.updatedAt,
+    ),
+  }),
+);
+
+export const memoryCompileState = pgTable(
+  "memory_compile_state",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    lastCompiledAt: timestamp("last_compiled_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    pk: uniqueIndex("memory_compile_state_pk").on(t.userId, t.conversationId),
+  }),
+);
+
+export type MemoryArticle = typeof memoryArticles.$inferSelect;
+export type NewMemoryArticle = typeof memoryArticles.$inferInsert;

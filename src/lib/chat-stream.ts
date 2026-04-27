@@ -27,6 +27,9 @@ export type InferencePayload = {
 
 export type StreamChatOptions = {
   serverId: string;
+  /** Used by the backend to fetch the user's memory wiki for this conversation
+   *  (and its project, if any) and inject it into the system prompt. */
+  conversationId?: string;
   messages: ChatMessage[];
   model?: string;
   inference?: InferencePayload | null;
@@ -67,6 +70,7 @@ export async function streamChat(
       serverId: opts.serverId,
       messages: opts.messages,
     };
+    if (opts.conversationId) body.conversationId = opts.conversationId;
     if (opts.model) body.model = opts.model;
     if (opts.inference) {
       const inf = opts.inference;

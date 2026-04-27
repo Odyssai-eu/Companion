@@ -3,12 +3,14 @@ import { useNavigate } from "react-router";
 import {
   api,
   type ApiConversation,
+  type ApiGlobalModel,
   type ApiMessage,
   type ApiProject,
   type ApiServer,
 } from "~/lib/api";
 import { streamChat, type ChatMessage } from "~/lib/chat-stream";
 import { buildUserMessage, type Attachment } from "~/lib/file-attach";
+import { estimateCost as lookupCost } from "~/lib/model-pricing";
 
 export type InferenceParams = {
   temperature: number;
@@ -75,6 +77,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
   const [servers, setServers] = useState<ApiServer[]>([]);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
+  const [globalModels, setGlobalModels] = useState<ApiGlobalModel[]>([]);
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -160,6 +163,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         if (data.servers[0]) setActiveServerId(data.servers[0].id);
       })
       .catch((e) => setError(e.message));
+    // Fetch global model list for capability detection (vision warning, etc.)
+    // Non-critical: failures are silently ignored.
+    api
+      .listAllModels()
+      .then(({ models }) => setGlobalModels(models))
+      .catch(() => {});
   }, []);
 
   // Load conversation when URL id changes
@@ -193,6 +202,13 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
   const activeServer =
     servers.find((s) => s.id === activeServerId) ?? servers[0] ?? null;
+
+  // Capabilities of the currently-selected model (vision, tools). Used to
+  // warn the user before they send an incompatible request (e.g. image on a
+  // text-only model). Falls back to permissive defaults when unknown.
+  const activeModelCapabilities: { vision: boolean; tools: boolean } =
+    globalModels.find((m) => m.id === modelSelection.id)?.capabilities ??
+    { vision: true, tools: false };
 
   const sendMessage = useCallback(
     async (text: string, attachments: Attachment[] = []) => {
@@ -289,6 +305,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
       const result = await streamChat({
         serverId: targetServer.id,
+        conversationId: convId ?? undefined,
         messages: convoForModel,
         model:
           modelSelection.id === "auto" ? undefined : modelSelection.id,
@@ -464,6 +481,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     setModelSelection: setModelAndPersist,
     inference,
     setInference: updateInference,
+    activeModelCapabilities,
     sendMessage,
     regenerate,
     editAndResend,
@@ -483,14 +501,15 @@ function toUIMessage(m: ApiMessage): UIMessage {
 }
 
 /**
- * Best-effort cost estimate. We don't ship an OpenRouter price catalogue
- * (model list churns) — so for cloud servers we render a placeholder and
- * trust the user's OR dashboard for billing reality. Local servers are
- * always "free" from the user's perspective.
+ * Best-effort cost display string.
+ * - Local servers: always "$0.00 · local"
+ * - Cloud (OpenRouter / Anthropic / OpenAI direct): look up price from the
+ *   static table in model-pricing.ts. Falls back to "— · cloud" when the
+ *   model isn't in the table.
  */
 function estimateCost(
   server: ApiServer | null,
-  _model: string,
+  model: string,
   prompt?: number,
   completion?: number,
 ): string {
@@ -498,6 +517,9 @@ function estimateCost(
   const isCloud = /openrouter\.ai|anthropic\.com|openai\.com/.test(server.url);
   if (!isCloud) return "$0.00 · local";
   if (prompt !== undefined && completion !== undefined) {
+    const cost = lookupCost(model, prompt, completion);
+    if (cost !== null) return `${cost} · cloud`;
+    // Model not in table — still show total tokens so it's not empty
     return `${prompt + completion} tok · cloud`;
   }
   return "— · cloud";

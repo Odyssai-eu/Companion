@@ -13,12 +13,16 @@ export default function Input({
   sending,
   disabled,
   placeholder,
+  modelHasVision = true,
 }: {
   onSend: (text: string, attachments: Attachment[]) => void;
   onCancel: () => void;
   sending: boolean;
   disabled?: boolean;
   placeholder?: string;
+  /** When false, show a warning if the user has attached images. Defaults to
+   *  true (permissive) so we never show a false negative. */
+  modelHasVision?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState<VoiceInputState>({ status: "idle" });
@@ -171,6 +175,27 @@ export default function Input({
             ))}
           </div>
         )}
+        {!modelHasVision &&
+          attachments.some((a) => a.kind === "image") && (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[12px] text-amber-700">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="flex-shrink-0"
+              >
+                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+              This model may not support images — the image might be ignored.
+            </div>
+          )}
         <div className="flex items-end gap-2">
           <input
             ref={fileInputRef}

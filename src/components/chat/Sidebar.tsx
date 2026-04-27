@@ -205,6 +205,9 @@ export default function Sidebar({
                 active={c.id === activeConversationId}
                 streaming={c.id === streamingConversationId}
                 projects={projectsList}
+                onRemove={(id) =>
+                  setConversations((prev) => prev.filter((x) => x.id !== id))
+                }
                 onChange={refresh}
               />
             ))}
@@ -337,12 +340,17 @@ function ConversationRow({
   active,
   streaming,
   projects,
+  onRemove,
   onChange,
 }: {
   conversation: ApiConversation;
   active: boolean;
   streaming?: boolean;
   projects: ApiProject[];
+  /** Called with the deleted conversation id immediately after a successful
+   *  DELETE — removes it from the parent's state without waiting for a
+   *  re-fetch (ExoScopy pattern). */
+  onRemove: (id: string) => void;
   onChange: () => void;
 }) {
   const [renaming, setRenaming] = useState(false);
@@ -380,11 +388,12 @@ function ConversationRow({
     if (!confirm(`Delete "${conversation.title}"?`)) return;
     try {
       await api.deleteConversation(conversation.id);
+      // ExoScopy pattern: immediately remove from parent state without
+      // waiting for a re-fetch. Avoids the race where onChange() → refresh()
+      // fails silently (swallowed catch) and the item reappears.
+      onRemove(conversation.id);
       if (active) navigate("/");
-      onChange();
     } catch (err) {
-      // Surface the failure instead of silently swallowing it — the previous
-      // empty catch is what made it look like "delete doesn't work".
       console.error("delete failed", err);
       alert(`Couldn't delete: ${(err as Error).message ?? err}`);
     }

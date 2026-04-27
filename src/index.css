@@ -141,16 +141,51 @@ html.a11y-dyslexia-line body {
   padding: 0.12em 0.35em;
   border-radius: 4px;
 }
+/* Code block — wrapping div produced by the custom marked renderer */
+.md-body .code-block {
+  margin: 0.5em 0 0.85em;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.md-body .code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #1a2640;
+  padding: 0.35em 0.85em;
+}
+.md-body .code-lang {
+  font-family: var(--font-mono);
+  font-size: 0.72em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7a90a8;
+}
+.md-body .copy-code-btn {
+  font-family: var(--font-mono);
+  font-size: 0.72em;
+  color: #7a90a8;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.15em 0.5em;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.md-body .copy-code-btn:hover {
+  color: #e2e8f0;
+  background: rgba(255,255,255,0.08);
+}
 .md-body pre {
   background: #0f1729;
   color: #e2e8f0;
-  border-radius: 8px;
   padding: 0.85em 1em;
-  margin: 0.5em 0 0.85em;
+  margin: 0;
   overflow-x: auto;
   font-family: var(--font-mono);
   font-size: 0.85em;
-  line-height: 1.55;
+  line-height: 1.6;
 }
 .md-body pre code {
   background: transparent;
@@ -159,6 +194,42 @@ html.a11y-dyslexia-line body {
   border-radius: 0;
   font-size: inherit;
 }
+/* highlight.js token colours — dark theme matching navy/cyan palette */
+.hljs-comment,
+.hljs-quote         { color: #6a7d96; font-style: italic; }
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-addition      { color: #79b8ff; }
+.hljs-number,
+.hljs-string,
+.hljs-meta .hljs-meta-string,
+.hljs-literal,
+.hljs-doctag,
+.hljs-regexp        { color: #9ecbff; }
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class { color: #b392f0; }
+.hljs-attribute,
+.hljs-attr,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-class .hljs-title,
+.hljs-type          { color: #4fb3d9; }  /* Bear Cyan */
+.hljs-symbol,
+.hljs-bullet,
+.hljs-subst,
+.hljs-meta,
+.hljs-meta .hljs-keyword,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-link          { color: #f8c555; }
+.hljs-built_in,
+.hljs-deletion      { color: #85e89d; }
+.hljs-formula       { background: #1e2d40; font-style: italic; }
+.hljs-emphasis      { font-style: italic; }
+.hljs-strong        { font-weight: bold; }
 .md-body table {
   border-collapse: collapse;
   margin: 0.5em 0 0.85em;
