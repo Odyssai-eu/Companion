@@ -10,6 +10,7 @@ import { seedIfEmpty } from "./db/seed";
 import { requireUser, sessionLoader } from "./middleware/auth";
 import { licenseGate } from "./middleware/license";
 import addonsRoute from "./routes/addons";
+import obsidianRoute, { obsidianBearerLoader } from "./routes/addon-obsidian";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
@@ -52,6 +53,9 @@ app.use("/api/conversations/*", licenseGate, requireUser);
 app.use("/api/chat/*", licenseGate, requireUser);
 app.use("/api/projects/*", licenseGate, requireUser);
 app.use("/api/tts/*", licenseGate, requireUser);
+// Resolve bearer-token auth for the Obsidian plugin BEFORE requireUser runs,
+// so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
+app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
 app.use("/api/addons/*", licenseGate, requireUser);
 app.use("/api/indicai/*", licenseGate, requireUser);
 app.use("/api/models/*", licenseGate, requireUser);
@@ -63,6 +67,7 @@ app.route("/api/chat", chatRoute);
 app.route("/api/projects", projectsRoute);
 app.route("/api/tts", ttsRoute);
 app.route("/api/addons", addonsRoute);
+app.route("/api/addons/obsidian", obsidianRoute);
 app.route("/api/indicai", indicaiRoute);
 app.route("/api/models", modelsRoute);
 

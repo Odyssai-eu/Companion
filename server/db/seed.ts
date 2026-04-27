@@ -147,10 +147,10 @@ export async function seedIfEmpty() {
     {
       userId: sophie.id,
       name: "Obsidian",
-      kind: "mcp",
+      kind: "plugin",
       description:
-        "Read and write your vault. Appears in the Tools menu with an embedded reader.",
-      version: "0.4.1",
+        "Read-only sync of your memory wiki to an Obsidian vault. Install the companion plugin and paste your sync token.",
+      version: "0.1.0",
       enabled: false,
     },
     {

@@ -194,29 +194,38 @@ function AddonCard({
   pending: boolean;
   onToggle: () => void;
 }) {
+  const hasPanel = addon.name === "Obsidian";
+
   return (
-    <div className="flex items-center gap-5 rounded-xl border border-gray-200 bg-white px-6 py-5">
-      <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg bg-[rgba(79,179,217,0.12)]">
-        <PackageIcon />
-      </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-center gap-2">
-          <span className="text-[15px] font-medium text-ink">{addon.name}</span>
-          <KindBadge kind={addon.kind} />
-          {addon.version && (
-            <span className="font-mono text-[11px] text-gray-400">
-              v{addon.version}
+    <div className="flex flex-col gap-0 rounded-xl border border-gray-200 bg-white">
+      <div className="flex items-center gap-5 px-6 py-5">
+        <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg bg-[rgba(79,179,217,0.12)]">
+          <PackageIcon />
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[15px] font-medium text-ink">{addon.name}</span>
+            <KindBadge kind={addon.kind} />
+            {addon.version && (
+              <span className="font-mono text-[11px] text-gray-400">
+                v{addon.version}
+              </span>
+            )}
+          </div>
+          {addon.description && (
+            <span className="text-[13px] leading-[20px] text-gray-600">
+              {addon.description}
             </span>
           )}
         </div>
-        {addon.description && (
-          <span className="text-[13px] leading-[20px] text-gray-600">
-            {addon.description}
-          </span>
-        )}
+        <StatusPill enabled={addon.enabled} />
+        <Toggle value={addon.enabled} onClick={onToggle} pending={pending} />
       </div>
-      <StatusPill enabled={addon.enabled} />
-      <Toggle value={addon.enabled} onClick={onToggle} pending={pending} />
+      {hasPanel && addon.enabled && (
+        <div className="border-t border-gray-200 bg-gray-50/60 px-6 py-5">
+          {addon.name === "Obsidian" && <ObsidianPanel />}
+        </div>
+      )}
     </div>
   );
 }
@@ -285,6 +294,220 @@ function PlusIcon() {
     >
       <path d="M12 5v14M5 12h14" />
     </svg>
+  );
+}
+
+function ObsidianPanel() {
+  type Info = Awaited<ReturnType<typeof api.obsidianInfo>>;
+  const [info, setInfo] = useState<Info | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [copied, setCopied] = useState<"url" | "token" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      setInfo(await api.obsidianInfo());
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    // Refresh after a sync (when user manually downloads or plugin polls).
+    const t = setInterval(refresh, 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  async function rotate() {
+    setBusy("rotate");
+    setErr(null);
+    try {
+      const { token } = await api.obsidianRotateToken();
+      setToken(token);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function clearToken() {
+    if (!confirm("Revoke the sync token? Your Obsidian plugin will stop syncing.")) return;
+    setBusy("clear");
+    setErr(null);
+    try {
+      await api.obsidianClearToken();
+      setToken(null);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function copyText(value: string, kind: "url" | "token") {
+    try {
+      await navigator.clipboard?.writeText(value);
+      setCopied(kind);
+      setTimeout(() => setCopied(null), 1500);
+    } catch {
+      // ignore
+    }
+  }
+
+  function downloadNow() {
+    window.location.href = "/api/addons/obsidian/vault.zip";
+  }
+
+  if (!info) {
+    return (
+      <span className="font-mono text-[11px] text-gray-400">Loading…</span>
+    );
+  }
+
+  const fullVaultUrl = new URL(info.vaultUrl, window.location.origin).toString();
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 text-[12px] text-gray-600">
+        <span>
+          <span className="text-gray-400">Articles</span>{" "}
+          <span className="font-mono text-ink">{info.articleCount}</span>
+        </span>
+        <span>
+          <span className="text-gray-400">Last synced</span>{" "}
+          <span className="font-mono text-ink">
+            {info.lastSyncedAt
+              ? new Date(info.lastSyncedAt).toLocaleString()
+              : "never"}
+          </span>
+        </span>
+      </div>
+
+      <Field label="Vault URL">
+        <div className="flex items-center gap-2">
+          <code className="flex-1 truncate rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink">
+            {fullVaultUrl}
+          </code>
+          <button
+            type="button"
+            onClick={() => copyText(fullVaultUrl, "url")}
+            className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-600 hover:bg-gray-100 hover:text-ink"
+          >
+            {copied === "url" ? "Copied!" : "Copy"}
+          </button>
+        </div>
+      </Field>
+
+      <Field label="Sync token">
+        <div className="flex items-center gap-2">
+          <code className="flex-1 truncate rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink">
+            {token
+              ? token
+              : info.hasToken
+                ? "•".repeat(20) + " (hidden — generate a new one to see it)"
+                : "(not generated yet)"}
+          </code>
+          {token && (
+            <button
+              type="button"
+              onClick={() => copyText(token, "token")}
+              className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-600 hover:bg-gray-100 hover:text-ink"
+            >
+              {copied === "token" ? "Copied!" : "Copy"}
+            </button>
+          )}
+        </div>
+        <p className="mt-2 text-[11px] text-gray-500">
+          Paste this in the Thecomp.ai plugin inside Obsidian. Treat it like a
+          password — anyone with the URL + token can download your wiki.
+        </p>
+      </Field>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={rotate}
+          disabled={busy !== null}
+          className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
+        >
+          {info.hasToken ? "Generate new token" : "Generate token"}
+        </button>
+        {info.hasToken && (
+          <button
+            type="button"
+            onClick={clearToken}
+            disabled={busy !== null}
+            className="rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] text-gray-600 hover:text-ink disabled:opacity-50"
+          >
+            Revoke
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={downloadNow}
+          className="ml-auto rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] text-gray-600 hover:text-ink"
+        >
+          Download vault now (.zip)
+        </button>
+      </div>
+
+      <details className="rounded-md border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-600">
+        <summary className="cursor-pointer font-medium text-ink">
+          How to set up the Obsidian plugin
+        </summary>
+        <ol className="mt-3 flex list-decimal flex-col gap-2 pl-5">
+          <li>
+            Download the latest release of the Thecomp.ai plugin from the
+            companion repo.
+          </li>
+          <li>
+            In Obsidian, open <strong>Settings → Community plugins → Browse</strong> and
+            sideload (or copy the plugin into{" "}
+            <code className="rounded bg-gray-100 px-1 font-mono">
+              {"<vault>/.obsidian/plugins/thecompai/"}
+            </code>
+            ).
+          </li>
+          <li>Enable the plugin.</li>
+          <li>
+            Open its settings, paste the <strong>Vault URL</strong> and{" "}
+            <strong>Sync token</strong> from above, choose a target subfolder, save.
+          </li>
+          <li>
+            The plugin syncs on startup and every 30 minutes. You can trigger a
+            manual sync from the command palette (<code>Thecomp.ai: Sync now</code>).
+          </li>
+        </ol>
+      </details>
+
+      {err && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 font-mono text-[11px] text-red-700">
+          {err}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-[11px] tracking-[0.04em] text-gray-500 uppercase">
+        {label}
+      </span>
+      {children}
+    </div>
   );
 }
 

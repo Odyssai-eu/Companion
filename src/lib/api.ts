@@ -345,6 +345,23 @@ export const api = {
   deleteAddon: (id: string) =>
     request<void>(`/api/addons/${id}`, { method: "DELETE" }),
 
+  // Obsidian add-on
+  obsidianInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      hasToken: boolean;
+      lastSyncedAt: string | null;
+      articleCount: number;
+      vaultUrl: string;
+    }>("/api/addons/obsidian/info"),
+  obsidianRotateToken: () =>
+    request<{ token: string }>("/api/addons/obsidian/token", {
+      method: "POST",
+    }),
+  obsidianClearToken: () =>
+    request<void>("/api/addons/obsidian/token", { method: "DELETE" }),
+
   // Auth
   me: () => request<{ user: AuthUser | null }>("/api/auth/me"),
   login: (body: { email: string; password: string }) =>
