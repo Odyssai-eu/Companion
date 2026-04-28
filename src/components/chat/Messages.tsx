@@ -76,7 +76,6 @@ export default function Messages({
           <SpaceInvaders onClose={() => setEasterEgg(false)} />
         )}
         <div className="flex flex-col items-center gap-3 text-center">
-          <VersionBadge />
           <img
             src="/logo/icon-192.png"
             alt=""
@@ -705,24 +704,3 @@ function SaveIcon() {
   );
 }
 
-function VersionBadge() {
-  const [version, setVersion] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/health")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { version?: string } | null) => {
-        if (!cancelled && d?.version) setVersion(d.version);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  if (!version) return null;
-  return (
-    <span className="font-mono text-[10px] tracking-[0.06em] text-gray-300 uppercase">
-      v{version}
-    </span>
-  );
-}
