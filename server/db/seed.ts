@@ -89,6 +89,15 @@ export async function seedIfEmpty() {
       version: "0.1.0",
       enabled: false,
     },
+    {
+      userId: sophie.id,
+      name: "Hermes Agent",
+      kind: "plugin",
+      description:
+        "Delegate multi-step autonomous tasks to Hermes Agent. Quick mode for short tool-using requests, Deep mode for long-running background work.",
+      version: "0.1.0",
+      enabled: false,
+    },
   ]);
 
   console.log("→ seed complete");

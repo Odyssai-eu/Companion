@@ -1,11 +1,14 @@
 /**
- * LLM tool registry — `web_search` and `web_fetch`, both backed by Tavily.
+ * LLM tool registry.
  *
- * The Web Search add-on (kind=plugin, name="Web Search") holds the user's
- * Tavily API key in `addons.config.apiKey`. When the add-on is enabled, the
- * chat route forwards `tools` to LiteLLM so the model can call them; when
- * the model emits tool_calls, executeTool is invoked and the result is fed
- * back as a `role: "tool"` message.
+ * Two add-ons feed tools into the chat route:
+ *   - "Web Search" (Tavily) → web_search, web_fetch
+ *   - "Hermes Agent"        → hermes_quick, hermes_deep
+ *
+ * Each add-on lives in `addons` (kind=plugin) with its config stored in
+ * `addons.config`. When enabled and the model is tool-capable, the chat
+ * route exposes the matching tool schemas; when the LLM emits tool_calls,
+ * `executeTool` dispatches by name.
  */
 
 import { and, eq } from "drizzle-orm";
@@ -13,10 +16,11 @@ import { db } from "../db/index";
 import { addons } from "../db/schema";
 
 const ADDON_NAME = "Web Search";
+const HERMES_ADDON_NAME = "Hermes Agent";
 
 // ── OpenAI-compat tool schemas ────────────────────────────────────────────
 
-export const TOOL_SCHEMAS = [
+const WEB_SEARCH_TOOLS = [
   {
     type: "function" as const,
     function: {
@@ -64,6 +68,67 @@ export const TOOL_SCHEMAS = [
     },
   },
 ];
+
+const HERMES_TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "hermes_quick",
+      description:
+        "Delegate a SHORT operational task to Hermes Agent. Use for things " +
+        "like running a shell command on the cluster, reading a file from " +
+        "the Obsidian vault, generating an image via ComfyUI, searching the " +
+        "RAG, or any one-off action that should complete in under 2 minutes. " +
+        "Returns the final result. Don't use for casual questions — use your " +
+        "own knowledge or web_search for those.",
+      parameters: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+            description:
+              "The task in natural language. Be specific about what to do " +
+              "and what to return. Hermes will pick the right tool.",
+          },
+        },
+        required: ["task"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "hermes_deep",
+      description:
+        "Delegate a LONG-RUNNING multi-step task to Hermes Agent. Use for " +
+        "things that need 5+ minutes: code generation across multiple files, " +
+        "iterative refinement, deep research with many tool calls, scheduled " +
+        "background jobs. Returns a session_id immediately; the result lands " +
+        "later. Tell the user explicitly that the task is running in the " +
+        "background and they can come back to check.",
+      parameters: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+            description: "The task description, detailed enough for autonomous execution.",
+          },
+        },
+        required: ["task"],
+      },
+    },
+  },
+];
+
+export const TOOL_SCHEMAS = WEB_SEARCH_TOOLS;  // legacy export for places that still reference it
+
+/** All tools exposed to the model, filtered by which add-ons are enabled. */
+export async function toolsForUser(userId: string): Promise<unknown[]> {
+  const out: unknown[] = [];
+  if (await isWebSearchEnabled(userId)) out.push(...WEB_SEARCH_TOOLS);
+  if (await isHermesEnabled(userId)) out.push(...HERMES_TOOLS);
+  return out;
+}
 
 // ── Tavily client ────────────────────────────────────────────────────────
 
@@ -164,6 +229,81 @@ export async function isWebSearchEnabled(userId: string): Promise<boolean> {
   return Boolean(k);
 }
 
+// ── Hermes add-on lookup ──────────────────────────────────────────────────
+
+type HermesConfig = {
+  apiUrl?: string;
+  selectedSkills?: string[];
+  defaultModel?: string;
+  autonomous?: boolean;
+};
+
+const HERMES_DEFAULT_BRIDGE = "http://192.168.86.44:8002";
+
+async function getHermesConfig(
+  userId: string,
+): Promise<HermesConfig | null> {
+  const [row] = await db
+    .select({ enabled: addons.enabled, config: addons.config })
+    .from(addons)
+    .where(and(eq(addons.userId, userId), eq(addons.name, HERMES_ADDON_NAME)))
+    .limit(1);
+  if (!row || !row.enabled) return null;
+  return (row.config ?? {}) as HermesConfig;
+}
+
+export async function isHermesEnabled(userId: string): Promise<boolean> {
+  return (await getHermesConfig(userId)) !== null;
+}
+
+async function hermesRun(
+  userId: string,
+  args: ToolArgs,
+  mode: "quick" | "deep",
+): Promise<ToolResult> {
+  const cfg = await getHermesConfig(userId);
+  if (!cfg) {
+    return { ok: false, error: "Hermes Agent add-on is not enabled." };
+  }
+  const url = (cfg.apiUrl ?? process.env.HERMES_BRIDGE_URL ?? HERMES_DEFAULT_BRIDGE).replace(
+    /\/+$/,
+    "",
+  );
+  const task = String(args.task ?? "");
+  if (!task) return { ok: false, error: "missing 'task' argument" };
+
+  const body = {
+    prompt: task,
+    mode,
+    model: cfg.defaultModel ?? "claude-haiku",
+    skills: cfg.selectedSkills ?? [],
+    yolo: mode === "deep" ? !!cfg.autonomous : false,
+  };
+
+  try {
+    const r = await fetch(`${url}/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      // Quick is awaited end-to-end by the bridge (default 180s) — give the
+      // upstream call generous slack. Deep returns immediately so this is
+      // mostly the network round-trip.
+      signal: AbortSignal.timeout(mode === "quick" ? 200_000 : 10_000),
+    });
+    if (!r.ok) {
+      const text = await r.text().catch(() => "");
+      return {
+        ok: false,
+        error: `bridge ${r.status}: ${text.slice(0, 200)}`,
+      };
+    }
+    const data = (await r.json()) as Record<string, unknown>;
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 // ── Executor ──────────────────────────────────────────────────────────────
 
 type ToolArgs = Record<string, unknown>;
@@ -172,7 +312,7 @@ export type ToolResult =
   | { ok: true; data: unknown }
   | { ok: false; error: string };
 
-export async function executeTool(
+async function executeWebTool(
   name: string,
   args: ToolArgs,
   userId: string,
@@ -199,10 +339,24 @@ export async function executeTool(
       const data = await tavilyExtract(apiKey, url);
       return { ok: true, data };
     }
-    return { ok: false, error: `unknown tool: ${name}` };
+    return { ok: false, error: `unknown web tool: ${name}` };
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }
+}
+
+/** Public dispatcher — routes by tool name to the right backend. */
+export async function executeTool(
+  name: string,
+  args: ToolArgs,
+  userId: string,
+): Promise<ToolResult> {
+  if (name === "web_search" || name === "web_fetch") {
+    return executeWebTool(name, args, userId);
+  }
+  if (name === "hermes_quick") return hermesRun(userId, args, "quick");
+  if (name === "hermes_deep") return hermesRun(userId, args, "deep");
+  return { ok: false, error: `unknown tool: ${name}` };
 }
 
 function clamp(n: number, lo: number, hi: number): number {

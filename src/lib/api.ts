@@ -288,6 +288,45 @@ export const api = {
   tavilyClearKey: () =>
     request<void>("/api/addons/tavily/key", { method: "DELETE" }),
 
+  // Hermes Agent add-on
+  hermesInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      apiUrl: string | null;
+      bridgeUrl: string;
+      bridgeOk: boolean;
+      selectedSkills: string[];
+      defaultModel: string;
+      autonomous: boolean;
+      availableSkills: Array<{
+        name: string;
+        description: string;
+        kind: "file" | "bundle" | "collection";
+      }>;
+    }>("/api/addons/hermes/info"),
+  hermesUpdateConfig: (
+    body: Partial<{
+      apiUrl: string | null;
+      selectedSkills: string[];
+      defaultModel: string;
+      autonomous: boolean;
+    }>,
+  ) =>
+    request<{ ok: true }>("/api/addons/hermes/config", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  hermesSession: (id: string) =>
+    request<{
+      id: string;
+      mode: string;
+      status: string;
+      output: string;
+      error: string;
+      elapsed_ms: number | null;
+    }>(`/api/addons/hermes/sessions/${id}`),
+
   // Auth
   me: () => request<{ user: AuthUser | null }>("/api/auth/me"),
   login: (body: { email: string; password: string }) =>

@@ -194,7 +194,10 @@ function AddonCard({
   pending: boolean;
   onToggle: () => void;
 }) {
-  const hasPanel = addon.name === "Obsidian" || addon.name === "Web Search";
+  const hasPanel =
+    addon.name === "Obsidian" ||
+    addon.name === "Web Search" ||
+    addon.name === "Hermes Agent";
 
   return (
     <div className="flex flex-col gap-0 rounded-xl border border-gray-200 bg-white">
@@ -225,6 +228,7 @@ function AddonCard({
         <div className="border-t border-gray-200 bg-gray-50/60 px-6 py-5">
           {addon.name === "Obsidian" && <ObsidianPanel />}
           {addon.name === "Web Search" && <TavilyPanel />}
+          {addon.name === "Hermes Agent" && <HermesPanel />}
         </div>
       )}
     </div>
@@ -636,11 +640,220 @@ function TavilyPanel() {
   );
 }
 
+function HermesPanel() {
+  type Info = Awaited<ReturnType<typeof api.hermesInfo>>;
+  const [info, setInfo] = useState<Info | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  // Local edits
+  const [apiUrl, setApiUrl] = useState("");
+  const [defaultModel, setDefaultModel] = useState("");
+  const [autonomous, setAutonomous] = useState(false);
+  const [skills, setSkills] = useState<Set<string>>(new Set());
+
+  async function refresh() {
+    try {
+      const r = await api.hermesInfo();
+      setInfo(r);
+      setApiUrl(r.apiUrl ?? "");
+      setDefaultModel(r.defaultModel);
+      setAutonomous(r.autonomous);
+      setSkills(new Set(r.selectedSkills));
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  function toggleSkill(name: string) {
+    setSkills((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.hermesUpdateConfig({
+        apiUrl: apiUrl.trim() || null,
+        defaultModel: defaultModel.trim(),
+        autonomous,
+        selectedSkills: Array.from(skills),
+      });
+      setSaved(true);
+      await refresh();
+      setTimeout(() => setSaved(false), 1800);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!info) {
+    return <span className="font-mono text-[11px] text-gray-400">Loading…</span>;
+  }
+
+  // Only surface skills the user can sensibly enable (file-based custom or
+  // single-bundle skills). Collections are excluded — they're meta-folders.
+  const enableable = info.availableSkills.filter(
+    (s) => s.kind === "file" || s.kind === "bundle",
+  );
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 text-[12px] text-gray-600">
+        <span className="flex items-center gap-1.5">
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${
+              info.bridgeOk ? "bg-emerald-500" : "bg-rose-500"
+            }`}
+          />
+          <span className="font-mono text-ink">
+            {info.bridgeOk ? "bridge online" : "bridge offline"}
+          </span>
+        </span>
+        <span>
+          <span className="text-gray-400">Bridge URL</span>{" "}
+          <code className="font-mono text-ink">{info.bridgeUrl}</code>
+        </span>
+        <span>
+          <span className="text-gray-400">Skills</span>{" "}
+          <span className="font-mono text-ink">{info.availableSkills.length}</span>
+        </span>
+      </div>
+
+      <Field
+        label="Bridge URL (override)"
+        hint="Where the hermes-bridge service runs. Leave empty for the env default."
+      >
+        <input
+          type="url"
+          value={apiUrl}
+          onChange={(e) => setApiUrl(e.target.value)}
+          placeholder={info.bridgeUrl}
+          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+        />
+      </Field>
+
+      <Field
+        label="Default model"
+        hint="LiteLLM alias used by Hermes inside its sessions (anthropic/claude-haiku-4-5, claude-haiku, …)."
+      >
+        <input
+          type="text"
+          value={defaultModel}
+          onChange={(e) => setDefaultModel(e.target.value)}
+          placeholder="claude-haiku"
+          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+        />
+      </Field>
+
+      <Field label="Selected skills" hint="The model will only see the ones you tick.">
+        <div className="flex flex-col gap-1.5">
+          {enableable.length === 0 && (
+            <span className="font-mono text-[11px] text-gray-400">
+              No skills exposed by the bridge yet.
+            </span>
+          )}
+          {enableable.map((s) => (
+            <label
+              key={s.name}
+              className="flex items-start gap-2.5 rounded-md border border-gray-200 bg-white px-3 py-2 text-[13px] text-ink hover:bg-gray-50"
+            >
+              <input
+                type="checkbox"
+                checked={skills.has(s.name)}
+                onChange={() => toggleSkill(s.name)}
+                className="mt-0.5"
+              />
+              <div className="flex flex-col">
+                <span className="font-mono">{s.name}</span>
+                {s.description && (
+                  <span className="text-[12px] text-gray-500">{s.description}</span>
+                )}
+              </div>
+            </label>
+          ))}
+        </div>
+      </Field>
+
+      <label className="flex items-start gap-2.5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+        <input
+          type="checkbox"
+          checked={autonomous}
+          onChange={(e) => setAutonomous(e.target.checked)}
+          className="mt-0.5"
+        />
+        <div className="flex flex-col">
+          <span className="font-medium">Autonomous mode (Deep tasks)</span>
+          <span>
+            When ON, deep sessions run with <code>--yolo</code> — Hermes bypasses
+            all approval prompts. Use only for trusted background runs on the
+            cluster.
+          </span>
+        </div>
+      </label>
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={save}
+          disabled={busy}
+          className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
+        >
+          {busy ? "Saving…" : saved ? "✓ Saved" : "Save"}
+        </button>
+      </div>
+
+      <details className="rounded-md border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-600">
+        <summary className="cursor-pointer font-medium text-ink">
+          How Hermes integration works
+        </summary>
+        <p className="mt-3 leading-relaxed">
+          When this add-on is enabled, two tools appear in tool-capable chats:
+        </p>
+        <ul className="mt-2 list-disc space-y-1 pl-5">
+          <li>
+            <code className="rounded bg-gray-100 px-1 font-mono">hermes_quick(task)</code>{" "}
+            — short tool-using requests (terminal, file ops, RAG). Returns the result.
+          </li>
+          <li>
+            <code className="rounded bg-gray-100 px-1 font-mono">hermes_deep(task)</code>{" "}
+            — long-running multi-step jobs. Returns a session_id immediately.
+          </li>
+        </ul>
+        <p className="mt-3">
+          The model decides when to delegate. You'll see the Hermes card inline
+          showing the task and final result.
+        </p>
+      </details>
+
+      {err && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 font-mono text-[11px] text-red-700">
+          {err}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Field({
   label,
+  hint,
   children,
 }: {
   label: string;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -649,6 +862,9 @@ function Field({
         {label}
       </span>
       {children}
+      {hint && (
+        <span className="font-mono text-[11px] text-gray-400">{hint}</span>
+      )}
     </div>
   );
 }

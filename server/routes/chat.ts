@@ -27,9 +27,10 @@ import { authHeaders } from "../lib/litellm";
 import { getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
 import {
-  TOOL_SCHEMAS,
   executeTool,
+  isHermesEnabled,
   isWebSearchEnabled,
+  toolsForUser,
   type ToolResult,
 } from "../lib/tools";
 
@@ -220,16 +221,17 @@ chatRoute.post("/completions", async (c) => {
     }
   }
 
-  // Web search add-on: when enabled, expose web_search + web_fetch as tools
-  // and let the model decide when to call them.
+  // Tool add-ons: when enabled (and the model is tool-capable), the chat
+  // route forwards tools so the model can decide when to call them. Each
+  // add-on contributes its own tools — see toolsForUser.
   //
-  // We also whitelist by model: exo's MLX runner currently aborts (signal
-  // SIGABRT) when handed a `tools:` param, even for tool-trained models like
-  // GLM-5.1. Until exo gets that fix upstream, only models we know handle
-  // tools cleanly (Anthropic + OpenAI families served by LiteLLM passthrough)
-  // get the tools injected.
-  const toolsEnabled =
-    (await isWebSearchEnabled(userId)) && modelSupportsTools(body.model);
+  // exo's MLX runner currently aborts (SIGABRT) when handed a `tools:`
+  // param even for tool-trained models, so we whitelist by model name.
+  const anyToolEnabled =
+    ((await isWebSearchEnabled(userId)) || (await isHermesEnabled(userId))) &&
+    modelSupportsTools(body.model);
+  const tools = anyToolEnabled ? await toolsForUser(userId) : [];
+  const toolsEnabled = tools.length > 0;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -270,9 +272,7 @@ chatRoute.post("/completions", async (c) => {
         const requestBody = {
           ...baseBody,
           messages: conversation,
-          ...(toolsEnabled
-            ? { tools: TOOL_SCHEMAS, tool_choice: "auto" }
-            : {}),
+          ...(toolsEnabled ? { tools, tool_choice: "auto" } : {}),
         };
 
         const upstream = await fetch(
@@ -609,7 +609,30 @@ function summarizeResult(
   if (!r.ok) return { ok: false, summary: r.error };
   const data = r.data as
     | { results?: Array<{ title: string; url: string }>; query?: string }
-    | { url?: string; content?: string };
+    | { url?: string; content?: string }
+    | {
+        id?: string;
+        mode?: string;
+        status?: string;
+        output?: string;
+        elapsed_ms?: number;
+      };
+  // Hermes session
+  if ("id" in data && "status" in data && data.id && data.status) {
+    const ms = (data as { elapsed_ms?: number }).elapsed_ms ?? 0;
+    const sec = ms > 0 ? `${(ms / 1000).toFixed(1)}s` : "";
+    if (data.status === "done") {
+      return { ok: true, summary: `done in ${sec}` };
+    }
+    if (data.status === "failed") {
+      return { ok: false, summary: `failed after ${sec}` };
+    }
+    if (data.status === "running" || data.status === "pending") {
+      return { ok: true, summary: `running (session ${data.id.slice(0, 8)}…)` };
+    }
+    return { ok: true, summary: `${data.status} ${sec}` };
+  }
+  // Tavily search
   if ("results" in data && Array.isArray(data.results)) {
     return {
       ok: true,
@@ -620,8 +643,9 @@ function summarizeResult(
       })),
     };
   }
+  // Tavily extract
   if ("url" in data && data.url) {
-    const len = data.content?.length ?? 0;
+    const len = (data as { content?: string }).content?.length ?? 0;
     return {
       ok: true,
       summary: `Fetched ${len.toLocaleString()} chars from ${data.url}`,
