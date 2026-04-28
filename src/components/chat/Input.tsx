@@ -249,8 +249,16 @@ export default function Input({
                 ? "Listening… speak now, click Stop when done."
                 : placeholder ?? "Ask anything…"
             }
-            className="flex-1 resize-none bg-transparent text-[15px] leading-[22px] text-ink outline-none placeholder:text-gray-400 disabled:opacity-50"
-            style={{ minHeight: "22px", maxHeight: "200px", overflowY: "hidden" }}
+            className="flex-1 resize-none border-0 bg-transparent p-0 text-[15px] leading-[22px] text-ink outline-none placeholder:text-gray-400 disabled:opacity-50"
+            style={{
+              minHeight: "22px",
+              maxHeight: "200px",
+              overflowY: "hidden",
+              overflowX: "hidden",
+              appearance: "none",
+              WebkitAppearance: "none",
+              boxShadow: "none",
+            }}
           />
           <button
             type="button"
