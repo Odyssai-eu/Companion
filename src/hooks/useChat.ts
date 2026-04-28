@@ -27,7 +27,7 @@ export type InferenceParams = {
 
 export const DEFAULT_INFERENCE: InferenceParams = {
   temperature: 0.7,
-  maxTokens: 32768,
+  maxTokens: 8192,
   thinking: false,
   reasoningEffort: "medium",
   topP: null,

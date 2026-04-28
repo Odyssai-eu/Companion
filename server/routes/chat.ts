@@ -204,6 +204,22 @@ chatRoute.post("/completions", async (c) => {
   if (body.thinking && body.reasoning_effort)
     baseBody.reasoning_effort = body.reasoning_effort;
 
+  // Clamp max_tokens to the provider's published ceiling so we don't get
+  // 400s from the upstream. Local models served by exo/Inferencer don't
+  // need a clamp — they use whatever they accept and bail gracefully.
+  if (typeof baseBody.max_tokens === "number") {
+    const cap = maxTokensCap(body.model);
+    if (cap !== null && baseBody.max_tokens > cap) {
+      console.warn(
+        "[chat] clamping max_tokens %d → %d for model %s",
+        baseBody.max_tokens,
+        cap,
+        body.model,
+      );
+      baseBody.max_tokens = cap;
+    }
+  }
+
   // Web search add-on: when enabled, expose web_search + web_fetch as tools
   // and let the model decide when to call them.
   const toolsEnabled = await isWebSearchEnabled(userId);
@@ -517,6 +533,24 @@ async function pipeAndCollect(
     finishReason,
     assistantContent,
   };
+}
+
+/**
+ * Per-provider max_tokens ceiling. Returns null when the model is local
+ * (we let exo/Inferencer enforce their own limits). Heuristic on the
+ * model id surfaced through LiteLLM:
+ *
+ *   "claude-haiku"               → Anthropic alias        → 64k
+ *   "anthropic/claude-haiku-4-5" → Anthropic passthrough  → 64k
+ *   "claude-sonnet"              → Anthropic alias        → 64k
+ *   "gpt-4o" / "openai/..."      → OpenAI                 → 16k
+ *   anything else                → local                  → no clamp
+ */
+function maxTokensCap(model: string): number | null {
+  const m = model.toLowerCase();
+  if (m.startsWith("anthropic/") || m.includes("claude")) return 64_000;
+  if (m.startsWith("openai/") || m.startsWith("gpt-")) return 16_384;
+  return null;
 }
 
 function tryParseJson(s: string): Record<string, unknown> {
