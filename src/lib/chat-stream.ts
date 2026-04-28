@@ -66,6 +66,10 @@ export async function streamChat(
   let usageCompletion: number | undefined;
   let usageReasoning: number | undefined;
 
+  // Set when the backend writes an inline SSE error (e.g. upstream 4xx/5xx
+  // after our keep-alive stream has already opened). Surfaced via wrap().
+  let inlineError: string | null = null;
+
   let res: Response;
   try {
     const body: Record<string, unknown> = {
@@ -125,6 +129,7 @@ export async function streamChat(
       if (payload === "[DONE]") return wrap();
       try {
         const chunk = JSON.parse(payload) as {
+          error?: string;
           choices?: {
             delta?: { content?: string | null; reasoning_content?: string | null };
           }[];
@@ -135,6 +140,11 @@ export async function streamChat(
             total_tokens?: number;
           };
         };
+        // Backend-emitted error (upstream failure after stream open).
+        if (typeof chunk.error === "string" && chunk.error) {
+          inlineError = chunk.error;
+          continue;
+        }
         if (chunk.usage) {
           if (typeof chunk.usage.prompt_tokens === "number")
             usagePrompt = chunk.usage.prompt_tokens;
@@ -174,7 +184,8 @@ export async function streamChat(
         ? usagePrompt + usageCompletion + (usageReasoning ?? 0)
         : tokenCount;
     return {
-      ok: true,
+      ok: !inlineError,
+      error: inlineError ?? undefined,
       ttftMs,
       durationMs,
       tokens: total,

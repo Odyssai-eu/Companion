@@ -204,35 +204,81 @@ chatRoute.post("/completions", async (c) => {
     ...authHeaders(target),
   };
 
-  let upstream: Response;
-  try {
-    upstream = await fetch(`${target.baseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(upstreamBody),
-    });
-  } catch (err) {
-    return c.json(
-      { error: "upstream_unreachable", detail: String(err) },
-      502,
-    );
-  }
+  // ── 7. Stream with a heartbeat keep-alive ──────────────────────────────
+  //
+  // Why: when a local model (e.g. GLM-5.1) is cold, exo can take 60–90s to
+  // load it. During that time, LiteLLM's fetch() blocks waiting for the
+  // first response byte, and our backend blocks waiting for LiteLLM. If we
+  // sat at `await fetch(...)` and only wrote to the response when it
+  // resolved, Cloudflare's 100s "time to first byte" cap would kill the
+  // connection with a 524 long before the model warmed up.
+  //
+  // So we open the SSE response immediately, emit a `:keepalive` comment
+  // every 25s while we wait, fire the upstream fetch in the background,
+  // and pipe the upstream body into our stream when it arrives. The
+  // browser-side parser ignores SSE comment lines (anything starting with
+  // `:`), so the heartbeats are invisible to the UI.
 
-  if (!upstream.ok || !upstream.body) {
-    const text = await upstream.text().catch(() => "");
-    return c.json(
-      { error: "upstream_error", status: upstream.status, body: text },
-      upstream.status as 400 | 401 | 403 | 404 | 500 | 502,
-    );
-  }
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
 
-  c.header(
-    "Content-Type",
-    upstream.headers.get("content-type") ?? "text/event-stream",
-  );
+  // Push one heartbeat immediately so the first byte hits the wire asap.
+  writer.write(encoder.encode(":keepalive\n\n")).catch(() => undefined);
+  const heartbeat: ReturnType<typeof setInterval> = setInterval(() => {
+    writer.write(encoder.encode(":keepalive\n\n")).catch(() => undefined);
+  }, 25_000);
+
+  void (async () => {
+    try {
+      const upstream = await fetch(`${target.baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(upstreamBody),
+      });
+
+      if (!upstream.ok || !upstream.body) {
+        const text = await upstream.text().catch(() => "");
+        const err = `${upstream.status} ${upstream.statusText}: ${text.slice(0, 200)}`;
+        console.error("[chat] upstream not ok:", err);
+        await writer.write(
+          encoder.encode(`data: ${JSON.stringify({ error: err })}\n\n`),
+        );
+        await writer.write(encoder.encode("data: [DONE]\n\n"));
+        return;
+      }
+
+      // Pipe the upstream stream into our outer stream.
+      const reader = upstream.body.getReader();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        await writer.write(value);
+      }
+    } catch (err) {
+      console.error("[chat] upstream pipe failed:", err);
+      try {
+        await writer.write(
+          encoder.encode(`data: ${JSON.stringify({ error: String(err) })}\n\n`),
+        );
+        await writer.write(encoder.encode("data: [DONE]\n\n"));
+      } catch {
+        // already closed
+      }
+    } finally {
+      clearInterval(heartbeat);
+      try {
+        await writer.close();
+      } catch {
+        // already closed
+      }
+    }
+  })();
+
+  c.header("Content-Type", "text/event-stream");
   c.header("Cache-Control", "no-cache");
   c.header("X-Accel-Buffering", "no");
-  return c.body(upstream.body);
+  return c.body(readable);
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────
