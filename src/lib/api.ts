@@ -275,6 +275,19 @@ export const api = {
   obsidianClearToken: () =>
     request<void>("/api/addons/obsidian/token", { method: "DELETE" }),
 
+  // Web Search (Tavily) add-on
+  tavilyInfo: () =>
+    request<{ addonId: string; enabled: boolean; hasKey: boolean }>(
+      "/api/addons/tavily/info",
+    ),
+  tavilySetKey: (key: string) =>
+    request<{ ok: true }>("/api/addons/tavily/key", {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    }),
+  tavilyClearKey: () =>
+    request<void>("/api/addons/tavily/key", { method: "DELETE" }),
+
   // Auth
   me: () => request<{ user: AuthUser | null }>("/api/auth/me"),
   login: (body: { email: string; password: string }) =>

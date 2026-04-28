@@ -80,6 +80,15 @@ export async function seedIfEmpty() {
       version: "0.1.0",
       enabled: false,
     },
+    {
+      userId: sophie.id,
+      name: "Web Search",
+      kind: "plugin",
+      description:
+        "Give the assistant web access via Tavily — search and fetch URLs as tool calls. Paste your Tavily API key to enable.",
+      version: "0.1.0",
+      enabled: false,
+    },
   ]);
 
   console.log("→ seed complete");

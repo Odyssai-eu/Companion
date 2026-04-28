@@ -26,6 +26,12 @@ import { conversations, users } from "../db/schema";
 import { authHeaders } from "../lib/litellm";
 import { getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
+import {
+  TOOL_SCHEMAS,
+  executeTool,
+  isWebSearchEnabled,
+  type ToolResult,
+} from "../lib/tools";
 
 type Env = { Variables: { userId: string } };
 const chatRoute = new Hono<Env>();
@@ -177,10 +183,9 @@ chatRoute.post("/completions", async (c) => {
         ]
       : taggedMessages;
 
-  // ── 6. Forward to LiteLLM ─────────────────────────────────────────────
-  const upstreamBody: Record<string, unknown> = {
+  // ── 6. Build upstream body (without `messages` — set per iteration below)
+  const baseBody: Record<string, unknown> = {
     model: body.model,
-    messages: withSystem,
     stream: true,
   };
   for (const k of [
@@ -193,11 +198,15 @@ chatRoute.post("/completions", async (c) => {
     "seed",
   ] as const) {
     const v = body[k];
-    if (v !== undefined) upstreamBody[k] = v;
+    if (v !== undefined) baseBody[k] = v;
   }
-  if (body.thinking) upstreamBody.enable_thinking = true;
+  if (body.thinking) baseBody.enable_thinking = true;
   if (body.thinking && body.reasoning_effort)
-    upstreamBody.reasoning_effort = body.reasoning_effort;
+    baseBody.reasoning_effort = body.reasoning_effort;
+
+  // Web search add-on: when enabled, expose web_search + web_fetch as tools
+  // and let the model decide when to call them.
+  const toolsEnabled = await isWebSearchEnabled(userId);
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -230,31 +239,108 @@ chatRoute.post("/completions", async (c) => {
   }, 25_000);
 
   void (async () => {
+    let conversation: ChatTurn[] = withSystem as ChatTurn[];
+    const MAX_TOOL_ITERATIONS = 3;
+
     try {
-      const upstream = await fetch(`${target.baseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(upstreamBody),
-      });
+      for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+        const requestBody = {
+          ...baseBody,
+          messages: conversation,
+          ...(toolsEnabled
+            ? { tools: TOOL_SCHEMAS, tool_choice: "auto" }
+            : {}),
+        };
 
-      if (!upstream.ok || !upstream.body) {
-        const text = await upstream.text().catch(() => "");
-        const err = `${upstream.status} ${upstream.statusText}: ${text.slice(0, 200)}`;
-        console.error("[chat] upstream not ok:", err);
-        await writer.write(
-          encoder.encode(`data: ${JSON.stringify({ error: err })}\n\n`),
+        const upstream = await fetch(
+          `${target.baseUrl}/v1/chat/completions`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify(requestBody),
+          },
         );
-        await writer.write(encoder.encode("data: [DONE]\n\n"));
-        return;
-      }
 
-      // Pipe the upstream stream into our outer stream.
-      const reader = upstream.body.getReader();
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        await writer.write(value);
+        if (!upstream.ok || !upstream.body) {
+          const text = await upstream.text().catch(() => "");
+          const err = `${upstream.status} ${upstream.statusText}: ${text.slice(0, 200)}`;
+          console.error("[chat] upstream not ok:", err);
+          await writer.write(
+            encoder.encode(`data: ${JSON.stringify({ error: err })}\n\n`),
+          );
+          break;
+        }
+
+        const { toolCalls, finishReason, assistantContent } =
+          await pipeAndCollect(upstream, writer, encoder);
+
+        if (
+          toolsEnabled &&
+          finishReason === "tool_calls" &&
+          toolCalls.length > 0
+        ) {
+          // Notify the client visually (the parser ignores `_event` shape).
+          await writer.write(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                _event: "tool_start",
+                calls: toolCalls.map((tc) => ({
+                  name: tc.name,
+                  args: tryParseJson(tc.argumentsRaw),
+                })),
+              })}\n\n`,
+            ),
+          );
+
+          // Execute tools in parallel
+          const results = await Promise.all(
+            toolCalls.map((tc) =>
+              executeTool(tc.name, tryParseJson(tc.argumentsRaw), userId),
+            ),
+          );
+
+          await writer.write(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                _event: "tool_done",
+                calls: toolCalls.map((tc, i) => ({
+                  name: tc.name,
+                  result: summarizeResult(results[i]),
+                })),
+              })}\n\n`,
+            ),
+          );
+
+          // Append assistant tool_calls + tool results to history for next iter
+          conversation = [
+            ...conversation,
+            {
+              role: "assistant",
+              content: assistantContent || null,
+              tool_calls: toolCalls.map((tc) => ({
+                id: tc.id,
+                type: "function",
+                function: {
+                  name: tc.name,
+                  arguments: tc.argumentsRaw,
+                },
+              })),
+            },
+            ...toolCalls.map((tc, i) => ({
+              role: "tool" as const,
+              tool_call_id: tc.id,
+              content: stringifyForTool(results[i]),
+            })),
+          ];
+          // Loop again — the model will integrate tool results into a final
+          // answer (or call more tools).
+          continue;
+        }
+        // Either no tools requested, or finish_reason !== "tool_calls" → done.
+        break;
       }
+      // End-of-stream marker for the client parser
+      await writer.write(encoder.encode("data: [DONE]\n\n"));
     } catch (err) {
       console.error("[chat] upstream pipe failed:", err);
       try {
@@ -303,6 +389,184 @@ function prependTagToContent(
   }
   if (!injected) out.unshift({ type: "text", text: tag });
   return out;
+}
+
+// ── Tool-call streaming infrastructure ─────────────────────────────────────
+
+/** A row in the OpenAI-shaped messages array. We don't have to be strict —
+ *  LiteLLM forwards extra fields like tool_calls or tool_call_id to its
+ *  model adapters. */
+type ChatTurn =
+  | IncomingMessage
+  | {
+      role: "assistant";
+      content: string | ContentPart[] | null;
+      tool_calls: Array<{
+        id: string;
+        type: "function";
+        function: { name: string; arguments: string };
+      }>;
+    }
+  | {
+      role: "tool";
+      tool_call_id: string;
+      content: string;
+    };
+
+type AccumulatedToolCall = {
+  id: string;
+  name: string;
+  /** Tool args stream as JSON string fragments — we accumulate then parse. */
+  argumentsRaw: string;
+};
+
+/**
+ * Read a streaming chat-completions response, forward most chunks to the
+ * client verbatim (so content + reasoning stream through naturally), and
+ * pull out any tool_calls + finish_reason so the outer loop can react.
+ *
+ * Filters two kinds of upstream events:
+ *   - `data: [DONE]` — we suppress these between iterations (and emit
+ *     exactly one at the very end of the conversation).
+ *   - tool_calls deltas — we don't strip them from the forwarded stream;
+ *     the client parser already ignores fields it doesn't know about, so
+ *     they're harmless. We just *also* parse them server-side.
+ */
+async function pipeAndCollect(
+  upstream: Response,
+  writer: WritableStreamDefaultWriter<Uint8Array>,
+  encoder: TextEncoder,
+): Promise<{
+  toolCalls: AccumulatedToolCall[];
+  finishReason: string | null;
+  assistantContent: string;
+}> {
+  const reader = upstream.body!.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  const tcByIndex = new Map<number, AccumulatedToolCall>();
+  let finishReason: string | null = null;
+  let assistantContent = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const chunkText = decoder.decode(value, { stream: true });
+    buf += chunkText;
+
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+
+    // Re-emit lines we want the client to see, line by line; suppress [DONE].
+    const out: string[] = [];
+    for (const line of lines) {
+      const t = line.trim();
+      if (t === "data: [DONE]" || t === "data:[DONE]") {
+        // suppress — we'll emit our own [DONE] at the very end
+        continue;
+      }
+      out.push(line);
+
+      if (!t.startsWith("data:")) continue;
+      const payload = t.slice(5).trim();
+      if (!payload) continue;
+      try {
+        const parsed = JSON.parse(payload) as {
+          choices?: Array<{
+            delta?: {
+              content?: string | null;
+              tool_calls?: Array<{
+                index?: number;
+                id?: string;
+                function?: { name?: string; arguments?: string };
+              }>;
+            };
+            finish_reason?: string | null;
+          }>;
+        };
+        const choice = parsed.choices?.[0];
+        if (!choice) continue;
+        if (choice.delta?.content) assistantContent += choice.delta.content;
+        if (choice.delta?.tool_calls) {
+          for (const tc of choice.delta.tool_calls) {
+            const idx = tc.index ?? 0;
+            const acc = tcByIndex.get(idx) ?? {
+              id: "",
+              name: "",
+              argumentsRaw: "",
+            };
+            if (tc.id) acc.id = tc.id;
+            if (tc.function?.name) acc.name = tc.function.name;
+            if (tc.function?.arguments) acc.argumentsRaw += tc.function.arguments;
+            tcByIndex.set(idx, acc);
+          }
+        }
+        if (choice.finish_reason) finishReason = choice.finish_reason;
+      } catch {
+        // ignore malformed payloads
+      }
+    }
+
+    if (out.length > 0) {
+      await writer.write(encoder.encode(out.join("\n") + "\n"));
+    }
+  }
+
+  return {
+    toolCalls: Array.from(tcByIndex.values()).filter((tc) => tc.name),
+    finishReason,
+    assistantContent,
+  };
+}
+
+function tryParseJson(s: string): Record<string, unknown> {
+  if (!s) return {};
+  try {
+    const v = JSON.parse(s);
+    return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Serialize a tool result so the LLM sees consistent JSON. Truncates very
+ *  large bodies (Tavily extract can return huge raw_content) so we don't blow
+ *  up the next round-trip's prompt budget. */
+function stringifyForTool(r: ToolResult): string {
+  if (!r.ok) return JSON.stringify({ error: r.error });
+  const json = JSON.stringify(r.data);
+  // 24k chars ≈ 6k tokens — generous but bounded.
+  return json.length > 24_000 ? json.slice(0, 24_000) + "…[truncated]" : json;
+}
+
+/** A short summary of a tool result to display in the UI without blowing up
+ *  the SSE stream. The full payload is fed back to the LLM separately. */
+function summarizeResult(
+  r: ToolResult,
+): { ok: boolean; summary: string; sources?: Array<{ title: string; url: string }> } {
+  if (!r.ok) return { ok: false, summary: r.error };
+  const data = r.data as
+    | { results?: Array<{ title: string; url: string }>; query?: string }
+    | { url?: string; content?: string };
+  if ("results" in data && Array.isArray(data.results)) {
+    return {
+      ok: true,
+      summary: `${data.results.length} result${data.results.length === 1 ? "" : "s"}`,
+      sources: data.results.slice(0, 5).map((r) => ({
+        title: r.title,
+        url: r.url,
+      })),
+    };
+  }
+  if ("url" in data && data.url) {
+    const len = data.content?.length ?? 0;
+    return {
+      ok: true,
+      summary: `Fetched ${len.toLocaleString()} chars from ${data.url}`,
+      sources: [{ title: data.url, url: data.url }],
+    };
+  }
+  return { ok: true, summary: "done" };
 }
 
 export default chatRoute;

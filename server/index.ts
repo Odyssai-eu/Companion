@@ -11,6 +11,7 @@ import { requireUser, sessionLoader } from "./middleware/auth";
 import { licenseGate } from "./middleware/license";
 import addonsRoute from "./routes/addons";
 import obsidianRoute, { obsidianBearerLoader } from "./routes/addon-obsidian";
+import tavilyRoute from "./routes/addon-tavily";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
@@ -65,6 +66,7 @@ app.route("/api/projects", projectsRoute);
 app.route("/api/tts", ttsRoute);
 app.route("/api/addons", addonsRoute);
 app.route("/api/addons/obsidian", obsidianRoute);
+app.route("/api/addons/tavily", tavilyRoute);
 app.route("/api/models", modelsRoute);
 app.route("/api/inference", inferenceRoute);
 

@@ -10,10 +10,24 @@ export type ChatMessage = {
   createdAt?: string;
 };
 
-export type StreamDelta = {
-  type: "content" | "reasoning";
-  text: string;
-};
+export type StreamDelta =
+  | { type: "content"; text: string }
+  | { type: "reasoning"; text: string }
+  | {
+      type: "tool_start";
+      calls: Array<{ name: string; args: Record<string, unknown> }>;
+    }
+  | {
+      type: "tool_done";
+      calls: Array<{
+        name: string;
+        result: {
+          ok: boolean;
+          summary: string;
+          sources?: Array<{ title: string; url: string }>;
+        };
+      }>;
+    };
 
 export type InferencePayload = {
   temperature?: number;
@@ -130,6 +144,8 @@ export async function streamChat(
       try {
         const chunk = JSON.parse(payload) as {
           error?: string;
+          _event?: string;
+          calls?: Array<unknown>;
           choices?: {
             delta?: { content?: string | null; reasoning_content?: string | null };
           }[];
@@ -143,6 +159,31 @@ export async function streamChat(
         // Backend-emitted error (upstream failure after stream open).
         if (typeof chunk.error === "string" && chunk.error) {
           inlineError = chunk.error;
+          continue;
+        }
+        // Backend-emitted custom events (tool execution lifecycle).
+        if (chunk._event === "tool_start" && Array.isArray(chunk.calls)) {
+          opts.onDelta({
+            type: "tool_start",
+            calls: chunk.calls as Array<{
+              name: string;
+              args: Record<string, unknown>;
+            }>,
+          });
+          continue;
+        }
+        if (chunk._event === "tool_done" && Array.isArray(chunk.calls)) {
+          opts.onDelta({
+            type: "tool_done",
+            calls: chunk.calls as Array<{
+              name: string;
+              result: {
+                ok: boolean;
+                summary: string;
+                sources?: Array<{ title: string; url: string }>;
+              };
+            }>,
+          });
           continue;
         }
         if (chunk.usage) {

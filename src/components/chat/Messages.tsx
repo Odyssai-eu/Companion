@@ -241,6 +241,9 @@ function AssistantMessage({
             thinking={thinking}
           />
         )}
+        {message.toolCalls && message.toolCalls.length > 0 && (
+          <ToolCallsBlock calls={message.toolCalls} />
+        )}
         <div className="text-[15px] leading-relaxed text-ink">
           {message.content ? (
             <MarkdownBody content={message.content} />
@@ -345,6 +348,95 @@ function CodeBlockPills({ message }: { message: UIMessage }) {
         </button>
       )}
     </div>
+  );
+}
+
+function ToolCallsBlock({
+  calls,
+}: {
+  calls: NonNullable<UIMessage["toolCalls"]>;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      {calls.map((c, i) => {
+        const argSummary = summarizeArgs(c.name, c.args);
+        const running = !c.result;
+        return (
+          <details
+            key={i}
+            className="rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2"
+          >
+            <summary className="flex cursor-pointer items-center gap-2 font-mono text-[12px] text-gray-600">
+              <SearchIcon />
+              <span className="font-medium text-ink">{c.name}</span>
+              {argSummary && (
+                <span className="truncate text-gray-500">({argSummary})</span>
+              )}
+              {running ? (
+                <span className="ml-auto flex items-center gap-1.5 text-cyan">
+                  <TypingDots />
+                  <span className="text-[11px]">running…</span>
+                </span>
+              ) : c.result?.ok ? (
+                <span className="ml-auto text-[11px] text-emerald-600">
+                  ✓ {c.result.summary}
+                </span>
+              ) : (
+                <span className="ml-auto text-[11px] text-rose-600">
+                  ✗ {c.result?.summary}
+                </span>
+              )}
+            </summary>
+            {c.result?.sources && c.result.sources.length > 0 && (
+              <ul className="mt-2 flex flex-col gap-1 pl-6 text-[12px]">
+                {c.result.sources.map((s, j) => (
+                  <li key={j} className="truncate">
+                    <a
+                      href={s.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-cyan hover:text-navy hover:underline"
+                    >
+                      {s.title}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
+function summarizeArgs(name: string, args: Record<string, unknown>): string {
+  if (name === "web_search" && typeof args.query === "string") {
+    return `"${args.query}"`;
+  }
+  if (name === "web_fetch" && typeof args.url === "string") {
+    return args.url;
+  }
+  return Object.entries(args)
+    .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+    .join(", ");
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
   );
 }
 

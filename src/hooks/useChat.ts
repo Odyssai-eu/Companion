@@ -48,6 +48,17 @@ export const STYLE_PRESETS: Record<
   Code: { temperature: 0.2, topP: 0.95, thinking: false },
 };
 
+export type ToolCallRecord = {
+  name: string;
+  args: Record<string, unknown>;
+  /** Set once the tool finishes executing. */
+  result?: {
+    ok: boolean;
+    summary: string;
+    sources?: Array<{ title: string; url: string }>;
+  };
+};
+
 export type UIMessage = {
   id: string;
   role: "user" | "assistant" | "system";
@@ -61,6 +72,8 @@ export type UIMessage = {
   /** Model id that produced this assistant message (set when the assistant
    *  reply lands). Shown as a badge under the message. */
   model?: string;
+  /** Tool invocations the assistant made during this turn (web_search, etc). */
+  toolCalls?: ToolCallRecord[];
   stats?: {
     ttft?: string;
     tokens?: number;
@@ -272,6 +285,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
       let streamedContent = "";
       let streamedReasoning = "";
+      let toolCalls: ToolCallRecord[] = [];
 
       const result = await streamChat({
         conversationId: convId ?? undefined,
@@ -282,8 +296,22 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         onDelta: (delta) => {
           if (delta.type === "reasoning") {
             streamedReasoning += delta.text;
-          } else {
+          } else if (delta.type === "content") {
             streamedContent += delta.text;
+          } else if (delta.type === "tool_start") {
+            // Append placeholder records (result fills in on tool_done).
+            toolCalls = [
+              ...toolCalls,
+              ...delta.calls.map((c) => ({ name: c.name, args: c.args })),
+            ];
+          } else if (delta.type === "tool_done") {
+            // Match by ordinal — tool_start and tool_done arrive in order.
+            const startIdx = toolCalls.length - delta.calls.length;
+            toolCalls = toolCalls.map((tc, i) => {
+              const matchIdx = i - startIdx;
+              if (matchIdx < 0 || matchIdx >= delta.calls.length) return tc;
+              return { ...tc, result: delta.calls[matchIdx].result };
+            });
           }
           setMessages((prev) =>
             prev.map((m) =>
@@ -292,6 +320,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
                     ...m,
                     content: streamedContent,
                     reasoning: streamedReasoning || undefined,
+                    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
                   }
                 : m,
             ),
@@ -337,6 +366,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         reasoning: streamedReasoning || undefined,
         streaming: false,
         model,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         stats,
       };
 
