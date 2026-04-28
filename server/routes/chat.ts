@@ -222,7 +222,14 @@ chatRoute.post("/completions", async (c) => {
 
   // Web search add-on: when enabled, expose web_search + web_fetch as tools
   // and let the model decide when to call them.
-  const toolsEnabled = await isWebSearchEnabled(userId);
+  //
+  // We also whitelist by model: exo's MLX runner currently aborts (signal
+  // SIGABRT) when handed a `tools:` param, even for tool-trained models like
+  // GLM-5.1. Until exo gets that fix upstream, only models we know handle
+  // tools cleanly (Anthropic + OpenAI families served by LiteLLM passthrough)
+  // get the tools injected.
+  const toolsEnabled =
+    (await isWebSearchEnabled(userId)) && modelSupportsTools(body.model);
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -533,6 +540,27 @@ async function pipeAndCollect(
     finishReason,
     assistantContent,
   };
+}
+
+/**
+ * Heuristic: does this model accept the OpenAI-style `tools:` parameter
+ * without crashing the upstream? Currently:
+ *
+ *   - Anthropic family (claude-*, anthropic/*) — yes, native tool use.
+ *   - OpenAI family (gpt-*, openai/*) — yes, native function calling.
+ *   - Anything else served by exo — NO. exo's MLX runner aborts (signal 6)
+ *     on `tools:` even for tool-trained models like GLM-5.1.
+ *
+ * When this returns false, the chat route silently drops the tools param
+ * even if the Web Search add-on is enabled, so picking GLM in the model
+ * picker doesn't 500 the conversation. The user just doesn't get
+ * web_search/web_fetch on that model — they'd switch to claude-* to use it.
+ */
+function modelSupportsTools(model: string): boolean {
+  const m = model.toLowerCase();
+  if (m.includes("claude") || m.startsWith("anthropic/")) return true;
+  if (m.startsWith("gpt-") || m.startsWith("openai/")) return true;
+  return false;
 }
 
 /**
