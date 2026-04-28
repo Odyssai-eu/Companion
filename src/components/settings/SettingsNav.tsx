@@ -14,7 +14,7 @@ const sections: NavSection[] = [
   {
     title: "Infrastructure",
     items: [
-      { to: "/settings/servers", label: "Servers" },
+      { to: "/settings/inference", label: "Inference" },
       { to: "/settings/devices", label: "Devices & sync" },
     ],
   },
@@ -29,6 +29,10 @@ const sections: NavSection[] = [
   {
     title: "Extensions",
     items: [{ to: "/settings/add-ons", label: "Add-ons" }],
+  },
+  {
+    title: "Premium",
+    items: [{ to: "/settings/learning", label: "Learning Center" }],
   },
   {
     title: "Reference",

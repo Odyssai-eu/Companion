@@ -5,6 +5,9 @@ export type ContentPart =
 export type ChatMessage = {
   role: "user" | "assistant" | "system";
   content: string | ContentPart[];
+  /** ISO-8601 timestamp — set on outgoing user messages so the backend can
+   *  build per-message Δ time tags. */
+  createdAt?: string;
 };
 
 export type StreamDelta = {
@@ -26,12 +29,11 @@ export type InferencePayload = {
 };
 
 export type StreamChatOptions = {
-  serverId: string;
   /** Used by the backend to fetch the user's memory wiki for this conversation
    *  (and its project, if any) and inject it into the system prompt. */
   conversationId?: string;
   messages: ChatMessage[];
-  model?: string;
+  model: string;
   inference?: InferencePayload | null;
   signal?: AbortSignal;
   onDelta: (delta: StreamDelta) => void;
@@ -67,11 +69,10 @@ export async function streamChat(
   let res: Response;
   try {
     const body: Record<string, unknown> = {
-      serverId: opts.serverId,
+      model: opts.model,
       messages: opts.messages,
     };
     if (opts.conversationId) body.conversationId = opts.conversationId;
-    if (opts.model) body.model = opts.model;
     if (opts.inference) {
       const inf = opts.inference;
       if (inf.temperature !== undefined) body.temperature = inf.temperature;

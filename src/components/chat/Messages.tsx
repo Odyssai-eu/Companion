@@ -76,13 +76,14 @@ export default function Messages({
           <SpaceInvaders onClose={() => setEasterEgg(false)} />
         )}
         <div className="flex flex-col items-center gap-3 text-center">
+          <VersionBadge />
           <img
             src="/logo/icon-192.png"
             alt=""
             className="h-14 w-14 rounded-full opacity-70"
           />
           <p className="font-display text-[20px] font-light text-navy">
-            What would you like to ask your server?
+            What would you like to ask?
           </p>
           <p className="text-[13px] text-gray-400">
             Your conversations stay on your hardware.
@@ -701,5 +702,27 @@ function SaveIcon() {
       <polyline points="17 21 17 13 7 13 7 21" />
       <polyline points="7 3 7 8 15 8" />
     </svg>
+  );
+}
+
+function VersionBadge() {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/health")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { version?: string } | null) => {
+        if (!cancelled && d?.version) setVersion(d.version);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (!version) return null;
+  return (
+    <span className="font-mono text-[10px] tracking-[0.06em] text-gray-300 uppercase">
+      v{version}
+    </span>
   );
 }

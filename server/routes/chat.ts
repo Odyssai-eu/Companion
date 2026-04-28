@@ -1,85 +1,118 @@
-import { asc, eq } from "drizzle-orm";
+/**
+ * Chat completion proxy — LiteLLM only.
+ *
+ * The frontend posts {conversationId, messages, model, inference}. We:
+ *
+ *   1. Resolve the user's LiteLLM target (per-user URL/key, env, fallback).
+ *   2. Pull "what I remember about you" from the memory service and prepend
+ *      it to the system prompt.
+ *   3. Atomically read & advance users.last_interaction_at (single tx, FOR
+ *      UPDATE row lock) — the read gives us T_old for the time tag, the
+ *      write makes the next request see T_now.
+ *   4. Inject [ISO | Δ: …] tags onto every user message. The latest one
+ *      uses T_old as its delta basis; historicals use the previous message's
+ *      provided createdAt (or fall back to T_old when missing).
+ *   5. Forward to LiteLLM /v1/chat/completions, stream the response back
+ *      verbatim (SSE).
+ *
+ * No engine-kind dispatch, no model resolution magic — LiteLLM exposes a
+ * single OpenAI-compatible surface.
+ */
+
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db/index";
-import { conversations, endpoints, servers } from "../db/schema";
+import { conversations, users } from "../db/schema";
+import { authHeaders } from "../lib/litellm";
 import { getMemoryContext } from "../lib/memory";
-import { buildBase } from "../lib/url";
-import { handleAnthropicChat } from "./chat-anthropic";
+import { buildTag } from "../lib/timetag";
 
-const chatRoute = new Hono();
+type Env = { Variables: { userId: string } };
+const chatRoute = new Hono<Env>();
+
+// ── Types from the client ─────────────────────────────────────────────────
+
+type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+type IncomingMessage = {
+  role: "user" | "assistant" | "system";
+  content: string | ContentPart[];
+  /** ISO-8601 — populated by the frontend for time-tag deltas. Optional;
+   *  falls back to T_old when absent. */
+  createdAt?: string;
+};
+
+type ChatBody = {
+  conversationId?: string;
+  messages?: IncomingMessage[];
+  model?: string;
+  temperature?: number;
+  max_tokens?: number;
+  top_p?: number;
+  top_k?: number;
+  min_p?: number;
+  repetition_penalty?: number;
+  seed?: number;
+  thinking?: boolean;
+  reasoning_effort?: string;
+  system_prompt?: string;
+};
+
+// ── Route ────────────────────────────────────────────────────────────────
 
 chatRoute.post("/completions", async (c) => {
-  const body = await c.req.json().catch(() => null);
-  if (!body || typeof body !== "object") {
-    return c.json({ error: "invalid_json" }, 400);
+  const body = (await c.req.json().catch(() => null)) as ChatBody | null;
+  if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
+    return c.json({ error: "missing_messages" }, 400);
   }
-  const {
-    serverId,
-    conversationId,
-    messages,
-    model,
-    temperature,
-    max_tokens,
-    top_p,
-    top_k,
-    min_p,
-    repetition_penalty,
-    seed,
-    thinking,
-    reasoning_effort,
-    system_prompt,
-  } = body as {
-    serverId?: string;
-    conversationId?: string;
-    messages?: unknown;
-    model?: string;
-    temperature?: number;
-    max_tokens?: number;
-    top_p?: number;
-    top_k?: number;
-    min_p?: number;
-    repetition_penalty?: number;
-    seed?: number;
-    thinking?: boolean;
-    reasoning_effort?: string;
-    system_prompt?: string;
-  };
-  if (!serverId || !Array.isArray(messages) || messages.length === 0) {
-    return c.json({ error: "missing_serverId_or_messages" }, 400);
+  if (!body.model) {
+    return c.json({ error: "missing_model" }, 400);
   }
 
   const userId = c.get("userId");
-  const [server] = await db
-    .select()
-    .from(servers)
-    .where(eq(servers.id, serverId))
-    .limit(1);
-  if (!server || server.userId !== userId) {
-    return c.json({ error: "server_not_found" }, 404);
-  }
-  const eps = await db
-    .select()
-    .from(endpoints)
-    .where(eq(endpoints.serverId, serverId))
-    .orderBy(asc(endpoints.createdAt));
-  const primary = eps.find((e) => e.role === "primary") ?? eps[0];
-  if (!primary) {
-    return c.json({ error: "no_endpoint" }, 400);
-  }
 
-  const base = buildBase(primary.ip, primary.port);
+  // ── 1. Atomic last-interaction swap ────────────────────────────────────
+  // SELECT … FOR UPDATE locks the user row for the duration of the tx.
+  // Concurrent chat requests from the same user serialize through this gate,
+  // so each gets the immediately-prior interaction time as its delta basis.
+  const now = new Date();
+  const userRow = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({
+        timezone: users.timezone,
+        lastInteractionAt: users.lastInteractionAt,
+        litellmUrl: users.litellmUrl,
+        litellmApiKey: users.litellmApiKey,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .for("update");
+    if (!row) throw new Error("user_not_found");
+    await tx
+      .update(users)
+      .set({ lastInteractionAt: now })
+      .where(eq(users.id, userId));
+    return row;
+  });
 
-  // Pull "what I remember about you" from the memory service, scoped to this
-  // user (and the active project, if any). Best-effort: if the memory service
-  // is down or slow we fall through with an empty string.
-  let memoryBlock = "";
+  // ── 2. Resolve LiteLLM target ─────────────────────────────────────────
+  const target = {
+    baseUrl: (userRow.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000")
+      .replace(/\/+$/, ""),
+    apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+  };
+
+  // ── 3. Resolve project + memory context (best-effort) ─────────────────
   let projectId: string | null = null;
-  if (conversationId) {
+  let memoryBlock = "";
+  if (body.conversationId) {
     try {
       const [conv] = await db
         .select({ projectId: conversations.projectId, userId: conversations.userId })
         .from(conversations)
-        .where(eq(conversations.id, conversationId))
+        .where(eq(conversations.id, body.conversationId))
         .limit(1);
       if (conv && conv.userId === userId) {
         projectId = conv.projectId;
@@ -90,84 +123,90 @@ chatRoute.post("/completions", async (c) => {
     }
   }
 
-  // Compose the system prompt: user-supplied prompt first (highest priority),
-  // memory block second (background context the assistant uses to stay
-  // consistent across conversations).
+  // ── 4. Inject time tags into user messages ────────────────────────────
+  const tz = userRow.timezone || "Europe/Brussels";
+  const taggedMessages: IncomingMessage[] = [];
+  let prevTimestamp: Date | null = userRow.lastInteractionAt ?? null;
+  let latestUserSeen = false;
+
+  // Walk messages in order. The LATEST (last in array, role=user) message is
+  // the one being sent now; we use T_old=lastInteractionAt for its delta.
+  // Historical user messages use either their provided createdAt (frontend
+  // sends it) or fall back to walking from T_old.
+  for (let i = 0; i < body.messages.length; i++) {
+    const m = body.messages[i];
+    if (m.role !== "user") {
+      taggedMessages.push(m);
+      continue;
+    }
+    const isLatest = i === body.messages.length - 1;
+    const createdAt = isLatest
+      ? now
+      : m.createdAt
+        ? new Date(m.createdAt)
+        : null;
+
+    const stamp = createdAt ?? now;
+    const tag = buildTag({
+      now: stamp,
+      previous: latestUserSeen || prevTimestamp ? prevTimestamp : null,
+      timezone: tz,
+    });
+    // Do not overwrite — prepend on a new line for readability
+    taggedMessages.push({
+      ...m,
+      content: prependTagToContent(m.content, tag),
+    });
+    prevTimestamp = stamp;
+    latestUserSeen = true;
+  }
+
+  // ── 5. Compose system prompt: user prompt + memory ───────────────────
   const systemSegments: string[] = [];
-  if (system_prompt && system_prompt.trim().length > 0)
-    systemSegments.push(system_prompt.trim());
+  if (body.system_prompt && body.system_prompt.trim().length > 0) {
+    systemSegments.push(body.system_prompt.trim());
+  }
   if (memoryBlock.trim().length > 0) systemSegments.push(memoryBlock);
   const composedSystem = systemSegments.join("\n\n---\n\n");
 
   const withSystem =
     composedSystem.length > 0
       ? [
-          { role: "system", content: composedSystem },
-          ...(messages as { role: string; content: string }[]),
+          { role: "system" as const, content: composedSystem },
+          ...taggedMessages,
         ]
-      : (messages as { role: "user" | "assistant" | "system"; content: string }[]);
+      : taggedMessages;
 
-  // Resolve model (either user-picked, or ask upstream what's loaded)
-  let resolvedModel = model && model !== "auto" ? model : undefined;
-  if (!resolvedModel) {
-    const authHeaders: Record<string, string> = {};
-    if (server.authBearer)
-      authHeaders.Authorization = `Bearer ${server.authBearer}`;
-    resolvedModel = await pickLoadedModel(base, authHeaders);
-  }
-  if (!resolvedModel) {
-    return c.json(
-      {
-        error: "no_model",
-        detail:
-          "Engine didn't report any loaded model. Load one on the server, then retry.",
-      },
-      400,
-    );
-  }
-
-  if (server.engineKind === "anthropic") {
-    return handleAnthropicChat(c, {
-      base,
-      authBearer: server.authBearer,
-      model: resolvedModel,
-      messages: withSystem as Parameters<typeof handleAnthropicChat>[1]["messages"],
-      temperature,
-      max_tokens,
-    });
-  }
-
-  // OpenAI-compat path (exo, Ollama, LM Studio, vLLM, OpenRouter)
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (server.authBearer) {
-    headers.Authorization = `Bearer ${server.authBearer}`;
-    // OpenRouter asks attribution headers on each call
-    headers["HTTP-Referer"] = "https://dev.thecomp.ai";
-    headers["X-Title"] = "Thecomp.ai";
-  }
-
+  // ── 6. Forward to LiteLLM ─────────────────────────────────────────────
   const upstreamBody: Record<string, unknown> = {
-    model: resolvedModel,
+    model: body.model,
     messages: withSystem,
     stream: true,
   };
-  if (temperature !== undefined) upstreamBody.temperature = temperature;
-  if (max_tokens !== undefined) upstreamBody.max_tokens = max_tokens;
-  if (top_p !== undefined) upstreamBody.top_p = top_p;
-  if (top_k !== undefined) upstreamBody.top_k = top_k;
-  if (min_p !== undefined) upstreamBody.min_p = min_p;
-  if (repetition_penalty !== undefined)
-    upstreamBody.repetition_penalty = repetition_penalty;
-  if (seed !== undefined) upstreamBody.seed = seed;
-  if (thinking) upstreamBody.enable_thinking = true;
-  if (thinking && reasoning_effort)
-    upstreamBody.reasoning_effort = reasoning_effort;
+  for (const k of [
+    "temperature",
+    "max_tokens",
+    "top_p",
+    "top_k",
+    "min_p",
+    "repetition_penalty",
+    "seed",
+  ] as const) {
+    const v = body[k];
+    if (v !== undefined) upstreamBody[k] = v;
+  }
+  if (body.thinking) upstreamBody.enable_thinking = true;
+  if (body.thinking && body.reasoning_effort)
+    upstreamBody.reasoning_effort = body.reasoning_effort;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...authHeaders(target),
+  };
 
   let upstream: Response;
   try {
-    upstream = await fetch(`${base}/v1/chat/completions`, {
+    upstream = await fetch(`${target.baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify(upstreamBody),
@@ -196,57 +235,28 @@ chatRoute.post("/completions", async (c) => {
   return c.body(upstream.body);
 });
 
-/**
- * Find a model that is actually loaded and ready to serve — not just known.
- *
- * - exo's `/state` lists placed instances under `instances.*.MlxJacclInstance
- *   .shardAssignments.modelId`. We prefer this because `/v1/models` there
- *   returns *every registered* model, including ones that aren't placed, and
- *   chatting against one returns 404 "No instance found for model".
- * - For Ollama / OpenRouter / Anthropic, `/v1/models` lists served models
- *   accurately, so we fall back to its first entry.
- */
-async function pickLoadedModel(
-  base: string,
-  headers: Record<string, string>,
-): Promise<string | undefined> {
-  // Try exo /state first.
-  try {
-    const res = await fetch(`${base}/state`, { headers });
-    if (res.ok) {
-      const state = (await res.json()) as {
-        instances?: Record<
-          string,
-          {
-            MlxJacclInstance?: {
-              shardAssignments?: { modelId?: string };
-            };
-          }
-        >;
-      };
-      const placed = Object.values(state.instances ?? {})
-        .map((i) => i.MlxJacclInstance?.shardAssignments?.modelId)
-        .filter((m): m is string => typeof m === "string" && m.length > 0);
-      if (placed.length > 0) return placed[0];
-    }
-  } catch {
-    // ignore — not an exo server
-  }
+// ── Helpers ──────────────────────────────────────────────────────────────
 
-  // Fall back to OpenAI-style /v1/models.
-  try {
-    const res = await fetch(`${base}/v1/models`, { headers });
-    if (res.ok) {
-      const body = (await res.json()) as {
-        data?: { id?: string }[];
-      };
-      return body.data?.[0]?.id;
-    }
-  } catch {
-    // ignore
+function prependTagToContent(
+  content: string | ContentPart[],
+  tag: string,
+): string | ContentPart[] {
+  if (typeof content === "string") {
+    return `${tag} ${content}`;
   }
-
-  return undefined;
+  // Multimodal: find the first text part and prepend; if none, add one.
+  const out: ContentPart[] = [];
+  let injected = false;
+  for (const part of content) {
+    if (!injected && part.type === "text") {
+      out.push({ type: "text", text: `${tag} ${part.text}` });
+      injected = true;
+    } else {
+      out.push(part);
+    }
+  }
+  if (!injected) out.unshift({ type: "text", text: tag });
+  return out;
 }
 
 export default chatRoute;

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ApiGlobalModel } from "~/lib/api";
 import {
   ACCEPT_ATTR,
   type Attachment,
@@ -14,6 +15,9 @@ export default function Input({
   disabled,
   placeholder,
   modelHasVision = true,
+  model,
+  onModelChange,
+  models,
 }: {
   onSend: (text: string, attachments: Attachment[]) => void;
   onCancel: () => void;
@@ -23,12 +27,30 @@ export default function Input({
   /** When false, show a warning if the user has attached images. Defaults to
    *  true (permissive) so we never show a false negative. */
   modelHasVision?: boolean;
+  model: string;
+  onModelChange: (id: string) => void;
+  models: ApiGlobalModel[];
 }) {
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState<VoiceInputState>({ status: "idle" });
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // ExoScopy-style auto-resize: grow up to 200px, then scroll.
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    el.style.overflowY = el.scrollHeight > 200 ? "auto" : "hidden";
+  }, []);
+
+  useEffect(() => {
+    autoResize();
+  }, [value, autoResize]);
 
   useEffect(() => {
     const unsub = voiceInput.subscribe(setVoice);
@@ -215,6 +237,7 @@ export default function Input({
             <AttachIcon />
           </button>
           <textarea
+            ref={textareaRef}
             value={listening ? interim : value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={onKeyDown}
@@ -224,11 +247,20 @@ export default function Input({
             placeholder={
               listening
                 ? "Listening… speak now, click Stop when done."
-                : placeholder ?? "Ask your server anything..."
+                : placeholder ?? "Ask anything…"
             }
             className="flex-1 resize-none bg-transparent text-[15px] leading-[22px] text-ink outline-none placeholder:text-gray-400 disabled:opacity-50"
-            style={{ maxHeight: "200px" }}
+            style={{ minHeight: "22px", maxHeight: "200px", overflowY: "hidden" }}
           />
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            disabled={disabled || listening}
+            title="Expand editor"
+            className="mb-1 flex-shrink-0 text-gray-400 hover:text-ink disabled:opacity-50"
+          >
+            <ExpandIcon />
+          </button>
           <button
             type="button"
             onClick={startTalk}
@@ -269,10 +301,211 @@ export default function Input({
             </button>
           )}
         </div>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <p className="font-mono text-[11px] text-gray-400">
+            Press <kbd>⇧</kbd> + <kbd>⏎</kbd> for a newline · <kbd>⏎</kbd> to send
+          </p>
+          <ModelDropdown
+            value={model}
+            onChange={onModelChange}
+            models={models}
+          />
+        </div>
       </div>
-      <p className="font-mono text-[11px] text-gray-400">
-        Your data stays on your hardware. Press <kbd>⇧</kbd> + <kbd>⏎</kbd> for a newline.
-      </p>
+      {expanded && (
+        <ExpandedEditor
+          value={value}
+          onChange={(v) => {
+            setValue(v);
+          }}
+          onClose={() => setExpanded(false)}
+          onSend={() => {
+            setExpanded(false);
+            submit();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Expanded editor modal (ExoScopy parity) ────────────────────────────────
+
+function ExpandedEditor({
+  value,
+  onChange,
+  onClose,
+  onSend,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onClose: () => void;
+  onSend: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-8"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+          <span className="text-[14px] font-semibold text-ink">Edit message</span>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-[11px] text-gray-400">
+              {value.length} chars
+            </span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-gray-400 hover:text-ink"
+              aria-label="Close"
+            >
+              <CloseIcon />
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-hidden p-4">
+          <textarea
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                onSend();
+              }
+            }}
+            autoFocus
+            placeholder="Type your message…"
+            className="h-full min-h-[300px] w-full resize-none text-[15px] leading-relaxed text-ink outline-none placeholder:text-gray-400"
+          />
+        </div>
+        <div className="flex items-center justify-between border-t border-gray-200 px-5 py-3">
+          <span className="font-mono text-[11px] text-gray-400">
+            <kbd>⇧</kbd> + <kbd>⏎</kbd> newline · <kbd>⌘</kbd> + <kbd>⏎</kbd> send · <kbd>Esc</kbd> close
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md px-4 py-1.5 text-[13px] text-gray-600 hover:text-ink"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={onSend}
+              disabled={!value.trim()}
+              className="rounded-md bg-cyan px-5 py-1.5 text-[13px] font-semibold text-white hover:opacity-95 disabled:opacity-40"
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Model dropdown ─────────────────────────────────────────────────────────
+
+function ModelDropdown({
+  value,
+  onChange,
+  models,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+  models: ApiGlobalModel[];
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Group by tag (first tag wins). Untagged → "Other".
+  const groups = useMemo(() => {
+    const out = new Map<string, ApiGlobalModel[]>();
+    for (const m of models) {
+      const tag = m.tags[0] ?? "Models";
+      const list = out.get(tag) ?? [];
+      list.push(m);
+      out.set(tag, list);
+    }
+    return Array.from(out.entries());
+  }, [models]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("mousedown", onClick);
+    return () => window.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  const current = models.find((m) => m.id === value);
+  const label = current?.name ?? value ?? "Pick a model";
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1 font-mono text-[11px] text-gray-700 hover:bg-gray-50 hover:text-ink"
+      >
+        <span className="max-w-[260px] truncate">{label}</span>
+        <ChevronIcon />
+      </button>
+      {open && (
+        <div className="absolute right-0 bottom-full z-30 mb-2 max-h-[400px] w-[320px] overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+          {models.length === 0 && (
+            <div className="px-3 py-4 text-center font-mono text-[11px] text-gray-400">
+              No models — check your LiteLLM URL in Settings → Inference.
+            </div>
+          )}
+          {groups.map(([group, list]) => (
+            <div key={group}>
+              <div className="border-b border-gray-100 bg-gray-50 px-3 py-1.5 font-mono text-[10px] tracking-[0.05em] text-gray-500 uppercase">
+                {group}
+              </div>
+              {list.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => {
+                    onChange(m.id);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[13px] ${
+                    m.id === value
+                      ? "bg-cyan/10 text-navy"
+                      : "text-ink hover:bg-gray-50"
+                  }`}
+                >
+                  <span className="truncate font-mono">{m.name}</span>
+                  {m.capabilities.vision && (
+                    <span
+                      title="Vision-capable"
+                      className="flex-shrink-0 rounded-full bg-cyan/15 px-1.5 py-0.5 text-[10px] text-cyan-700"
+                    >
+                      👁
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -454,6 +687,61 @@ function StopIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
       <rect x="6" y="6" width="12" height="12" rx="1.5" />
+    </svg>
+  );
+}
+
+function ExpandIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" y1="3" x2="14" y2="10" />
+      <line x1="3" y1="21" x2="10" y2="14" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+function ChevronIcon() {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="6 9 12 15 18 9" />
     </svg>
   );
 }

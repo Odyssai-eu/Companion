@@ -10,7 +10,6 @@ const conversationsRoute = new Hono();
 
 const createSchema = z.object({
   title: z.string().min(1).max(200).optional(),
-  serverId: z.string().uuid().optional(),
   projectId: z.string().uuid().optional(),
   model: z.string().max(200).optional(),
 });
@@ -44,7 +43,6 @@ conversationsRoute.get("/", async (c) => {
     .select({
       id: conversations.id,
       userId: conversations.userId,
-      serverId: conversations.serverId,
       projectId: conversations.projectId,
       title: conversations.title,
       model: conversations.model,
@@ -72,7 +70,6 @@ conversationsRoute.post(
       .values({
         userId,
         title: data.title ?? "New conversation",
-        serverId: data.serverId,
         projectId: data.projectId,
         model: data.model,
       })

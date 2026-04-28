@@ -6,7 +6,6 @@ import {
   type ApiGlobalModel,
   type ApiMessage,
   type ApiProject,
-  type ApiServer,
 } from "~/lib/api";
 import { streamChat, type ChatMessage } from "~/lib/chat-stream";
 import { buildUserMessage, type Attachment } from "~/lib/file-attach";
@@ -55,6 +54,13 @@ export type UIMessage = {
   content: string;
   reasoning?: string;
   streaming?: boolean;
+  /** ISO-8601 — set when the message is created locally (sendMessage) or
+   *  loaded from the server (toUIMessage). Used by the chat client to send
+   *  per-message timestamps so the backend can compute Δ tags. */
+  createdAt?: string;
+  /** Model id that produced this assistant message (set when the assistant
+   *  reply lands). Shown as a badge under the message. */
+  model?: string;
   stats?: {
     ttft?: string;
     tokens?: number;
@@ -72,11 +78,11 @@ export type UseChatOptions = {
   conversationId?: string;
 };
 
+const MODEL_LS_KEY = "thecompai:model";
+
 export function useChat({ conversationId }: UseChatOptions = {}) {
   const navigate = useNavigate();
 
-  const [servers, setServers] = useState<ApiServer[]>([]);
-  const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const [globalModels, setGlobalModels] = useState<ApiGlobalModel[]>([]);
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [sending, setSending] = useState(false);
@@ -85,42 +91,20 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     null,
   );
   const [project, setProject] = useState<ApiProject | null>(null);
-  type ModelSelection = { id: string; serverId: string | null };
-  const [modelSelection, setModelSelection] = useState<ModelSelection>(() => {
-    if (typeof window === "undefined") return { id: "auto", serverId: null };
-    try {
-      const raw = window.localStorage.getItem("thecompai:modelSelection");
-      if (raw) {
-        const parsed = JSON.parse(raw) as ModelSelection;
-        if (parsed && typeof parsed.id === "string") return parsed;
-      }
-      // Migration from old shape (just a string)
-      const old = window.localStorage.getItem("thecompai:model");
-      if (old) return { id: old, serverId: null };
-    } catch {
-      // ignore
-    }
-    return { id: "auto", serverId: null };
-  });
 
-  const setModelAndPersist = useCallback((m: ModelSelection) => {
-    setModelSelection(m);
+  // Selected model — a single LiteLLM model id. Persisted in localStorage so
+  // it survives reloads. Default falls back to inference settings → first
+  // available model.
+  const [model, setModel] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem(MODEL_LS_KEY) ?? "";
+  });
+  const setModelAndPersist = useCallback((m: string) => {
+    setModel(m);
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(
-        "thecompai:modelSelection",
-        JSON.stringify(m),
-      );
+      window.localStorage.setItem(MODEL_LS_KEY, m);
     }
   }, []);
-
-  // When the user picks a specific model, the server it lives on becomes the
-  // active server for chat. "auto" leaves the activeServer logic alone (first
-  // server or whatever the conversation was tied to).
-  useEffect(() => {
-    if (modelSelection.serverId) {
-      setActiveServerId(modelSelection.serverId);
-    }
-  }, [modelSelection.serverId]);
 
   const [inference, setInference] = useState<InferenceParams>(() => {
     if (typeof window === "undefined") return DEFAULT_INFERENCE;
@@ -148,27 +132,31 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
   const loadedIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  // Holds the latest sendMessage closure so regenerate/editAndResend (defined
-  // earlier) can call it without circular deps.
   const sendMessageRef = useRef<
     ((text: string, attachments?: Attachment[]) => Promise<void>) | null
   >(null);
 
-  // Load servers once
+  // Fetch the LiteLLM model list + the user's default model on mount. If the
+  // user hasn't picked a model, default to inferenceSettings.defaultModel,
+  // else the first available LiteLLM model.
   useEffect(() => {
-    api
-      .listServers()
-      .then((data) => {
-        setServers(data.servers);
-        if (data.servers[0]) setActiveServerId(data.servers[0].id);
+    let cancelled = false;
+    Promise.all([api.listAllModels(), api.inferenceSettings()])
+      .then(([{ models }, settings]) => {
+        if (cancelled) return;
+        setGlobalModels(models);
+        if (!model) {
+          const fallback = settings.defaultModel ?? models[0]?.id ?? "";
+          if (fallback) setModelAndPersist(fallback);
+        }
       })
-      .catch((e) => setError(e.message));
-    // Fetch global model list for capability detection (vision warning, etc.)
-    // Non-critical: failures are silently ignored.
-    api
-      .listAllModels()
-      .then(({ models }) => setGlobalModels(models))
-      .catch(() => {});
+      .catch(() => {
+        // Non-critical — chat will fail gracefully on send if no model.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load conversation when URL id changes
@@ -187,7 +175,6 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       .then(({ conversation, messages: msgs }) => {
         setConversation(conversation);
         setMessages(msgs.map(toUIMessage));
-        if (conversation.serverId) setActiveServerId(conversation.serverId);
         if (conversation.projectId) {
           api
             .getProject(conversation.projectId)
@@ -200,35 +187,23 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       .catch((e) => setError(e.message));
   }, [conversationId]);
 
-  const activeServer =
-    servers.find((s) => s.id === activeServerId) ?? servers[0] ?? null;
-
-  // Capabilities of the currently-selected model (vision, tools). Used to
-  // warn the user before they send an incompatible request (e.g. image on a
-  // text-only model). Falls back to permissive defaults when unknown.
   const activeModelCapabilities: { vision: boolean; tools: boolean } =
-    globalModels.find((m) => m.id === modelSelection.id)?.capabilities ??
+    globalModels.find((m) => m.id === model)?.capabilities ??
     { vision: true, tools: false };
 
   const sendMessage = useCallback(
     async (text: string, attachments: Attachment[] = []) => {
-      // Prefer the server attached to the user's picked model. Falls back to
-      // the active server (set by conversation load or by hand). Without this,
-      // picking an OpenRouter model on a conversation that was started with
-      // exo would still send to exo and 404.
-      const targetServerId =
-        modelSelection.serverId ??
-        activeServer?.id ??
-        servers[0]?.id ??
-        null;
-      const targetServer =
-        servers.find((s) => s.id === targetServerId) ?? activeServer;
-      if (!targetServer || sending) return;
+      if (sending) return;
+      if (!model) {
+        setError(
+          "No model selected. Pick one from the model picker in the composer.",
+        );
+        return;
+      }
       const trimmed = text.trim();
       if (!trimmed && attachments.length === 0) return;
 
       const built = buildUserMessage(trimmed, attachments);
-
       setError(null);
 
       // Ensure we have a conversation to write into
@@ -238,7 +213,6 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       if (!convId) {
         try {
           const created = await api.createConversation({
-            serverId: targetServer.id,
             title: titleSeed.slice(0, 80),
           });
           convId = created.conversation.id;
@@ -250,10 +224,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         }
       }
 
+      const nowIso = new Date().toISOString();
       const userMsg: UIMessage = {
         id: crypto.randomUUID(),
         role: "user",
         content: built.persistText,
+        createdAt: nowIso,
       };
       const assistantId = crypto.randomUUID();
       const placeholder: UIMessage = {
@@ -261,54 +237,46 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         role: "assistant",
         content: "",
         streaming: true,
+        model,
       };
 
       setMessages((prev) => [...prev, userMsg, placeholder]);
       setSending(true);
 
-      // Update URL to /c/:id if we just created it (silent, no reload)
       if (!conversationId) {
         navigate(`/c/${convId}`, { replace: true });
       }
 
-      // Persist user message (fire and forget — don't block the stream).
-      // We persist the flat text version so the DB stays sane (no 5 MB image
-      // data URLs); the multimodal version only goes to the model in-flight.
       api
         .appendMessage(convId, { role: "user", content: built.persistText })
         .catch((e) => console.warn("persist user failed", e));
 
-      // Send prior messages as-is (they're plain strings on reload), and
-      // attach the multimodal payload only on the new user turn.
+      // Pass per-message createdAt so the backend can compute Δ tags
+      // for historical messages too. The latest user message uses NOW.
       const convoForModel: ChatMessage[] = [
-        ...messages.map((m) => ({ role: m.role, content: m.content })),
-        { role: "user", content: built.content },
+        ...messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          createdAt: m.createdAt,
+        })),
+        { role: "user", content: built.content, createdAt: nowIso },
       ];
 
       const controller = new AbortController();
       abortRef.current = controller;
 
-      // If the conversation belongs to a project, its system prompt takes
-      // precedence over the user's inference-panel one.
       const effectiveInference = inferenceToPayload(inference);
       if (project?.systemPrompt && project.systemPrompt.trim()) {
         effectiveInference.system_prompt = project.systemPrompt;
       }
 
-      // Accumulate stream chunks in local closure vars rather than reading
-      // them back out of React state. With React 19 concurrent rendering, a
-      // setState updater can be deferred — so building `finalAssistant` from
-      // *inside* a setMessages updater used to leave it null at persist time,
-      // which is why assistant replies were never written to the DB.
       let streamedContent = "";
       let streamedReasoning = "";
 
       const result = await streamChat({
-        serverId: targetServer.id,
         conversationId: convId ?? undefined,
         messages: convoForModel,
-        model:
-          modelSelection.id === "auto" ? undefined : modelSelection.id,
+        model,
         inference: effectiveInference,
         signal: controller.signal,
         onDelta: (delta) => {
@@ -350,8 +318,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
                 ? `${(((result.completionTokens ?? result.tokens ?? 0) / result.durationMs) * 1000).toFixed(1)} tok/s`
                 : undefined,
             cost: estimateCost(
-              targetServer,
-              modelSelection.id,
+              model,
               result.promptTokens,
               result.completionTokens,
             ),
@@ -369,6 +336,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         content: finalContent,
         reasoning: streamedReasoning || undefined,
         streaming: false,
+        model,
         stats,
       };
 
@@ -378,7 +346,6 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
       if (!result.ok) setError(result.error ?? null);
 
-      // Persist the assistant message (best effort, fire and forget)
       if (convId && finalContent) {
         api
           .appendMessage(convId, {
@@ -391,35 +358,27 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       }
     },
     [
-      activeServer,
       conversation?.id,
       conversationId,
       inference,
       messages,
-      modelSelection.id,
+      model,
       navigate,
       project,
       sending,
     ],
   );
 
-  // Keep the ref in sync so regenerate / editAndResend can invoke the
-  // latest closure without listing it as a dep (which would loop).
   sendMessageRef.current = sendMessage;
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
   }, []);
 
-  /**
-   * Drop the assistant reply for `assistantId` (and any later turns), then
-   * resend the most recent user message to get a fresh answer.
-   */
   const regenerate = useCallback(
     async (assistantId: string) => {
       const idx = messages.findIndex((m) => m.id === assistantId);
       if (idx <= 0 || sending) return;
-      // Find the user message that produced this assistant reply
       let userIdx = idx - 1;
       while (userIdx >= 0 && messages[userIdx].role !== "user") userIdx--;
       if (userIdx < 0) return;
@@ -431,19 +390,14 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         try {
           await api.truncateConversationFrom(convId, assistantId);
         } catch {
-          // best effort — server may have already deleted, or the id is local
+          // best effort
         }
       }
-      // Re-send. NB: we pass [] for attachments because the original
-      // attachment data (image data URLs) only lived in-flight, not in DB.
       await sendMessageRef.current?.(userText, []);
     },
     [messages, sending, conversationId, conversation?.id],
   );
 
-  /**
-   * Edit a previous user message and re-run the conversation from there.
-   */
   const editAndResend = useCallback(
     async (messageId: string, newText: string) => {
       const idx = messages.findIndex((m) => m.id === messageId);
@@ -472,13 +426,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     messages,
     sending,
     error,
-    activeServer,
-    servers,
-    setActiveServerId,
     conversation,
     project,
-    modelSelection,
-    setModelSelection: setModelAndPersist,
+    model,
+    setModel: setModelAndPersist,
+    globalModels,
     inference,
     setInference: updateInference,
     activeModelCapabilities,
@@ -496,33 +448,27 @@ function toUIMessage(m: ApiMessage): UIMessage {
     role: m.role,
     content: m.content,
     reasoning: m.reasoning ?? undefined,
+    createdAt: m.createdAt,
     stats: (m.stats as UIMessage["stats"]) ?? undefined,
   };
 }
 
 /**
  * Best-effort cost display string.
- * - Local servers: always "$0.00 · local"
- * - Cloud (OpenRouter / Anthropic / OpenAI direct): look up price from the
- *   static table in model-pricing.ts. Falls back to "— · cloud" when the
- *   model isn't in the table.
+ * Looks up the static price table for known cloud model ids; otherwise
+ * shows token count or "$0.00".
  */
 function estimateCost(
-  server: ApiServer | null,
   model: string,
   prompt?: number,
   completion?: number,
 ): string {
-  if (!server) return "$0.00 · local";
-  const isCloud = /openrouter\.ai|anthropic\.com|openai\.com/.test(server.url);
-  if (!isCloud) return "$0.00 · local";
   if (prompt !== undefined && completion !== undefined) {
     const cost = lookupCost(model, prompt, completion);
-    if (cost !== null) return `${cost} · cloud`;
-    // Model not in table — still show total tokens so it's not empty
-    return `${prompt + completion} tok · cloud`;
+    if (cost !== null) return `${cost}`;
+    return `${prompt + completion} tok`;
   }
-  return "— · cloud";
+  return "—";
 }
 
 function inferenceToPayload(i: InferenceParams) {

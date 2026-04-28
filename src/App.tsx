@@ -11,9 +11,9 @@ import AppearancePage from "./pages/settings/AppearancePage";
 import ComingSoonPage from "./pages/settings/ComingSoonPage";
 import DevicesPage from "./pages/settings/DevicesPage";
 import HelpPage from "./pages/settings/HelpPage";
+import InferencePage from "./pages/settings/InferencePage";
+import LearningCenterPage from "./pages/settings/LearningCenterPage";
 import ProfilePage from "./pages/settings/ProfilePage";
-import ServerDetailPage from "./pages/settings/ServerDetailPage";
-import ServersPage from "./pages/settings/ServersPage";
 import ShortcutsPage from "./pages/settings/ShortcutsPage";
 
 export default function App() {
@@ -56,12 +56,14 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/settings/servers" replace />} />
-        <Route path="servers" element={<ServersPage />} />
-        <Route path="servers/:id" element={<ServerDetailPage />} />
+        <Route index element={<Navigate to="/settings/inference" replace />} />
+        <Route path="inference" element={<InferencePage />} />
+        <Route path="learning" element={<LearningCenterPage />} />
         <Route path="profile" element={<ProfilePage />} />
         <Route path="security" element={<ComingSoonPage title="Security" />} />
-        <Route path="engines" element={<Navigate to="/settings/servers" replace />} />
+        {/* Old paths redirect to /inference for backward compat */}
+        <Route path="servers" element={<Navigate to="/settings/inference" replace />} />
+        <Route path="engines" element={<Navigate to="/settings/inference" replace />} />
         <Route path="devices" element={<DevicesPage />} />
         <Route path="appearance" element={<AppearancePage />} />
         <Route path="accessibility" element={<AccessibilityPage />} />

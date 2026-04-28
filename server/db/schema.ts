@@ -2,7 +2,6 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
-  integer,
   jsonb,
   pgTable,
   text,
@@ -16,43 +15,18 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   name: text("name"),
   passwordHash: text("password_hash"),
+  // Inference settings — LiteLLM proxy is the single inference layer.
+  // Falls back to env LITELLM_URL when null.
+  defaultModel: text("default_model"),
+  litellmUrl: text("litellm_url"),
+  litellmApiKey: text("litellm_api_key"),
+  // Temporal awareness — fed into every inference as a context tag.
+  timezone: text("timezone").notNull().default("Europe/Brussels"),
+  lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .default(sql`now()`),
 });
-
-export const servers = pgTable(
-  "servers",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    hint: text("hint"),
-    url: text("url").notNull(),
-    description: text("description"),
-    // How to talk to this server's engine. openai-compat covers exo, Ollama,
-    // LM Studio, vLLM, OpenRouter. Anthropic has a different protocol.
-    engineKind: text("engine_kind", {
-      enum: ["openai-compat", "anthropic"],
-    })
-      .notNull()
-      .default("openai-compat"),
-    // Optional bearer token to forward as `Authorization: Bearer …` upstream
-    // (OpenRouter, Anthropic, any hosted engine).
-    authBearer: text("auth_bearer"),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .default(sql`now()`),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .default(sql`now()`),
-  },
-  (t) => ({
-    userNameIdx: uniqueIndex("servers_user_name_idx").on(t.userId, t.name),
-  }),
-);
 
 export const projects = pgTable(
   "projects",
@@ -88,9 +62,6 @@ export const conversations = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    serverId: uuid("server_id").references(() => servers.id, {
-      onDelete: "set null",
-    }),
     projectId: uuid("project_id").references(() => projects.id, {
       onDelete: "set null",
     }),
@@ -136,26 +107,7 @@ export const messages = pgTable(
   }),
 );
 
-export const endpoints = pgTable("endpoints", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  serverId: uuid("server_id")
-    .notNull()
-    .references(() => servers.id, { onDelete: "cascade" }),
-  label: text("label").notNull(),
-  role: text("role", { enum: ["primary", "secondary"] }).notNull(),
-  node: text("node"),
-  ip: text("ip").notNull(),
-  port: integer("port").notNull(),
-  healthy: boolean("healthy").notNull().default(true),
-  latencyMs: integer("latency_ms"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .default(sql`now()`),
-});
-
 export type User = typeof users.$inferSelect;
-export type Server = typeof servers.$inferSelect;
-export type Endpoint = typeof endpoints.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Project = typeof projects.$inferSelect;
@@ -189,8 +141,6 @@ export const addons = pgTable(
 );
 
 export type Addon = typeof addons.$inferSelect;
-export type NewServer = typeof servers.$inferInsert;
-export type NewEndpoint = typeof endpoints.$inferInsert;
 export type NewMessage = typeof messages.$inferInsert;
 
 // ── Memory (LLM wiki) ─────────────────────────────────────────────────

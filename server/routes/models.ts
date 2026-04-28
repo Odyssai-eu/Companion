@@ -1,100 +1,95 @@
-import { asc, eq } from "drizzle-orm";
-import { Hono } from "hono";
-import { db } from "../db/index";
-import { endpoints, servers } from "../db/schema";
-import { isCloudHost } from "../lib/url";
-import { listModelsForServer, type ModelEntry } from "./servers";
+/**
+ * Models — pure proxy on LiteLLM /v1/models.
+ *
+ * Whatever LiteLLM exposes, the user sees. The admin curates the model list
+ * by editing ~/litellm/config.yaml on the proxy host. Tags & metadata flow
+ * through if LiteLLM publishes them via model_info.
+ */
 
-const modelsRoute = new Hono();
+import { Hono } from "hono";
+import { authHeaders, resolveLiteLLM } from "../lib/litellm";
+
+type Env = { Variables: { userId: string } };
+const modelsRoute = new Hono<Env>();
 
 export type GlobalModel = {
   id: string;
+  /** Optional human label — falls back to `id` when LiteLLM doesn't provide one. */
   name: string;
-  loaded: boolean;
-  serverId: string;
-  serverName: string;
-  engineKind: "openai-compat" | "anthropic";
-  source: "local" | "cloud";
-  provider: string | null;
+  /** Optional grouping tag(s) the admin can set in litellm/config.yaml under
+   *  model_info.tags. Useful to render "Local" / "Cloud" / "Reasoning" groups. */
+  tags: string[];
+  /** Coarse capability flags. Heuristic on the id when LiteLLM doesn't expose. */
   capabilities: {
     vision: boolean;
     tools: boolean;
   };
 };
 
-/**
- * Aggregate model list across every server the user owns. Each entry carries
- * the originating server so the UI can route the chat call back through the
- * right proxy without a separate lookup. ExoScopy pattern: parallel fetch +
- * preserve duplicates only across servers (within a server, endpoints are
- * already merged).
- */
 modelsRoute.get("/", async (c) => {
   const userId = c.get("userId");
+  const target = await resolveLiteLLM(userId);
 
-  const rows = await db
-    .select()
-    .from(servers)
-    .where(eq(servers.userId, userId))
-    .orderBy(asc(servers.createdAt));
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${target.baseUrl}/v1/models`, {
+      headers: authHeaders(target),
+    });
+  } catch (err) {
+    return c.json(
+      { error: "litellm_unreachable", detail: String(err), models: [] },
+      502,
+    );
+  }
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => "");
+    return c.json(
+      { error: "litellm_error", status: upstream.status, body: text, models: [] },
+      upstream.status as 401 | 500 | 502,
+    );
+  }
 
-  const perServer = await Promise.all(
-    rows.map(async (s) => {
-      const eps = await db
-        .select()
-        .from(endpoints)
-        .where(eq(endpoints.serverId, s.id))
-        .orderBy(asc(endpoints.createdAt));
-      const headers: Record<string, string> = {};
-      if (s.authBearer) headers.Authorization = `Bearer ${s.authBearer}`;
-      let modelsList: ModelEntry[] = [];
-      try {
-        modelsList = await listModelsForServer(eps, headers, s.engineKind);
-      } catch {
-        // Server unreachable — silently skip; UI still sees other servers.
-      }
-      // Classify the server: cloud (OpenRouter/Anthropic/OpenAI) vs local.
-      const primary = eps.find((e) => e.role === "primary") ?? eps[0];
-      const cloud =
-        s.engineKind === "anthropic" ||
-        (primary ? isCloudHost(primary.ip) : false);
+  const data = (await upstream.json().catch(() => null)) as {
+    data?: Array<{
+      id?: string;
+      model_info?: { name?: string; tags?: string[] };
+    }>;
+  } | null;
 
-      return modelsList.map<GlobalModel>((m) => ({
-        id: m.id,
-        name: m.name,
-        loaded: m.loaded,
-        serverId: s.id,
-        serverName: s.name,
-        engineKind: s.engineKind as "openai-compat" | "anthropic",
-        source: cloud ? "cloud" : "local",
-        provider: cloud ? extractProvider(m.id) : null,
-        capabilities: m.capabilities,
-      }));
-    }),
-  );
+  const models: GlobalModel[] = (data?.data ?? [])
+    .map((m) => {
+      const id = m.id ?? "";
+      if (!id) return null;
+      const info = m.model_info ?? {};
+      return {
+        id,
+        name: info.name ?? id,
+        tags: info.tags ?? [],
+        capabilities: heuristicCaps(id),
+      };
+    })
+    .filter((m): m is GlobalModel => m !== null);
 
-  const flat = perServer.flat();
-  // Sort: loaded first, then by name for nice display.
-  flat.sort((a, b) => {
-    if (a.loaded !== b.loaded) return a.loaded ? -1 : 1;
-    return a.name.localeCompare(b.name);
+  // Stable sort: tags grouped, then alpha.
+  models.sort((a, b) => {
+    const at = a.tags[0] ?? "~";
+    const bt = b.tags[0] ?? "~";
+    if (at !== bt) return at.localeCompare(bt);
+    return a.id.localeCompare(b.id);
   });
 
-  return c.json({ models: flat });
+  return c.json({ models });
 });
 
-/**
- * For cloud models like `anthropic/claude-3-haiku` or `openai/gpt-4o`, the
- * id's first segment is the provider name. Local models tend to have
- * `mlx-community/...`, `microsoft/...`, etc. — the maker, which we don't want
- * to expose as a "provider" group on the cloud picker. So we only call out
- * the segment when the source is cloud.
- */
-function extractProvider(id: string): string | null {
-  const slash = id.indexOf("/");
-  if (slash === -1) return null;
-  const head = id.slice(0, slash).trim().toLowerCase();
-  return head || null;
+/** Cheap heuristic: flag vision / tools by name patterns. The admin can
+ *  override by surfacing capability flags in LiteLLM model_info if needed. */
+function heuristicCaps(id: string): { vision: boolean; tools: boolean } {
+  const s = id.toLowerCase();
+  const vision =
+    /(?:vl|vision|gemma-?3|gemma-?4|qwen-?vl|llava|claude|gpt-4o|gpt-4-?turbo)/.test(s);
+  const tools =
+    /(?:claude|gpt-4|gpt-3\.5|qwen|llama-?3|hermes|tool)/.test(s);
+  return { vision, tools };
 }
 
 export default modelsRoute;

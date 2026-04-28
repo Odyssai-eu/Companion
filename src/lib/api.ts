@@ -1,40 +1,27 @@
-export type ApiServer = {
-  id: string;
-  userId: string;
-  name: string;
-  hint: string | null;
-  url: string;
-  description: string | null;
-  engineKind: "openai-compat" | "anthropic";
-  authBearer: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type ApiModel = {
-  id: string;
-  name: string;
-  loaded: boolean;
-  endpoints: string[];
-  capabilities: { vision: boolean; tools: boolean };
-};
-
 export type ApiGlobalModel = {
   id: string;
   name: string;
-  loaded: boolean;
-  serverId: string;
-  serverName: string;
-  engineKind: "openai-compat" | "anthropic";
-  source: "local" | "cloud";
-  provider: string | null;
+  tags: string[];
   capabilities: { vision: boolean; tools: boolean };
+};
+
+export type ApiInferenceSettings = {
+  defaultModel: string | null;
+  litellmUrl: string | null;
+  timezone: string;
+  hasApiKey: boolean;
+  envDefaultUrl: string;
+};
+
+export type ApiInferenceStatus = {
+  lastInteractionAt: string | null;
+  serverTime: string;
+  timezone: string;
 };
 
 export type ApiConversation = {
   id: string;
   userId: string;
-  serverId: string | null;
   projectId: string | null;
   title: string;
   model: string | null;
@@ -86,19 +73,6 @@ export type ApiMessage = {
   createdAt: string;
 };
 
-export type ApiEndpoint = {
-  id: string;
-  serverId: string;
-  label: string;
-  role: "primary" | "secondary";
-  node: string | null;
-  ip: string;
-  port: number;
-  healthy: boolean;
-  latencyMs: number | null;
-  createdAt: string;
-};
-
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -141,87 +115,27 @@ export type AuthUser = {
 };
 
 export const api = {
-  listServers: () => request<{ servers: ApiServer[] }>("/api/servers"),
-  getServer: (id: string) =>
-    request<{ server: ApiServer; endpoints: ApiEndpoint[] }>(
-      `/api/servers/${id}`,
-    ),
-  createServer: (body: {
-    name: string;
-    ip: string;
-    port: number;
-    hint?: string;
-    description?: string;
-  }) =>
-    request<{ server: ApiServer; endpoint: ApiEndpoint }>("/api/servers", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  deleteServer: (id: string) =>
-    request<void>(`/api/servers/${id}`, { method: "DELETE" }),
-  updateServer: (
-    id: string,
-    body: {
-      name?: string;
-      hint?: string | null;
-      description?: string | null;
-      authBearer?: string | null;
-      engineKind?: "openai-compat" | "anthropic";
-    },
+  // Models — proxied from LiteLLM /v1/models
+  listAllModels: () =>
+    request<{ models: ApiGlobalModel[] }>("/api/models"),
+
+  // Inference settings (LiteLLM URL, default model, timezone, …)
+  inferenceSettings: () =>
+    request<ApiInferenceSettings>("/api/inference/settings"),
+  updateInferenceSettings: (
+    body: Partial<{
+      defaultModel: string | null;
+      litellmUrl: string | null;
+      litellmApiKey: string | null;
+      timezone: string;
+    }>,
   ) =>
-    request<{ server: ApiServer }>(`/api/servers/${id}`, {
+    request<{ ok: true }>("/api/inference/settings", {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
-  listModels: (serverId: string) =>
-    request<{ models: ApiModel[]; error?: string }>(
-      `/api/servers/${serverId}/models`,
-    ),
-  listAllModels: () =>
-    request<{ models: ApiGlobalModel[] }>("/api/models"),
-  addEndpoint: (
-    serverId: string,
-    body: {
-      label: string;
-      role: "primary" | "secondary";
-      node?: string;
-      ip: string;
-      port: number;
-    },
-  ) =>
-    request<{ endpoint: ApiEndpoint }>(`/api/servers/${serverId}/endpoints`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  updateEndpoint: (
-    serverId: string,
-    endpointId: string,
-    body: Partial<{
-      label: string;
-      role: "primary" | "secondary";
-      node: string | null;
-      ip: string;
-      port: number;
-    }>,
-  ) =>
-    request<{ endpoint: ApiEndpoint }>(
-      `/api/servers/${serverId}/endpoints/${endpointId}`,
-      { method: "PATCH", body: JSON.stringify(body) },
-    ),
-  deleteEndpoint: (serverId: string, endpointId: string) =>
-    request<void>(`/api/servers/${serverId}/endpoints/${endpointId}`, {
-      method: "DELETE",
-    }),
-  testServer: (serverId: string) =>
-    request<{ endpoints: ApiEndpoint[] }>(
-      `/api/servers/${serverId}/test`,
-      { method: "POST" },
-    ),
-  testEndpoint: (serverId: string, endpointId: string) =>
-    request<{ endpoint: ApiEndpoint }>(
-      `/api/servers/${serverId}/endpoints/${endpointId}/test`,
-      { method: "POST" },
-    ),
+  inferenceStatus: () =>
+    request<ApiInferenceStatus>("/api/inference/status"),
 
   listConversations: () =>
     request<{ conversations: ApiConversation[] }>("/api/conversations"),
@@ -231,7 +145,6 @@ export const api = {
     ),
   createConversation: (body: {
     title?: string;
-    serverId?: string;
     projectId?: string;
     model?: string;
   }) =>
@@ -389,22 +302,4 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-
-  // IndicAI
-  getIndicAI: () =>
-    request<{
-      level: number;
-      label: string;
-      score: number;
-      next: { label: string; at: number } | null;
-      progress: number;
-      metrics: {
-        conversations: number;
-        userMessages: number;
-        distinctModels: number;
-        projects: number;
-        projectsWithPrompt: number;
-        activeAddons: number;
-      };
-    }>("/api/indicai"),
 };

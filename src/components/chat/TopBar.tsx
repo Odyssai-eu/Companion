@@ -1,15 +1,11 @@
-import { useIndicAI } from "~/hooks/useIndicAI";
+import { useEffect, useState } from "react";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
-import type { ApiServer } from "~/lib/api";
-import ModelPicker, { type SelectedModel } from "./ModelPicker";
+import { api, type ApiInferenceStatus } from "~/lib/api";
 import ToolsMenu from "./ToolsMenu";
 
 export type ChatStyle = "Creative" | "Normal" | "Code" | "Custom";
 
 type Props = {
-  activeServer: ApiServer | null;
-  modelSelection: SelectedModel;
-  onModelChange: (m: SelectedModel) => void;
   activeStyle: ChatStyle;
   onStyleChange: (style: ChatStyle) => void;
   onTogglePanel: () => void;
@@ -18,20 +14,16 @@ type Props = {
 };
 
 export default function TopBar({
-  activeServer,
-  modelSelection,
-  onModelChange,
   activeStyle,
   onStyleChange,
   onTogglePanel,
   panelOpen,
   onOpenMobileSidebar,
 }: Props) {
-  const indicai = useIndicAI();
   const voiceMode = useVoiceMode();
   return (
     <header className="flex flex-col border-b border-gray-200 bg-white">
-      {/* Line 1 — server + model / IndicAI */}
+      {/* Line 1 — Last seen + nothing else (model picker now lives in the composer) */}
       <div className="flex items-center justify-between gap-3 px-4 pt-3 pb-1.5 md:px-6">
         <div className="flex items-center gap-3">
           {onOpenMobileSidebar && (
@@ -44,16 +36,8 @@ export default function TopBar({
               <HamburgerIcon />
             </button>
           )}
-          <EngineBadge
-            engine={activeServer ? activeServer.name : "No server"}
-            connected={!!activeServer}
-          />
-          <ModelPicker selected={modelSelection} onChange={onModelChange} />
         </div>
-        <IndicAIPill
-          level={indicai?.level ?? 1}
-          label={indicai?.label ?? "Novice"}
-        />
+        <LastSeenBadge />
       </div>
 
       {/* Line 2 — style tabs / Tools + Voice icon */}
@@ -102,25 +86,60 @@ export default function TopBar({
   );
 }
 
-function EngineBadge({
-  engine,
-  connected,
-}: {
-  engine: string;
-  connected: boolean;
-}) {
+/**
+ * Discrete "Last seen" indicator — replaces the IndicAI gauge. Shows when the
+ * user last sent a message anywhere on the platform. Refreshes every 60s.
+ */
+function LastSeenBadge() {
+  const [status, setStatus] = useState<ApiInferenceStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      api.inferenceStatus().then(
+        (s) => !cancelled && setStatus(s),
+        () => undefined,
+      );
+    load();
+    const t = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  if (!status) return null;
+
+  const label = status.lastInteractionAt
+    ? formatAgo(new Date(status.lastInteractionAt))
+    : "first time";
+
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5">
-      <span
-        className={`h-1.5 w-1.5 rounded-full ${
-          connected ? "bg-emerald-500" : "bg-gray-300"
-        }`}
-      />
-      <span className="max-w-[220px] truncate font-mono text-[12px] font-medium text-ink">
-        {engine}
-      </span>
+    <div
+      className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1"
+      title={
+        status.lastInteractionAt
+          ? `Last interaction at ${new Date(status.lastInteractionAt).toLocaleString()}`
+          : "Welcome — no interactions yet"
+      }
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-cyan" />
+      <span className="font-mono text-[11px] text-gray-500">Last seen</span>
+      <span className="text-[12px] font-medium text-navy">{label}</span>
     </div>
   );
+}
+
+function formatAgo(d: Date): string {
+  const ms = Date.now() - d.getTime();
+  if (ms < 60_000) return "just now";
+  const m = Math.floor(ms / 60_000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days < 7) return `${days}d ago`;
+  return d.toLocaleDateString();
 }
 
 function StyleTabs({
@@ -147,25 +166,6 @@ function StyleTabs({
           {tab}
         </button>
       ))}
-    </div>
-  );
-}
-
-function IndicAIPill({ level, label }: { level: number; label: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1">
-      <div className="flex gap-0.5">
-        {[1, 2, 3, 4, 5].map((i) => (
-          <span
-            key={i}
-            className={`h-2.5 w-1 rounded-sm ${
-              i <= level ? "bg-cyan" : "bg-gray-200"
-            }`}
-          />
-        ))}
-      </div>
-      <span className="font-mono text-[11px] text-gray-600">IndicAI</span>
-      <span className="text-[12px] font-medium text-navy">{label}</span>
     </div>
   );
 }

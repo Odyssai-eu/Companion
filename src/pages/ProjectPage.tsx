@@ -97,14 +97,7 @@ export default function ProjectPage() {
   async function startNewChat() {
     if (!project) return;
     try {
-      const servers = await api.listServers();
-      const first = servers.servers[0];
-      if (!first) {
-        setError("Add a server in Settings first.");
-        return;
-      }
       const { conversation } = await api.createConversation({
-        serverId: first.id,
         projectId: project.id,
         title: "New conversation",
       });

@@ -14,11 +14,10 @@ import obsidianRoute, { obsidianBearerLoader } from "./routes/addon-obsidian";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
-import indicaiRoute from "./routes/indicai";
+import inferenceRoute from "./routes/inference";
 import licenseRoute from "./routes/license";
 import modelsRoute from "./routes/models";
 import projectsRoute from "./routes/projects";
-import serversRoute from "./routes/servers";
 import ttsRoute from "./routes/tts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,28 +47,26 @@ app.route("/api/auth", authRoute);
 app.route("/api/license", licenseRoute);
 
 // License gate + user gate on everything else
-app.use("/api/servers/*", licenseGate, requireUser);
 app.use("/api/conversations/*", licenseGate, requireUser);
 app.use("/api/chat/*", licenseGate, requireUser);
 app.use("/api/projects/*", licenseGate, requireUser);
 app.use("/api/tts/*", licenseGate, requireUser);
+app.use("/api/inference/*", licenseGate, requireUser);
 // Resolve bearer-token auth for the Obsidian plugin BEFORE requireUser runs,
 // so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
 app.use("/api/addons/*", licenseGate, requireUser);
-app.use("/api/indicai/*", licenseGate, requireUser);
 app.use("/api/models/*", licenseGate, requireUser);
 app.use("/api/models", licenseGate, requireUser);
 
-app.route("/api/servers", serversRoute);
 app.route("/api/conversations", conversationsRoute);
 app.route("/api/chat", chatRoute);
 app.route("/api/projects", projectsRoute);
 app.route("/api/tts", ttsRoute);
 app.route("/api/addons", addonsRoute);
 app.route("/api/addons/obsidian", obsidianRoute);
-app.route("/api/indicai", indicaiRoute);
 app.route("/api/models", modelsRoute);
+app.route("/api/inference", inferenceRoute);
 
 if (process.env.NODE_ENV === "production") {
   app.use("/*", serveStatic({ root: "./dist/client" }));

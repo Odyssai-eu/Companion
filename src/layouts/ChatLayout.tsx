@@ -34,7 +34,7 @@ export default function ChatLayout() {
       if (chat.sending) chat.cancel();
     },
     onToggleVoiceMode: () => voiceMode.toggle(),
-    onOpenSettings: () => navigate("/settings/servers"),
+    onOpenSettings: () => navigate("/settings/inference"),
     onPushToTalkChange: (active) => {
       if (active) {
         voiceInput.start((text) => {
@@ -72,9 +72,6 @@ export default function ChatLayout() {
       />
       <main className="flex flex-1 flex-col bg-gray-50">
         <TopBar
-          activeServer={chat.activeServer}
-          modelSelection={chat.modelSelection}
-          onModelChange={chat.setModelSelection}
           activeStyle={style}
           onStyleChange={onStyleChange}
           onTogglePanel={() => setPanelOpen((v) => !v)}
@@ -86,7 +83,6 @@ export default function ChatLayout() {
             params={chat.inference}
             onChange={(patch) => {
               chat.setInference(patch);
-              // Any manual tweak drops you out of a named preset into Custom
               setStyle("Custom");
             }}
             onClose={() => setPanelOpen(false)}
@@ -102,13 +98,14 @@ export default function ChatLayout() {
           onSend={chat.sendMessage}
           onCancel={chat.cancel}
           sending={chat.sending}
-          disabled={!chat.activeServer}
+          disabled={!chat.model}
           placeholder={
-            chat.activeServer
-              ? `Ask ${chat.activeServer.name}…`
-              : "Add a server first"
+            chat.model ? "Ask anything…" : "Pick a model first"
           }
           modelHasVision={chat.activeModelCapabilities.vision}
+          model={chat.model}
+          onModelChange={chat.setModel}
+          models={chat.globalModels}
         />
       </main>
     </div>
