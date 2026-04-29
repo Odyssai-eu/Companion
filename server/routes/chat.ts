@@ -26,7 +26,7 @@ import { conversations, users } from "../db/schema";
 import { authHeaders } from "../lib/litellm";
 import { getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
-import { resolveExoBaseUrl } from "./addon-exo";
+import { resolveExoEndpoint } from "./addon-exo";
 import {
   executeTool,
   isHermesEnabled,
@@ -106,20 +106,29 @@ chatRoute.post("/completions", async (c) => {
   });
 
   // ── 2. Resolve target — LiteLLM by default, EXO direct when the model
-  //       carries the `exo-direct/` prefix (set by the EXO Direct add-on).
+  //       carries the `exo-direct/<endpointId>/<modelId>` prefix.
   //       Direct mode skips LiteLLM entirely so we can A/B latency.
   const isExoDirect = body.model.startsWith("exo-direct/");
-  const exoBaseUrl = isExoDirect ? await resolveExoBaseUrl(userId) : null;
-  if (isExoDirect && !exoBaseUrl) {
-    return c.json(
-      { error: "exo_direct_unconfigured", detail: "EXO Direct add-on disabled or no URL" },
-      400,
-    );
+  let exoEndpoint: { baseUrl: string } | null = null;
+  if (isExoDirect) {
+    const rest = body.model.slice("exo-direct/".length);
+    const slash = rest.indexOf("/");
+    if (slash <= 0) {
+      return c.json({ error: "exo_direct_bad_id" }, 400);
+    }
+    const endpointId = rest.slice(0, slash);
+    const ep = await resolveExoEndpoint(userId, endpointId);
+    if (!ep) {
+      return c.json(
+        { error: "exo_direct_unconfigured", detail: "endpoint not found or disabled" },
+        400,
+      );
+    }
+    exoEndpoint = { baseUrl: ep.baseUrl };
+    body.model = rest.slice(slash + 1); // raw EXO model id
   }
-  // Strip the prefix so what we forward upstream is the raw EXO model id.
-  if (isExoDirect) body.model = body.model.slice("exo-direct/".length);
-  const target = isExoDirect && exoBaseUrl
-    ? { baseUrl: exoBaseUrl, apiKey: null }
+  const target = isExoDirect && exoEndpoint
+    ? { baseUrl: exoEndpoint.baseUrl, apiKey: null }
     : {
         baseUrl: (
           userRow.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"

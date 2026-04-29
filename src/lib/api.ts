@@ -213,20 +213,32 @@ export const api = {
     request<{
       addonId: string;
       enabled: boolean;
-      baseUrl: string;
-      models: string[];
+      endpoints: Array<{
+        id: string;
+        label: string;
+        baseUrl: string;
+        models: string[];
+      }>;
     }>("/api/addons/exo/info"),
-  exoSetUrl: (url: string) =>
-    request<{ ok: true; baseUrl: string }>("/api/addons/exo/url", {
-      method: "POST",
-      body: JSON.stringify({ url }),
-    }),
-  exoClearUrl: () =>
-    request<void>("/api/addons/exo/url", { method: "DELETE" }),
-  exoListModels: () =>
-    request<{ models: string[]; reason?: string }>(
-      "/api/addons/exo/models",
+  exoAddEndpoint: (label: string, url: string) =>
+    request<{ endpoint: { id: string; label: string; baseUrl: string } }>(
+      "/api/addons/exo/endpoints",
+      { method: "POST", body: JSON.stringify({ label, url }) },
     ),
+  exoUpdateEndpoint: (
+    id: string,
+    patch: { label?: string; url?: string },
+  ) =>
+    request<{ endpoint: { id: string; label: string; baseUrl: string } }>(
+      `/api/addons/exo/endpoints/${id}`,
+      { method: "PATCH", body: JSON.stringify(patch) },
+    ),
+  exoDeleteEndpoint: (id: string) =>
+    request<void>(`/api/addons/exo/endpoints/${id}`, { method: "DELETE" }),
+  exoRefreshEndpoint: (id: string) =>
+    request<{
+      endpoint: { id: string; label: string; baseUrl: string; models: string[] };
+    }>(`/api/addons/exo/endpoints/${id}/refresh`, { method: "POST" }),
   exportConversationUrl: (id: string) =>
     `/api/conversations/${id}/export.md`,
   exportConversationJsonUrl: (id: string) =>

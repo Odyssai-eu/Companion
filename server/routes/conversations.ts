@@ -7,7 +7,7 @@ import { conversations, messages, users } from "../db/schema";
 import { authHeaders } from "../lib/litellm";
 import { compileNow, getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
-import { resolveExoBaseUrl } from "./addon-exo";
+import { resolveExoEndpoint } from "./addon-exo";
 
 const conversationsRoute = new Hono();
 
@@ -462,17 +462,22 @@ conversationsRoute.post(
         ? [{ role: "system" as const, content: composedSystem }, ...tagged]
         : tagged;
 
-    // Mirror chat.ts target resolution: bypass LiteLLM for `exo-direct/...`
-    // models so the prewarm fills the same upstream's KV cache that the real
-    // chat will hit.
+    // Mirror chat.ts target resolution: bypass LiteLLM for
+    // `exo-direct/<endpointId>/<modelId>` so the prewarm fills the KV cache
+    // of the same upstream the real chat will hit.
     const isExoDirect = opts.model.startsWith("exo-direct/");
-    const exoBaseUrl = isExoDirect ? await resolveExoBaseUrl(userId) : null;
-    if (isExoDirect && !exoBaseUrl) {
-      return c.json({ ok: false, reason: "exo_direct_unconfigured" });
+    let exoBaseUrl: string | null = null;
+    let upstreamModel = opts.model;
+    if (isExoDirect) {
+      const rest = opts.model.slice("exo-direct/".length);
+      const slash = rest.indexOf("/");
+      if (slash <= 0) return c.json({ ok: false, reason: "bad_exo_id" });
+      const endpointId = rest.slice(0, slash);
+      const ep = await resolveExoEndpoint(userId, endpointId);
+      if (!ep) return c.json({ ok: false, reason: "exo_direct_unconfigured" });
+      exoBaseUrl = ep.baseUrl;
+      upstreamModel = rest.slice(slash + 1);
     }
-    const upstreamModel = isExoDirect
-      ? opts.model.slice("exo-direct/".length)
-      : opts.model;
     const target = isExoDirect && exoBaseUrl
       ? { baseUrl: exoBaseUrl, apiKey: null as string | null }
       : {

@@ -887,24 +887,29 @@ function Field({
 }
 
 /**
- * EXO Direct panel — paste a base URL, see currently-loaded models on that
- * EXO instance. When the add-on is enabled, those models appear in the chat
- * model picker with a "(direct)" label and route bypasses LiteLLM.
+ * EXO Direct panel — manage one or more EXO endpoints (each = a cluster).
+ * The chat picker exposes every loaded model on every endpoint, tagged by
+ * the endpoint label. Routing to the matching cluster bypasses LiteLLM.
  */
+type ExoEndpointRow = {
+  id: string;
+  label: string;
+  baseUrl: string;
+  models: string[];
+};
+
 function ExoPanel() {
-  const [baseUrl, setBaseUrl] = useState("");
-  const [pendingUrl, setPendingUrl] = useState("");
-  const [models, setModels] = useState<string[]>([]);
+  const [endpoints, setEndpoints] = useState<ExoEndpointRow[]>([]);
+  const [newLabel, setNewLabel] = useState("");
+  const [newUrl, setNewUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [refreshingModels, setRefreshingModels] = useState(false);
+  const [refreshing, setRefreshing] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   async function loadInfo() {
     try {
       const info = await api.exoInfo();
-      setBaseUrl(info.baseUrl ?? "");
-      setPendingUrl(info.baseUrl ?? "");
-      setModels(info.models ?? []);
+      setEndpoints(info.endpoints ?? []);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -914,12 +919,14 @@ function ExoPanel() {
     loadInfo();
   }, []);
 
-  async function save() {
-    if (!pendingUrl.trim()) return;
+  async function addEndpoint() {
+    if (!newLabel.trim() || !newUrl.trim()) return;
     setBusy(true);
     setError(null);
     try {
-      await api.exoSetUrl(pendingUrl.trim());
+      await api.exoAddEndpoint(newLabel.trim(), newUrl.trim());
+      setNewLabel("");
+      setNewUrl("");
       await loadInfo();
     } catch (e) {
       setError((e as Error).message);
@@ -928,14 +935,12 @@ function ExoPanel() {
     }
   }
 
-  async function clear() {
-    if (!confirm("Clear the EXO base URL?")) return;
+  async function removeEndpoint(id: string, label: string) {
+    if (!confirm(`Remove endpoint "${label}"?`)) return;
     setBusy(true);
     try {
-      await api.exoClearUrl();
-      setBaseUrl("");
-      setPendingUrl("");
-      setModels([]);
+      await api.exoDeleteEndpoint(id);
+      await loadInfo();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -943,94 +948,114 @@ function ExoPanel() {
     }
   }
 
-  async function refreshModels() {
-    setRefreshingModels(true);
+  async function refreshOne(id: string) {
+    setRefreshing((s) => new Set(s).add(id));
     try {
-      const r = await api.exoListModels();
-      setModels(r.models ?? []);
-      if (r.reason) setError(`No models: ${r.reason}`);
-      else setError(null);
+      const { endpoint } = await api.exoRefreshEndpoint(id);
+      setEndpoints((prev) =>
+        prev.map((e) => (e.id === id ? endpoint : e)),
+      );
+      setError(null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setRefreshingModels(false);
+      setRefreshing((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
     }
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
+      {/* Existing endpoints */}
+      {endpoints.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {endpoints.map((ep) => (
+            <div
+              key={ep.id}
+              className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4"
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-[14px] font-medium text-ink">
+                    {ep.label}
+                  </span>
+                  <span className="truncate font-mono text-[11px] text-gray-500">
+                    {ep.baseUrl}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => refreshOne(ep.id)}
+                  disabled={refreshing.has(ep.id)}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-ink disabled:opacity-40"
+                >
+                  {refreshing.has(ep.id) ? "…" : "Refresh"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeEndpoint(ep.id, ep.label)}
+                  disabled={busy}
+                  className="rounded-lg border border-red-200 px-3 py-1.5 text-[12px] font-medium text-red-500 transition-colors hover:bg-red-50 disabled:opacity-40"
+                >
+                  Remove
+                </button>
+              </div>
+              {ep.models.length === 0 ? (
+                <span className="font-mono text-[11px] text-gray-400">
+                  No models loaded on this endpoint.
+                </span>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {ep.models.map((m) => (
+                    <li
+                      key={m}
+                      className="rounded-md bg-gray-50 px-3 py-1.5 font-mono text-[11px] text-ink"
+                    >
+                      {m}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add endpoint form */}
       <Field
-        label="EXO base URL"
-        hint="e.g. http://192.168.86.29:52415 — without /v1, no trailing slash"
+        label="Add an EXO endpoint"
+        hint="Each endpoint = one EXO instance. Loaded models are surfaced in the chat picker, tagged by label."
       >
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input
+            type="text"
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+            placeholder="Label (e.g. Home cluster)"
+            className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-cyan sm:w-[200px]"
+          />
           <input
             type="url"
-            value={pendingUrl}
-            onChange={(e) => setPendingUrl(e.target.value)}
+            value={newUrl}
+            onChange={(e) => setNewUrl(e.target.value)}
             placeholder="http://192.168.86.29:52415"
             className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
           />
           <button
             type="button"
-            onClick={save}
-            disabled={busy || !pendingUrl.trim() || pendingUrl === baseUrl}
+            onClick={addEndpoint}
+            disabled={busy || !newLabel.trim() || !newUrl.trim()}
             className="rounded-lg bg-navy px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {busy ? "Saving…" : "Save"}
+            {busy ? "Adding…" : "Add"}
           </button>
-          {baseUrl && (
-            <button
-              type="button"
-              onClick={clear}
-              disabled={busy}
-              className="rounded-lg border border-gray-200 px-4 py-2 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-ink"
-            >
-              Clear
-            </button>
-          )}
         </div>
       </Field>
 
-      <Field
-        label="Loaded models on EXO"
-        hint={
-          baseUrl
-            ? "Pulled from /state. These appear in the chat picker as ‹model id› (direct)."
-            : "Set a base URL above to discover loaded models."
-        }
-      >
-        <div className="flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={refreshModels}
-            disabled={!baseUrl || refreshingModels}
-            className="self-start rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {refreshingModels ? "Refreshing…" : "Refresh"}
-          </button>
-          {models.length === 0 ? (
-            <span className="font-mono text-[12px] text-gray-400">
-              {baseUrl ? "No models loaded yet." : "—"}
-            </span>
-          ) : (
-            <ul className="flex flex-col gap-1">
-              {models.map((m) => (
-                <li
-                  key={m}
-                  className="rounded-md bg-white px-3 py-2 font-mono text-[12px] text-ink"
-                >
-                  {m}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </Field>
-
-      {error && (
-        <span className="text-[12px] text-red-500">{error}</span>
-      )}
+      {error && <span className="text-[12px] text-red-500">{error}</span>}
     </div>
   );
 }

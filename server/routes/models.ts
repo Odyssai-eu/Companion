@@ -8,8 +8,8 @@
 
 import { Hono } from "hono";
 import {
+  listExoEndpoints,
   listLoadedExoModels,
-  resolveExoBaseUrl,
 } from "./addon-exo";
 import { authHeaders, resolveLiteLLM } from "../lib/litellm";
 
@@ -74,23 +74,23 @@ modelsRoute.get("/", async (c) => {
     })
     .filter((m): m is GlobalModel => m !== null);
 
-  // EXO Direct add-on: when enabled, append the currently-loaded models on
-  // the user's EXO instance with the `exo-direct/` prefix. The chat route
-  // recognises that prefix and bypasses LiteLLM, talking straight to EXO.
-  // Useful for A/B-testing whether the proxy adds latency.
-  const exoBase = await resolveExoBaseUrl(userId);
-  if (exoBase) {
-    const exoModels = await listLoadedExoModels(exoBase);
-    for (const id of exoModels) {
-      const prefixed = `exo-direct/${id}`;
-      models.push({
-        id: prefixed,
-        name: `${id} (direct)`,
-        tags: ["EXO Direct"],
-        capabilities: heuristicCaps(id),
-      });
-    }
-  }
+  // EXO Direct add-on: surface every loaded model on every configured
+  // endpoint. Each model id is namespaced by endpoint id so the chat route
+  // can route the request to the right cluster.
+  const endpoints = await listExoEndpoints(userId);
+  await Promise.all(
+    endpoints.map(async (ep) => {
+      const exoModels = await listLoadedExoModels(ep.baseUrl);
+      for (const id of exoModels) {
+        models.push({
+          id: `exo-direct/${ep.id}/${id}`,
+          name: `${id} · ${ep.label}`,
+          tags: [`EXO · ${ep.label}`],
+          capabilities: heuristicCaps(id),
+        });
+      }
+    }),
+  );
 
   // Stable sort: tags grouped, then alpha.
   models.sort((a, b) => {
