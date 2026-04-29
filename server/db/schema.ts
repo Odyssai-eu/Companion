@@ -68,6 +68,13 @@ export const conversations = pgTable(
     title: text("title").notNull().default("New conversation"),
     model: text("model"),
     pinned: boolean("pinned").notNull().default(false),
+    // Memory wiki snapshot — frozen at creation (or on explicit "Remember
+    // now") and reused as-is on every chat turn. Keeps the system-prompt
+    // prefix byte-stable across turns so EXO's KV prefix cache hits, and
+    // prevents context drift when the memory service recompiles in the
+    // background.
+    memorySnapshot: text("memory_snapshot"),
+    memorySnapshotAt: timestamp("memory_snapshot_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),

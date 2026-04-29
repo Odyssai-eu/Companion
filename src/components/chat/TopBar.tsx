@@ -12,6 +12,7 @@ type Props = {
   onTogglePanel: () => void;
   panelOpen: boolean;
   onOpenMobileSidebar?: () => void;
+  conversationId?: string | null;
 };
 
 export default function TopBar({
@@ -20,6 +21,7 @@ export default function TopBar({
   onTogglePanel,
   panelOpen,
   onOpenMobileSidebar,
+  conversationId,
 }: Props) {
   const voiceMode = useVoiceMode();
   const isMobile = useIsMobile();
@@ -43,19 +45,22 @@ export default function TopBar({
           onChange={onStyleChange}
           tabs={["Creative", "Normal", "Code"]}
         />
-        <button
-          type="button"
-          onClick={voiceMode.toggle}
-          aria-label="Voice mode"
-          aria-pressed={voiceMode.enabled}
-          className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border transition-colors ${
-            voiceMode.enabled
-              ? "border-cyan bg-cyan text-white"
-              : "border-gray-200 bg-white text-ink hover:bg-gray-50"
-          }`}
-        >
-          <VoiceIcon />
-        </button>
+        <div className="flex items-center gap-1.5">
+          <RememberNowButton conversationId={conversationId ?? null} compact />
+          <button
+            type="button"
+            onClick={voiceMode.toggle}
+            aria-label="Voice mode"
+            aria-pressed={voiceMode.enabled}
+            className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border transition-colors ${
+              voiceMode.enabled
+                ? "border-cyan bg-cyan text-white"
+                : "border-gray-200 bg-white text-ink hover:bg-gray-50"
+            }`}
+          >
+            <VoiceIcon />
+          </button>
+        </div>
       </header>
     );
   }
@@ -90,6 +95,7 @@ export default function TopBar({
         </div>
         <div className="flex items-center gap-3">
           <ToolsMenu />
+          <RememberNowButton conversationId={conversationId ?? null} />
           <button
             type="button"
             onClick={voiceMode.toggle}
@@ -111,6 +117,118 @@ export default function TopBar({
         </div>
       </div>
     </header>
+  );
+}
+
+/**
+ * "Remember now" — forces the memory wiki to recompile from this conversation
+ * and re-snapshots it for the rest of the conversation. Used when the user
+ * has shared something important they want the model to remember in this
+ * thread (and future ones). The compile is synchronous and can take 30-90s
+ * depending on conversation length, so we show a clear loading state.
+ */
+function RememberNowButton({
+  conversationId,
+  compact = false,
+}: {
+  conversationId: string | null;
+  compact?: boolean;
+}) {
+  const [state, setState] = useState<"idle" | "loading" | "done" | "error">(
+    "idle",
+  );
+
+  // Reset to idle when the user switches conversation.
+  useEffect(() => {
+    setState("idle");
+  }, [conversationId]);
+
+  // Auto-clear "done" / "error" after 3s so the icon goes back to neutral.
+  useEffect(() => {
+    if (state === "done" || state === "error") {
+      const t = setTimeout(() => setState("idle"), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [state]);
+
+  const disabled = !conversationId || state === "loading";
+  const title = !conversationId
+    ? "Start a conversation first"
+    : state === "loading"
+      ? "Consolidating memory…"
+      : state === "done"
+        ? "Memory updated"
+        : state === "error"
+          ? "Memory update failed — try again"
+          : "Remember now — consolidate this conversation into your memory wiki";
+
+  async function onClick() {
+    if (!conversationId || state === "loading") return;
+    setState("loading");
+    try {
+      const r = await api.refreshConversationMemory(conversationId);
+      setState(r.ok ? "done" : "error");
+    } catch {
+      setState("error");
+    }
+  }
+
+  const size = compact ? "h-11 w-11" : "h-8 w-8";
+  const ringColor =
+    state === "loading"
+      ? "border-cyan text-cyan"
+      : state === "done"
+        ? "border-emerald-500 text-emerald-500"
+        : state === "error"
+          ? "border-red-400 text-red-500"
+          : "border-gray-200 bg-white text-ink hover:bg-gray-50";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label="Remember now"
+      title={title}
+      className={`flex ${size} flex-shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${ringColor}`}
+    >
+      {state === "loading" ? <SmallSpinner /> : <BookmarkIcon />}
+    </button>
+  );
+}
+
+function BookmarkIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function SmallSpinner() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="animate-spin"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
   );
 }
 

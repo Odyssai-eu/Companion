@@ -56,3 +56,31 @@ export function triggerCompile(
     console.warn("[memory] triggerCompile failed:", err.message);
   });
 }
+
+/** Synchronous compile — waits for the LLM pass to finish. Used by
+ *  "Remember now" so the UI can immediately show the refreshed snapshot. */
+export async function compileNow(
+  userId: string,
+  conversationId: string,
+): Promise<boolean> {
+  const url = new URL(`/compile`, MEMORY_BASE_URL);
+  try {
+    const ctrl = new AbortController();
+    // Compile can take 30-90s on a long conversation; give it generous time.
+    const timer = setTimeout(() => ctrl.abort(), 120_000);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        conversation_id: conversationId,
+      }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    return res.ok;
+  } catch (err) {
+    console.warn("[memory] compileNow failed:", (err as Error).message);
+    return false;
+  }
+}

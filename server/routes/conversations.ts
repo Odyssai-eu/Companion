@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
 import { conversations, messages } from "../db/schema";
-import { triggerCompile } from "../lib/memory";
+import { compileNow, getMemoryContext } from "../lib/memory";
 
 const conversationsRoute = new Hono();
 
@@ -65,6 +65,11 @@ conversationsRoute.post(
   async (c) => {
     const userId = c.get("userId");
     const data = c.req.valid("json");
+    // Snapshot the user's memory wiki at conversation creation. We freeze
+    // this for the lifetime of the conversation so the system-prompt prefix
+    // stays byte-stable (= EXO KV prefix cache hits) and the model never
+    // sees its "memory" change mid-conversation.
+    const memorySnapshot = await getMemoryContext(userId, data.projectId ?? null);
     const [row] = await db
       .insert(conversations)
       .values({
@@ -72,6 +77,8 @@ conversationsRoute.post(
         title: data.title ?? "New conversation",
         projectId: data.projectId,
         model: data.model,
+        memorySnapshot: memorySnapshot || null,
+        memorySnapshotAt: memorySnapshot ? new Date() : null,
       })
       .returning();
     return c.json({ conversation: row }, 201);
@@ -306,15 +313,50 @@ conversationsRoute.post(
         .where(eq(conversations.id, id));
     }
 
-    // After an assistant message lands, ask the memory service to recompile.
-    // Fire-and-forget, debounced server-side; chat is unaffected if the
-    // memory service is down.
-    if (data.role === "assistant" && data.content.trim().length > 0) {
-      triggerCompile(userId, id);
-    }
+    // No auto-recompile here. The wiki is now snapshot-per-conversation:
+    // the user explicitly hits "Remember now" (POST /:id/refresh-memory) when
+    // they want to consolidate this conversation into the wiki. This keeps
+    // the prompt prefix stable across turns for KV-cache hits.
 
     return c.json({ message }, 201);
   },
 );
+
+// Force a memory recompile + re-snapshot for this conversation. Triggered by
+// the "Remember now" button in the UI. Synchronous — we wait for the compile
+// to finish, then re-fetch the wiki context and store it as the conversation's
+// snapshot. Future turns will use the refreshed memory.
+conversationsRoute.post("/:id/refresh-memory", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const [conv] = await db
+    .select({
+      userId: conversations.userId,
+      projectId: conversations.projectId,
+    })
+    .from(conversations)
+    .where(eq(conversations.id, id))
+    .limit(1);
+  if (!conv || conv.userId !== userId) {
+    return c.json({ error: "not_found" }, 404);
+  }
+  // 1. Run the compile pass (consolidate this conversation into the wiki)
+  const ok = await compileNow(userId, id);
+  // 2. Re-fetch the wiki context — even if the compile partially failed, the
+  //    DB may still contain newer articles than our snapshot.
+  const fresh = await getMemoryContext(userId, conv.projectId);
+  await db
+    .update(conversations)
+    .set({
+      memorySnapshot: fresh || null,
+      memorySnapshotAt: new Date(),
+    })
+    .where(eq(conversations.id, id));
+  return c.json({
+    ok,
+    memorySnapshot: fresh,
+    memorySnapshotAt: new Date().toISOString(),
+  });
+});
 
 export default conversationsRoute;

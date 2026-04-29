@@ -89,6 +89,7 @@ export default function ChatLayout() {
           onTogglePanel={() => setPanelOpen((v) => !v)}
           panelOpen={panelOpen}
           onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
+          conversationId={id ?? null}
         />
         {panelOpen && !isMobile && (
           <InferencePanel

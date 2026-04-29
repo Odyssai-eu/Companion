@@ -111,19 +111,42 @@ chatRoute.post("/completions", async (c) => {
     apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
   };
 
-  // ── 3. Resolve project + memory context (best-effort) ─────────────────
+  // ── 3. Resolve project + memory snapshot (frozen per-conversation) ────
+  // The memory wiki is snapshot at conversation creation (or on explicit
+  // "Remember now") and reused as-is on every turn. This keeps the system-
+  // prompt prefix byte-stable across turns so EXO's KV prefix cache hits,
+  // and prevents the model's "memory" from drifting mid-conversation.
+  // For pre-snapshot conversations (created before this feature), we lazily
+  // backfill the snapshot on first chat so the same stability kicks in from
+  // turn 2 onwards.
   let projectId: string | null = null;
   let memoryBlock = "";
   if (body.conversationId) {
     try {
       const [conv] = await db
-        .select({ projectId: conversations.projectId, userId: conversations.userId })
+        .select({
+          projectId: conversations.projectId,
+          userId: conversations.userId,
+          memorySnapshot: conversations.memorySnapshot,
+        })
         .from(conversations)
         .where(eq(conversations.id, body.conversationId))
         .limit(1);
       if (conv && conv.userId === userId) {
         projectId = conv.projectId;
-        memoryBlock = await getMemoryContext(userId, projectId);
+        if (conv.memorySnapshot != null) {
+          memoryBlock = conv.memorySnapshot;
+        } else {
+          // Lazy backfill — fetch once, persist, reuse from now on.
+          memoryBlock = await getMemoryContext(userId, projectId);
+          await db
+            .update(conversations)
+            .set({
+              memorySnapshot: memoryBlock || null,
+              memorySnapshotAt: memoryBlock ? new Date() : null,
+            })
+            .where(eq(conversations.id, body.conversationId));
+        }
       }
     } catch (err) {
       console.warn("[chat] memory lookup failed:", (err as Error).message);

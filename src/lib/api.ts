@@ -187,6 +187,14 @@ export const api = {
       `/api/conversations/${conversationId}/messages/from/${messageId}`,
       { method: "DELETE" },
     ),
+  refreshConversationMemory: (conversationId: string) =>
+    request<{
+      ok: boolean;
+      memorySnapshot: string;
+      memorySnapshotAt: string;
+    }>(`/api/conversations/${conversationId}/refresh-memory`, {
+      method: "POST",
+    }),
   exportConversationUrl: (id: string) =>
     `/api/conversations/${id}/export.md`,
   exportConversationJsonUrl: (id: string) =>
