@@ -154,15 +154,22 @@ chatRoute.post("/completions", async (c) => {
   }
 
   // ── 4. Inject time tags into user messages ────────────────────────────
+  //
+  // Historical user messages must produce a BYTE-IDENTICAL tag across
+  // requests, otherwise EXO's KV prefix cache misses on every turn and we
+  // re-prefill the entire prompt. So:
+  //   - HISTORICAL user messages (all but the last) use their own createdAt
+  //     for `now`, and the previous USER message's createdAt (within the
+  //     same payload) for `previous`. The very first user message has no
+  //     previous → null. Nothing here depends on the live `lastInteractionAt`.
+  //   - LATEST user message (the one being sent now) uses `now` for its
+  //     timestamp and `userRow.lastInteractionAt` for its delta — that's
+  //     the only volatile entry, and it sits at the end of the prompt where
+  //     re-prefilling is cheap.
   const tz = userRow.timezone || "Europe/Brussels";
   const taggedMessages: IncomingMessage[] = [];
-  let prevTimestamp: Date | null = userRow.lastInteractionAt ?? null;
-  let latestUserSeen = false;
+  let lastHistoricalUserAt: Date | null = null;
 
-  // Walk messages in order. The LATEST (last in array, role=user) message is
-  // the one being sent now; we use T_old=lastInteractionAt for its delta.
-  // Historical user messages use either their provided createdAt (frontend
-  // sends it) or fall back to walking from T_old.
   for (let i = 0; i < body.messages.length; i++) {
     const m = body.messages[i];
     if (m.role !== "user") {
@@ -170,25 +177,21 @@ chatRoute.post("/completions", async (c) => {
       continue;
     }
     const isLatest = i === body.messages.length - 1;
-    const createdAt = isLatest
-      ? now
-      : m.createdAt
-        ? new Date(m.createdAt)
-        : null;
-
-    const stamp = createdAt ?? now;
-    const tag = buildTag({
-      now: stamp,
-      previous: latestUserSeen || prevTimestamp ? prevTimestamp : null,
-      timezone: tz,
-    });
-    // Do not overwrite — prepend on a new line for readability
+    let stamp: Date;
+    let previous: Date | null;
+    if (isLatest) {
+      stamp = now;
+      previous = userRow.lastInteractionAt ?? lastHistoricalUserAt;
+    } else {
+      stamp = m.createdAt ? new Date(m.createdAt) : now;
+      previous = lastHistoricalUserAt;
+    }
+    const tag = buildTag({ now: stamp, previous, timezone: tz });
     taggedMessages.push({
       ...m,
       content: prependTagToContent(m.content, tag),
     });
-    prevTimestamp = stamp;
-    latestUserSeen = true;
+    if (!isLatest) lastHistoricalUserAt = stamp;
   }
 
   // ── 5. Compose system prompt: user prompt + memory ───────────────────
