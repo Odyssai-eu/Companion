@@ -198,15 +198,17 @@ export async function streamChat(
         if (!delta) continue;
 
         if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
-          tokenCount += estimateTokens(delta.reasoning_content);
+          const text = unescapeUpstreamLiterals(delta.reasoning_content);
+          tokenCount += estimateTokens(text);
           chunkCount++;
-          opts.onDelta({ type: "reasoning", text: delta.reasoning_content });
+          opts.onDelta({ type: "reasoning", text });
         }
         if (typeof delta.content === "string" && delta.content) {
           if (firstContentAt === null) firstContentAt = performance.now();
-          tokenCount += estimateTokens(delta.content);
+          const text = unescapeUpstreamLiterals(delta.content);
+          tokenCount += estimateTokens(text);
           chunkCount++;
-          opts.onDelta({ type: "content", text: delta.content });
+          opts.onDelta({ type: "content", text });
         }
       } catch {
         // ignore malformed payloads
@@ -240,4 +242,24 @@ export async function streamChat(
 
 function estimateTokens(text: string): number {
   return Math.max(1, Math.round(text.length / 4));
+}
+
+/**
+ * Inferencer (Pro v1.10.x) double-escapes newlines in SSE delta content:
+ * its JSON sends `"\\n"` where it should send `"\n"`. After JSON.parse
+ * we end up with the literal 2-char string `\n` (backslash + n) instead
+ * of an actual newline, which breaks markdown rendering.
+ *
+ * This unescapes the common cases. Risk of mangling code blocks that
+ * legitimately discuss escape sequences is low for a chat UI; if it
+ * becomes a problem we can detect upstream provider and only apply when
+ * the model id is known to be Inferencer-served.
+ */
+function unescapeUpstreamLiterals(s: string): string {
+  if (!s.includes("\\")) return s;
+  return s
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t")
+    .replace(/\\"/g, '"');
 }
