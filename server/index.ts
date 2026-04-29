@@ -10,6 +10,7 @@ import { seedIfEmpty } from "./db/seed";
 import { requireUser, sessionLoader } from "./middleware/auth";
 import { licenseGate } from "./middleware/license";
 import addonsRoute from "./routes/addons";
+import exoAddonRoute from "./routes/addon-exo";
 import hermesAddonRoute from "./routes/addon-hermes";
 import obsidianRoute, { obsidianBearerLoader } from "./routes/addon-obsidian";
 import tavilyRoute from "./routes/addon-tavily";
@@ -69,6 +70,7 @@ app.route("/api/addons", addonsRoute);
 app.route("/api/addons/obsidian", obsidianRoute);
 app.route("/api/addons/tavily", tavilyRoute);
 app.route("/api/addons/hermes", hermesAddonRoute);
+app.route("/api/addons/exo", exoAddonRoute);
 app.route("/api/models", modelsRoute);
 app.route("/api/inference", inferenceRoute);
 

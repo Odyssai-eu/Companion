@@ -7,6 +7,7 @@ import { conversations, messages, users } from "../db/schema";
 import { authHeaders } from "../lib/litellm";
 import { compileNow, getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
+import { resolveExoBaseUrl } from "./addon-exo";
 
 const conversationsRoute = new Hono();
 
@@ -461,16 +462,28 @@ conversationsRoute.post(
         ? [{ role: "system" as const, content: composedSystem }, ...tagged]
         : tagged;
 
-    // Resolve LiteLLM target the same way chat.ts does.
-    const target = {
-      baseUrl: (
-        user.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
-      ).replace(/\/+$/, ""),
-      apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-    };
+    // Mirror chat.ts target resolution: bypass LiteLLM for `exo-direct/...`
+    // models so the prewarm fills the same upstream's KV cache that the real
+    // chat will hit.
+    const isExoDirect = opts.model.startsWith("exo-direct/");
+    const exoBaseUrl = isExoDirect ? await resolveExoBaseUrl(userId) : null;
+    if (isExoDirect && !exoBaseUrl) {
+      return c.json({ ok: false, reason: "exo_direct_unconfigured" });
+    }
+    const upstreamModel = isExoDirect
+      ? opts.model.slice("exo-direct/".length)
+      : opts.model;
+    const target = isExoDirect && exoBaseUrl
+      ? { baseUrl: exoBaseUrl, apiKey: null as string | null }
+      : {
+          baseUrl: (
+            user.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
+          ).replace(/\/+$/, ""),
+          apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+        };
 
     const upstreamBody = {
-      model: opts.model,
+      model: upstreamModel,
       stream: false,
       max_tokens: 1,
       messages: finalMessages,

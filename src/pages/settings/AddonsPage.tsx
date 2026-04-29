@@ -21,7 +21,13 @@ export default function AddonsPage() {
   }
 
   useEffect(() => {
-    refresh();
+    // Touch the EXO Direct add-on info endpoint first — it lazy-creates the
+    // addons row for users that predate this add-on. After this returns, the
+    // /api/addons list will include the EXO Direct entry.
+    api
+      .exoInfo()
+      .catch(() => undefined)
+      .then(() => refresh());
   }, []);
 
   const counts = useMemo(() => {
@@ -206,7 +212,8 @@ function AddonCard({
     !isMobile &&
     (addon.name === "Obsidian" ||
       addon.name === "Web Search" ||
-      addon.name === "Hermes Agent");
+      addon.name === "Hermes Agent" ||
+      addon.name === "EXO Direct");
 
   return (
     <div className="flex flex-col gap-0 rounded-xl border border-gray-200 bg-white">
@@ -238,6 +245,7 @@ function AddonCard({
           {addon.name === "Obsidian" && <ObsidianPanel />}
           {addon.name === "Web Search" && <TavilyPanel />}
           {addon.name === "Hermes Agent" && <HermesPanel />}
+          {addon.name === "EXO Direct" && <ExoPanel />}
         </div>
       )}
     </div>
@@ -873,6 +881,155 @@ function Field({
       {children}
       {hint && (
         <span className="font-mono text-[11px] text-gray-400">{hint}</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * EXO Direct panel — paste a base URL, see currently-loaded models on that
+ * EXO instance. When the add-on is enabled, those models appear in the chat
+ * model picker with a "(direct)" label and route bypasses LiteLLM.
+ */
+function ExoPanel() {
+  const [baseUrl, setBaseUrl] = useState("");
+  const [pendingUrl, setPendingUrl] = useState("");
+  const [models, setModels] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [refreshingModels, setRefreshingModels] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function loadInfo() {
+    try {
+      const info = await api.exoInfo();
+      setBaseUrl(info.baseUrl ?? "");
+      setPendingUrl(info.baseUrl ?? "");
+      setModels(info.models ?? []);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    loadInfo();
+  }, []);
+
+  async function save() {
+    if (!pendingUrl.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.exoSetUrl(pendingUrl.trim());
+      await loadInfo();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clear() {
+    if (!confirm("Clear the EXO base URL?")) return;
+    setBusy(true);
+    try {
+      await api.exoClearUrl();
+      setBaseUrl("");
+      setPendingUrl("");
+      setModels([]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshModels() {
+    setRefreshingModels(true);
+    try {
+      const r = await api.exoListModels();
+      setModels(r.models ?? []);
+      if (r.reason) setError(`No models: ${r.reason}`);
+      else setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRefreshingModels(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <Field
+        label="EXO base URL"
+        hint="e.g. http://192.168.86.29:52415 — without /v1, no trailing slash"
+      >
+        <div className="flex gap-2">
+          <input
+            type="url"
+            value={pendingUrl}
+            onChange={(e) => setPendingUrl(e.target.value)}
+            placeholder="http://192.168.86.29:52415"
+            className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
+          />
+          <button
+            type="button"
+            onClick={save}
+            disabled={busy || !pendingUrl.trim() || pendingUrl === baseUrl}
+            className="rounded-lg bg-navy px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+          {baseUrl && (
+            <button
+              type="button"
+              onClick={clear}
+              disabled={busy}
+              className="rounded-lg border border-gray-200 px-4 py-2 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-ink"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </Field>
+
+      <Field
+        label="Loaded models on EXO"
+        hint={
+          baseUrl
+            ? "Pulled from /state. These appear in the chat picker as ‹model id› (direct)."
+            : "Set a base URL above to discover loaded models."
+        }
+      >
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={refreshModels}
+            disabled={!baseUrl || refreshingModels}
+            className="self-start rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {refreshingModels ? "Refreshing…" : "Refresh"}
+          </button>
+          {models.length === 0 ? (
+            <span className="font-mono text-[12px] text-gray-400">
+              {baseUrl ? "No models loaded yet." : "—"}
+            </span>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {models.map((m) => (
+                <li
+                  key={m}
+                  className="rounded-md bg-white px-3 py-2 font-mono text-[12px] text-ink"
+                >
+                  {m}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Field>
+
+      {error && (
+        <span className="text-[12px] text-red-500">{error}</span>
       )}
     </div>
   );

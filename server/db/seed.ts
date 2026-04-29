@@ -98,6 +98,15 @@ export async function seedIfEmpty() {
       version: "0.1.0",
       enabled: false,
     },
+    {
+      userId: sophie.id,
+      name: "EXO Direct",
+      kind: "plugin",
+      description:
+        "Talk straight to an EXO instance, bypassing LiteLLM. Lets you compare direct-to-engine latency against the proxied path. Set one base URL.",
+      version: "0.1.0",
+      enabled: false,
+    },
   ]);
 
   console.log("→ seed complete");

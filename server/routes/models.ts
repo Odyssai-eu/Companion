@@ -7,6 +7,10 @@
  */
 
 import { Hono } from "hono";
+import {
+  listLoadedExoModels,
+  resolveExoBaseUrl,
+} from "./addon-exo";
 import { authHeaders, resolveLiteLLM } from "../lib/litellm";
 
 type Env = { Variables: { userId: string } };
@@ -69,6 +73,24 @@ modelsRoute.get("/", async (c) => {
       };
     })
     .filter((m): m is GlobalModel => m !== null);
+
+  // EXO Direct add-on: when enabled, append the currently-loaded models on
+  // the user's EXO instance with the `exo-direct/` prefix. The chat route
+  // recognises that prefix and bypasses LiteLLM, talking straight to EXO.
+  // Useful for A/B-testing whether the proxy adds latency.
+  const exoBase = await resolveExoBaseUrl(userId);
+  if (exoBase) {
+    const exoModels = await listLoadedExoModels(exoBase);
+    for (const id of exoModels) {
+      const prefixed = `exo-direct/${id}`;
+      models.push({
+        id: prefixed,
+        name: `${id} (direct)`,
+        tags: ["EXO Direct"],
+        capabilities: heuristicCaps(id),
+      });
+    }
+  }
 
   // Stable sort: tags grouped, then alpha.
   models.sort((a, b) => {

@@ -207,6 +207,26 @@ export const api = {
       `/api/conversations/${conversationId}/prewarm`,
       { method: "POST", body: JSON.stringify(body) },
     ),
+
+  // EXO Direct add-on
+  exoInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      baseUrl: string;
+      models: string[];
+    }>("/api/addons/exo/info"),
+  exoSetUrl: (url: string) =>
+    request<{ ok: true; baseUrl: string }>("/api/addons/exo/url", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
+  exoClearUrl: () =>
+    request<void>("/api/addons/exo/url", { method: "DELETE" }),
+  exoListModels: () =>
+    request<{ models: string[]; reason?: string }>(
+      "/api/addons/exo/models",
+    ),
   exportConversationUrl: (id: string) =>
     `/api/conversations/${id}/export.md`,
   exportConversationJsonUrl: (id: string) =>

@@ -26,6 +26,7 @@ import { conversations, users } from "../db/schema";
 import { authHeaders } from "../lib/litellm";
 import { getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
+import { resolveExoBaseUrl } from "./addon-exo";
 import {
   executeTool,
   isHermesEnabled,
@@ -104,12 +105,27 @@ chatRoute.post("/completions", async (c) => {
     return row;
   });
 
-  // ── 2. Resolve LiteLLM target ─────────────────────────────────────────
-  const target = {
-    baseUrl: (userRow.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000")
-      .replace(/\/+$/, ""),
-    apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-  };
+  // ── 2. Resolve target — LiteLLM by default, EXO direct when the model
+  //       carries the `exo-direct/` prefix (set by the EXO Direct add-on).
+  //       Direct mode skips LiteLLM entirely so we can A/B latency.
+  const isExoDirect = body.model.startsWith("exo-direct/");
+  const exoBaseUrl = isExoDirect ? await resolveExoBaseUrl(userId) : null;
+  if (isExoDirect && !exoBaseUrl) {
+    return c.json(
+      { error: "exo_direct_unconfigured", detail: "EXO Direct add-on disabled or no URL" },
+      400,
+    );
+  }
+  // Strip the prefix so what we forward upstream is the raw EXO model id.
+  if (isExoDirect) body.model = body.model.slice("exo-direct/".length);
+  const target = isExoDirect && exoBaseUrl
+    ? { baseUrl: exoBaseUrl, apiKey: null }
+    : {
+        baseUrl: (
+          userRow.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
+        ).replace(/\/+$/, ""),
+        apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+      };
 
   // ── 3. Resolve project + memory snapshot (frozen per-conversation) ────
   // The memory wiki is snapshot at conversation creation (or on explicit
