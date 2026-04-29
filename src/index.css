@@ -18,6 +18,11 @@ html,
 body,
 #root {
   height: 100%;
+  /* Mobile parity: prevent any rogue child from making the page horizontally
+   * scrollable. iOS Safari computes 100vw including the scrollbar gutter,
+   * which is why w-screen was leaking to the right. */
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 body {

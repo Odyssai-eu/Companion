@@ -70,7 +70,7 @@ export default function ChatLayout() {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
+    <div className="flex h-dvh w-full overflow-hidden">
       <Sidebar
         activeConversationId={id ?? null}
         // ExoScopy parity: when chatting inside a conversation that belongs
@@ -82,7 +82,7 @@ export default function ChatLayout() {
         mobileOpen={mobileSidebarOpen}
         onMobileClose={() => setMobileSidebarOpen(false)}
       />
-      <main className="flex flex-1 flex-col bg-gray-50">
+      <main className="flex min-w-0 flex-1 flex-col bg-gray-50">
         <TopBar
           activeStyle={style}
           onStyleChange={onStyleChange}

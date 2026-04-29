@@ -19,7 +19,7 @@ export default function SettingsLayout() {
 
   if (isMobile) {
     return (
-      <div className="flex h-screen w-screen flex-col overflow-hidden bg-gray-50">
+      <div className="flex h-dvh w-full flex-col overflow-hidden bg-gray-50">
         <header className="flex items-center justify-between gap-2 border-b border-gray-200 bg-white px-3 py-2">
           <button
             type="button"
@@ -58,7 +58,7 @@ export default function SettingsLayout() {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-gray-50">
+    <div className="flex h-dvh w-full overflow-hidden bg-gray-50">
       <IconRail />
       <SettingsNav />
       <main className="flex-1 overflow-y-auto">
