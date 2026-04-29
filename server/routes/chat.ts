@@ -301,27 +301,25 @@ chatRoute.post("/completions", async (c) => {
           ...(toolsEnabled ? { tools, tool_choice: "auto" } : {}),
         };
 
-        // Debug: hash the prompt prefix so we can diagnose KV-cache misses.
-        // The whole-prompt hash should be stable across turns when the only
-        // change is "new last user msg". The prefix-only hash (everything
-        // except the last user msg) should be IDENTICAL between two
-        // consecutive turns of the same conversation. If it isn't, the
-        // backend is leaking something volatile into the prefix.
+        // Debug: hash incremental prefixes so we can diff across turns.
+        // For each prefix length k = 1..N, log the hash of conversation[0..k].
+        // Across consecutive turns, the hash for any given k should be
+        // BYTE-IDENTICAL up to where the new turn diverges. The first k
+        // where the hash differs between turns reveals the volatile message.
         if (process.env.DEBUG_PROMPT_HASH === "1") {
           const { createHash } = await import("node:crypto");
+          const parts: string[] = [];
+          for (let k = 1; k <= conversation.length; k++) {
+            const sub = JSON.stringify(conversation.slice(0, k));
+            const h = createHash("sha256")
+              .update(sub)
+              .digest("hex")
+              .slice(0, 10);
+            parts.push(`${k}:${conversation[k - 1].role[0]}=${h}`);
+          }
           const fullJson = JSON.stringify(conversation);
-          const lastIdx = conversation.length - 1;
-          const prefixOnly = JSON.stringify(conversation.slice(0, lastIdx));
-          const fullHash = createHash("sha256")
-            .update(fullJson)
-            .digest("hex")
-            .slice(0, 12);
-          const prefixHash = createHash("sha256")
-            .update(prefixOnly)
-            .digest("hex")
-            .slice(0, 12);
           console.log(
-            `[chat:prompt-hash] full=${fullHash} prefix=${prefixHash} bytes=${fullJson.length} msgs=${conversation.length}`,
+            `[chat:prompt-hash] msgs=${conversation.length} bytes=${fullJson.length} ${parts.join(" ")}`,
           );
         }
 
