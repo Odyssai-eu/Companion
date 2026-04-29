@@ -26,7 +26,7 @@ export default function InferencePanel({ params, onChange, onClose }: Props) {
         </button>
       </header>
 
-      <div className="flex gap-6">
+      <div className="flex flex-col gap-6 md:flex-row">
         <Column title="Generation">
           <Slider
             label="Temperature"
@@ -283,7 +283,7 @@ function Column({
 }
 
 function Divider() {
-  return <div className="w-px bg-gray-100" />;
+  return <div className="hidden w-px bg-gray-100 md:block" />;
 }
 
 function Slider({

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useIsMobile } from "~/hooks/useIsMobile";
 import { api, type ApiAddon } from "~/lib/api";
 
 type Filter = "all" | "plugin" | "mcp" | "core";
@@ -8,6 +9,7 @@ export default function AddonsPage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [pending, setPending] = useState<Set<string>>(new Set());
+  const isMobile = useIsMobile();
 
   async function refresh() {
     try {
@@ -83,14 +85,16 @@ export default function AddonsPage() {
           <FilterChip label={`MCP · ${counts.mcp}`} active={filter === "mcp"} onClick={() => setFilter("mcp")} />
           <FilterChip label={`Core · ${counts.core}`} active={filter === "core"} onClick={() => setFilter("core")} />
         </div>
-        <button
-          type="button"
-          className="flex h-9 items-center gap-2 rounded-lg bg-navy px-4 text-[13px] font-medium text-white hover:opacity-95"
-          onClick={() => alert("Install-from-URL flow coming soon.")}
-        >
-          <PlusIcon />
-          Install from URL
-        </button>
+        {!isMobile && (
+          <button
+            type="button"
+            className="flex h-9 items-center gap-2 rounded-lg bg-navy px-4 text-[13px] font-medium text-white hover:opacity-95"
+            onClick={() => alert("Install-from-URL flow coming soon.")}
+          >
+            <PlusIcon />
+            Install from URL
+          </button>
+        )}
       </div>
 
       {error && (
@@ -194,10 +198,15 @@ function AddonCard({
   pending: boolean;
   onToggle: () => void;
 }) {
+  const isMobile = useIsMobile();
+  // Mobile hides the per-addon advanced panels (Tavily key, Obsidian token,
+  // Hermes bridge config). These are admin/infra surfaces — desktop only,
+  // mirroring ExoScopy's filter pattern.
   const hasPanel =
-    addon.name === "Obsidian" ||
-    addon.name === "Web Search" ||
-    addon.name === "Hermes Agent";
+    !isMobile &&
+    (addon.name === "Obsidian" ||
+      addon.name === "Web Search" ||
+      addon.name === "Hermes Agent");
 
   return (
     <div className="flex flex-col gap-0 rounded-xl border border-gray-200 bg-white">

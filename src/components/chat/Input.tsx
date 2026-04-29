@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useIsMobile } from "~/hooks/useIsMobile";
 import type { ApiGlobalModel } from "~/lib/api";
 import {
   ACCEPT_ATTR,
@@ -38,6 +39,7 @@ export default function Input({
   const [expanded, setExpanded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isMobile = useIsMobile();
 
   // ExoScopy-style auto-resize: grow up to 200px, then scroll.
   const autoResize = useCallback(() => {
@@ -232,7 +234,11 @@ export default function Input({
             aria-label="Attach"
             disabled={disabled}
             onClick={() => fileInputRef.current?.click()}
-            className="mb-1 flex-shrink-0 text-gray-400 hover:text-ink disabled:opacity-50"
+            className={`flex-shrink-0 text-gray-400 hover:text-ink disabled:opacity-50 ${
+              isMobile
+                ? "flex h-11 w-11 items-center justify-center"
+                : "mb-1"
+            }`}
           >
             <AttachIcon />
           </button>
@@ -260,28 +266,32 @@ export default function Input({
               boxShadow: "none",
             }}
           />
-          <button
-            type="button"
-            onClick={() => setExpanded(true)}
-            disabled={disabled || listening}
-            title="Expand editor"
-            className="mb-1 flex-shrink-0 text-gray-400 hover:text-ink disabled:opacity-50"
-          >
-            <ExpandIcon />
-          </button>
+          {!isMobile && (
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              disabled={disabled || listening}
+              title="Expand editor"
+              className="mb-1 flex-shrink-0 text-gray-400 hover:text-ink disabled:opacity-50"
+            >
+              <ExpandIcon />
+            </button>
+          )}
           <button
             type="button"
             onClick={startTalk}
             disabled={disabled || sending}
             title={listening ? "Stop listening" : "Talk (push-to-talk)"}
-            className={`mb-0.5 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-50 ${
+            className={`mb-0.5 flex flex-shrink-0 items-center gap-1.5 rounded-full border font-medium transition-colors disabled:opacity-50 ${
+              isMobile ? "h-11 w-11 justify-center" : "px-3 py-1.5 text-[12px]"
+            } ${
               listening
                 ? "border-cyan bg-[rgba(79,179,217,0.12)] text-cyan"
                 : "border-gray-200 text-ink hover:bg-gray-50"
             }`}
           >
             <MicIcon />
-            {listening ? "Stop" : "Talk"}
+            {!isMobile && (listening ? "Stop" : "Talk")}
           </button>
 
           {sending ? (
@@ -289,7 +299,9 @@ export default function Input({
               type="button"
               onClick={onCancel}
               aria-label="Stop"
-              className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-navy text-white transition-opacity hover:opacity-90"
+              className={`mb-0.5 flex flex-shrink-0 items-center justify-center rounded-full bg-navy text-white transition-opacity hover:opacity-90 ${
+                isMobile ? "h-11 w-11" : "h-9 w-9"
+              }`}
             >
               <StopIcon />
             </button>
@@ -303,16 +315,20 @@ export default function Input({
                 (!value.trim() && attachments.length === 0) ||
                 attachments.some((a) => a.kind === "pdf" && a.processing)
               }
-              className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-cyan text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+              className={`mb-0.5 flex flex-shrink-0 items-center justify-center rounded-full bg-cyan text-white transition-opacity hover:opacity-90 disabled:opacity-40 ${
+                isMobile ? "h-11 w-11" : "h-9 w-9"
+              }`}
             >
               <ArrowUpIcon />
             </button>
           )}
         </div>
         <div className="flex items-center justify-between gap-2 pt-1">
-          <p className="font-mono text-[11px] text-gray-400">
-            Press <kbd>⇧</kbd> + <kbd>⏎</kbd> for a newline · <kbd>⏎</kbd> to send
-          </p>
+          {!isMobile && (
+            <p className="font-mono text-[11px] text-gray-400">
+              Press <kbd>⇧</kbd> + <kbd>⏎</kbd> for a newline · <kbd>⏎</kbd> to send
+            </p>
+          )}
           <ModelDropdown
             value={model}
             onChange={onModelChange}

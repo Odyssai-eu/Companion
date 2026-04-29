@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useIsMobile } from "~/hooks/useIsMobile";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
 import { api, type ApiInferenceStatus } from "~/lib/api";
 import ToolsMenu from "./ToolsMenu";
@@ -21,22 +22,62 @@ export default function TopBar({
   onOpenMobileSidebar,
 }: Props) {
   const voiceMode = useVoiceMode();
+  const isMobile = useIsMobile();
+
+  // Mobile gets a single, thinner row: hamburger + voice + sliders. We drop
+  // LastSeen and StyleTabs (both available via Custom panel / settings) to
+  // make room for 44px touch targets.
+  if (isMobile) {
+    return (
+      <header className="flex items-center justify-between gap-2 border-b border-gray-200 bg-white px-3 py-2">
+        <button
+          type="button"
+          onClick={onOpenMobileSidebar}
+          aria-label="Open sidebar"
+          className="flex h-11 w-11 items-center justify-center rounded-lg text-ink hover:bg-gray-50"
+        >
+          <HamburgerIcon />
+        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onTogglePanel}
+            aria-label={
+              panelOpen ? "Close inference settings" : "Open inference settings"
+            }
+            className={`flex h-11 w-11 items-center justify-center rounded-lg border transition-colors ${
+              panelOpen
+                ? "border-navy bg-navy text-white"
+                : "border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-ink"
+            }`}
+            title="Inference settings"
+          >
+            <SlidersIcon />
+          </button>
+          <ToolsMenu />
+          <button
+            type="button"
+            onClick={voiceMode.toggle}
+            aria-label="Voice mode"
+            aria-pressed={voiceMode.enabled}
+            className={`flex h-11 w-11 items-center justify-center rounded-full border transition-colors ${
+              voiceMode.enabled
+                ? "border-cyan bg-cyan text-white"
+                : "border-gray-200 bg-white text-ink hover:bg-gray-50"
+            }`}
+          >
+            <VoiceIcon />
+          </button>
+        </div>
+      </header>
+    );
+  }
+
   return (
     <header className="flex flex-col border-b border-gray-200 bg-white">
       {/* Line 1 — Last seen + nothing else (model picker now lives in the composer) */}
       <div className="flex items-center justify-between gap-3 px-4 pt-3 pb-1.5 md:px-6">
-        <div className="flex items-center gap-3">
-          {onOpenMobileSidebar && (
-            <button
-              type="button"
-              onClick={onOpenMobileSidebar}
-              aria-label="Open sidebar"
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-ink hover:bg-gray-50 md:hidden"
-            >
-              <HamburgerIcon />
-            </button>
-          )}
-        </div>
+        <div className="flex items-center gap-3" />
         <LastSeenBadge />
       </div>
 

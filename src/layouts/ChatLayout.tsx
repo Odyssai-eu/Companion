@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import InferencePanel from "~/components/chat/InferencePanel";
 import Input from "~/components/chat/Input";
@@ -7,6 +7,7 @@ import Sidebar from "~/components/chat/Sidebar";
 import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
 import { STYLE_PRESETS, useChat } from "~/hooks/useChat";
 import { useGlobalShortcuts } from "~/hooks/useGlobalShortcuts";
+import { useIsMobile } from "~/hooks/useIsMobile";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
 import { voiceInput } from "~/lib/voice-input";
 
@@ -18,6 +19,17 @@ export default function ChatLayout() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const navigate = useNavigate();
   const voiceMode = useVoiceMode();
+  const isMobile = useIsMobile();
+
+  // ExoScopy parity: collapse the drawer when the user picks a conversation,
+  // and reset on viewport-crossing so desktop never inherits a stuck-open
+  // drawer.
+  useEffect(() => {
+    if (!isMobile) setMobileSidebarOpen(false);
+  }, [isMobile]);
+  useEffect(() => {
+    if (isMobile && id) setMobileSidebarOpen(false);
+  }, [id, isMobile]);
 
   useGlobalShortcuts({
     onNewChat: () => navigate("/"),
@@ -78,7 +90,7 @@ export default function ChatLayout() {
           panelOpen={panelOpen}
           onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
         />
-        {panelOpen && (
+        {panelOpen && !isMobile && (
           <InferencePanel
             params={chat.inference}
             onChange={(patch) => {
@@ -87,6 +99,29 @@ export default function ChatLayout() {
             }}
             onClose={() => setPanelOpen(false)}
           />
+        )}
+        {panelOpen && isMobile && (
+          <div
+            className="fixed inset-0 z-40 flex items-end bg-black/40 md:hidden"
+            onClick={() => setPanelOpen(false)}
+          >
+            <div
+              className="max-h-[85vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-center pt-2">
+                <span className="h-1 w-10 rounded-full bg-gray-300" />
+              </div>
+              <InferencePanel
+                params={chat.inference}
+                onChange={(patch) => {
+                  chat.setInference(patch);
+                  setStyle("Custom");
+                }}
+                onClose={() => setPanelOpen(false)}
+              />
+            </div>
+          </div>
         )}
         <Messages
           messages={chat.messages}
