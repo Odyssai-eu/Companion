@@ -155,43 +155,37 @@ chatRoute.post("/completions", async (c) => {
 
   // ── 4. Inject time tags into user messages ────────────────────────────
   //
-  // Historical user messages must produce a BYTE-IDENTICAL tag across
-  // requests, otherwise EXO's KV prefix cache misses on every turn and we
-  // re-prefill the entire prompt. So:
-  //   - HISTORICAL user messages (all but the last) use their own createdAt
-  //     for `now`, and the previous USER message's createdAt (within the
-  //     same payload) for `previous`. The very first user message has no
-  //     previous → null. Nothing here depends on the live `lastInteractionAt`.
-  //   - LATEST user message (the one being sent now) uses `now` for its
-  //     timestamp and `userRow.lastInteractionAt` for its delta — that's
-  //     the only volatile entry, and it sits at the end of the prompt where
-  //     re-prefilling is cheap.
+  // Every user message is tagged the SAME way regardless of whether it's
+  // historical or being sent now. This is the only way the tag of a given
+  // message stays byte-identical across turns — once it's tagged at turn
+  // T (when it's the latest), turn T+1 sees it as historical and must
+  // reconstruct the same tag.
+  //
+  // Rules (apply identically to latest + historical):
+  //   stamp    = m.createdAt (frontend always provides it for user msgs)
+  //   previous = previous user message's createdAt within this payload
+  //              (= lastUserAt at the moment we encounter this msg)
+  //
+  // Nothing depends on the volatile `userRow.lastInteractionAt` anymore:
+  // including it would cause the latest msg's tag at turn T to differ
+  // from its historical re-rendering at turn T+1.
   const tz = userRow.timezone || "Europe/Brussels";
   const taggedMessages: IncomingMessage[] = [];
-  let lastHistoricalUserAt: Date | null = null;
+  let lastUserAt: Date | null = null;
 
-  for (let i = 0; i < body.messages.length; i++) {
-    const m = body.messages[i];
+  for (const m of body.messages) {
     if (m.role !== "user") {
       taggedMessages.push(m);
       continue;
     }
-    const isLatest = i === body.messages.length - 1;
-    let stamp: Date;
-    let previous: Date | null;
-    if (isLatest) {
-      stamp = now;
-      previous = userRow.lastInteractionAt ?? lastHistoricalUserAt;
-    } else {
-      stamp = m.createdAt ? new Date(m.createdAt) : now;
-      previous = lastHistoricalUserAt;
-    }
+    const stamp = m.createdAt ? new Date(m.createdAt) : now;
+    const previous = lastUserAt;
     const tag = buildTag({ now: stamp, previous, timezone: tz });
     taggedMessages.push({
       ...m,
       content: prependTagToContent(m.content, tag),
     });
-    if (!isLatest) lastHistoricalUserAt = stamp;
+    lastUserAt = stamp;
   }
 
   // ── 5. Compose system prompt: user prompt + memory ───────────────────
