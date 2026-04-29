@@ -482,12 +482,16 @@ conversationsRoute.post(
           apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
         };
 
-    const upstreamBody = {
+    const upstreamBody: Record<string, unknown> = {
       model: upstreamModel,
       stream: false,
       max_tokens: 1,
       messages: finalMessages,
     };
+    // EXO Direct bypasses LiteLLM and its per-model defaults — force
+    // enable_thinking=false so Qwen doesn't burn a thought trace on the
+    // prewarm 1-token completion.
+    if (isExoDirect) upstreamBody.enable_thinking = false;
 
     // Fire-and-forget. Don't block the response; the frontend doesn't care
     // about the result. Errors are logged but not surfaced.

@@ -240,6 +240,12 @@ chatRoute.post("/completions", async (c) => {
   if (body.thinking) baseBody.enable_thinking = true;
   if (body.thinking && body.reasoning_effort)
     baseBody.reasoning_effort = body.reasoning_effort;
+  // EXO Direct path bypasses LiteLLM, so it doesn't get LiteLLM's per-model
+  // defaults (which is where we baked enable_thinking=false for `big`).
+  // Force it off here unless the user explicitly enabled thinking — Qwen
+  // and friends default to thinking ON otherwise, which burns 1-3k tokens
+  // of pre-answer reasoning the user doesn't want.
+  if (isExoDirect && !body.thinking) baseBody.enable_thinking = false;
 
   // Clamp max_tokens to the provider's published ceiling so we don't get
   // 400s from the upstream. Local models served by exo/Inferencer don't
