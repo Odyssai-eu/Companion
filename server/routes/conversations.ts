@@ -376,6 +376,9 @@ conversationsRoute.post(
     if (msgRows.length === 0) {
       return c.json({ ok: false, reason: "empty" });
     }
+    console.log(
+      `[prewarm] conv=${id.slice(0, 8)} model=${opts.model} msgs=${msgRows.length}`,
+    );
 
     const [user] = await db
       .select({

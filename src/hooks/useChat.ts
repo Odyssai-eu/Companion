@@ -215,6 +215,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     if (sending) return;
     if (messages.length === 0) return;
     const t = setTimeout(() => {
+      console.debug("[prewarm] firing for", conversationId, "model:", model);
       api
         .prewarmConversation(conversationId, {
           model,
@@ -222,8 +223,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
             ? { system_prompt: inference.systemPrompt }
             : {}),
         })
-        .catch(() => undefined);
-    }, 600);
+        .then((r) => console.debug("[prewarm] scheduled:", r))
+        .catch((e) => console.debug("[prewarm] error:", e));
+    }, 200);
     return () => clearTimeout(t);
     // We intentionally exclude `inference.systemPrompt` itself from deps —
     // every keystroke in settings would otherwise trigger a prewarm. The
