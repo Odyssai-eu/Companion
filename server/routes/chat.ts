@@ -295,11 +295,11 @@ chatRoute.post("/completions", async (c) => {
           ...(toolsEnabled ? { tools, tool_choice: "auto" } : {}),
         };
 
-        // Debug: hash incremental prefixes so we can diff across turns.
-        // For each prefix length k = 1..N, log the hash of conversation[0..k].
-        // Across consecutive turns, the hash for any given k should be
-        // BYTE-IDENTICAL up to where the new turn diverges. The first k
-        // where the hash differs between turns reveals the volatile message.
+        // Debug: hash both the conversation prefix AND the actual body
+        // sent to EXO. The first reveals our internal prompt drift, the
+        // second reveals if any non-message field (params, headers, body
+        // ordering, tools schema) is breaking the EXO-side cache key.
+        const bodyJson = JSON.stringify(requestBody);
         if (process.env.DEBUG_PROMPT_HASH === "1") {
           const { createHash } = await import("node:crypto");
           const parts: string[] = [];
@@ -312,8 +312,22 @@ chatRoute.post("/completions", async (c) => {
             parts.push(`${k}:${conversation[k - 1].role[0]}=${h}`);
           }
           const fullJson = JSON.stringify(conversation);
+          const bodyHash = createHash("sha256")
+            .update(bodyJson)
+            .digest("hex")
+            .slice(0, 10);
+          // Hash the body without the LAST message — should be byte-stable
+          // across consecutive turns of the same conversation.
+          const bodyMinusLast = JSON.stringify({
+            ...requestBody,
+            messages: conversation.slice(0, -1),
+          });
+          const bodyPrefixHash = createHash("sha256")
+            .update(bodyMinusLast)
+            .digest("hex")
+            .slice(0, 10);
           console.log(
-            `[chat:prompt-hash] msgs=${conversation.length} bytes=${fullJson.length} ${parts.join(" ")}`,
+            `[chat:prompt-hash] msgs=${conversation.length} bytes=${fullJson.length} bodyBytes=${bodyJson.length} body=${bodyHash} bodyPrefix=${bodyPrefixHash} ${parts.join(" ")}`,
           );
         }
 
@@ -322,7 +336,7 @@ chatRoute.post("/completions", async (c) => {
           {
             method: "POST",
             headers,
-            body: JSON.stringify(requestBody),
+            body: bodyJson,
           },
         );
 
