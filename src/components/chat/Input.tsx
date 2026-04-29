@@ -454,6 +454,7 @@ function ModelDropdown({
 }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
 
   // Group by tag (first tag wins). Untagged → "Other".
   const groups = useMemo(() => {
@@ -490,7 +491,16 @@ function ModelDropdown({
         <ChevronIcon />
       </button>
       {open && (
-        <div className="absolute right-0 bottom-full z-30 mb-2 max-h-[400px] w-[320px] overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+        <div
+          className={`absolute bottom-full z-30 mb-2 max-h-[400px] overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg ${
+            isMobile
+              ? // Mobile: trigger sits on the left of the row (justify-between
+                // with a single child), so anchor the panel to the trigger's
+                // left edge and let it extend right, clamped to viewport.
+                "left-0 w-[min(320px,calc(100vw-1.5rem))]"
+              : "right-0 w-[320px]"
+          }`}
+        >
           {models.length === 0 && (
             <div className="px-3 py-4 text-center font-mono text-[11px] text-gray-400">
               No models — check your LiteLLM URL in Settings → Inference.
