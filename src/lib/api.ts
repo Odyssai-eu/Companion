@@ -176,6 +176,10 @@ export const api = {
       content: string;
       reasoning?: string;
       stats?: Record<string, unknown>;
+      /** ISO-8601. Sent so the DB stores the frontend's notion of "when",
+       *  matching the value used in the chat request — keeps prefix-cache
+       *  bytes stable across page reloads. */
+      createdAt?: string;
     },
   ) =>
     request<{ message: ApiMessage }>(
@@ -195,6 +199,14 @@ export const api = {
     }>(`/api/conversations/${conversationId}/refresh-memory`, {
       method: "POST",
     }),
+  prewarmConversation: (
+    conversationId: string,
+    body: { model: string; system_prompt?: string },
+  ) =>
+    request<{ ok: boolean; reason?: string }>(
+      `/api/conversations/${conversationId}/prewarm`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   exportConversationUrl: (id: string) =>
     `/api/conversations/${id}/export.md`,
   exportConversationJsonUrl: (id: string) =>

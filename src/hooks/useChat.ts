@@ -200,6 +200,38 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       .catch((e) => setError(e.message));
   }, [conversationId]);
 
+  // Prewarm the upstream KV cache when the user opens a conversation or
+  // switches models. We fire a 1-token completion at the upstream with the
+  // exact prompt prefix the next chat turn will use; EXO populates its
+  // prefix-cache slot during this idle window. By the time the user types
+  // their next message, the prefix is already cached → TTFT plummets.
+  //
+  // - Skipped for empty conversations (nothing useful to cache yet).
+  // - Skipped while a real request is in flight (don't double-load EXO).
+  // - Debounced 600ms so rapid model toggles don't fire many prewarms.
+  useEffect(() => {
+    if (!conversationId) return;
+    if (!model) return;
+    if (sending) return;
+    if (messages.length === 0) return;
+    const t = setTimeout(() => {
+      api
+        .prewarmConversation(conversationId, {
+          model,
+          ...(inference.systemPromptEnabled && inference.systemPrompt
+            ? { system_prompt: inference.systemPrompt }
+            : {}),
+        })
+        .catch(() => undefined);
+    }, 600);
+    return () => clearTimeout(t);
+    // We intentionally exclude `inference.systemPrompt` itself from deps —
+    // every keystroke in settings would otherwise trigger a prewarm. The
+    // user's stable choice (enabled + saved) is what matters; the next
+    // real chat will warm the right prefix anyway.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, model, sending, messages.length]);
+
   const activeModelCapabilities: { vision: boolean; tools: boolean } =
     globalModels.find((m) => m.id === model)?.capabilities ??
     { vision: true, tools: false };
@@ -261,7 +293,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       }
 
       api
-        .appendMessage(convId, { role: "user", content: built.persistText })
+        .appendMessage(convId, {
+          role: "user",
+          content: built.persistText,
+          createdAt: nowIso,
+        })
         .catch((e) => console.warn("persist user failed", e));
 
       // Pass per-message createdAt so the backend can compute Δ tags
@@ -359,6 +395,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
             ? "⏹ Stopped"
             : `⚠︎ ${result.error ?? "Couldn't reach the engine."}`
           : streamedContent;
+      const assistantCreatedAt = new Date().toISOString();
       const finalAssistant: UIMessage = {
         id: assistantId,
         role: "assistant",
@@ -368,6 +405,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         model,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         stats,
+        createdAt: assistantCreatedAt,
       };
 
       setMessages((prev) =>
@@ -383,6 +421,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
             content: finalContent,
             reasoning: streamedReasoning || undefined,
             stats: stats as Record<string, unknown> | undefined,
+            createdAt: assistantCreatedAt,
           })
           .catch((e) => console.warn("persist assistant failed", e));
       }

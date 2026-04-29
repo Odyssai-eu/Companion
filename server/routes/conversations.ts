@@ -3,8 +3,10 @@ import { asc, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
-import { conversations, messages } from "../db/schema";
+import { conversations, messages, users } from "../db/schema";
+import { authHeaders } from "../lib/litellm";
 import { compileNow, getMemoryContext } from "../lib/memory";
+import { buildTag } from "../lib/timetag";
 
 const conversationsRoute = new Hono();
 
@@ -19,6 +21,10 @@ const appendMessageSchema = z.object({
   content: z.string().default(""),
   reasoning: z.string().optional(),
   stats: z.record(z.unknown()).optional(),
+  // Frontend-controlled timestamp. We store this exact value so the backend's
+  // notion of when the message happened matches the frontend's — critical
+  // for byte-stable time tags (and therefore for upstream KV-cache hits).
+  createdAt: z.string().datetime().optional(),
 });
 
 const updateSchema = z.object({
@@ -290,10 +296,15 @@ conversationsRoute.post(
       return c.json({ error: "not_found" }, 404);
     }
     const data = c.req.valid("json");
-    const [message] = await db
-      .insert(messages)
-      .values({ conversationId: id, ...data })
-      .returning();
+    const insertValues: typeof messages.$inferInsert = {
+      conversationId: id,
+      role: data.role,
+      content: data.content,
+      reasoning: data.reasoning,
+      stats: data.stats,
+    };
+    if (data.createdAt) insertValues.createdAt = new Date(data.createdAt);
+    const [message] = await db.insert(messages).values(insertValues).returning();
 
     // Auto-title the conversation from the first user message if still default
     const shouldAutoTitle =
@@ -319,6 +330,166 @@ conversationsRoute.post(
     // the prompt prefix stable across turns for KV-cache hits.
 
     return c.json({ message }, 201);
+  },
+);
+
+// Prewarm the upstream KV cache for this conversation. Builds the EXACT same
+// prompt prefix that the next chat turn will send, then fires a 1-token
+// completion at the upstream. EXO populates its prefix cache slot with the
+// system + memory + history; when the user actually sends a message, only
+// the new user-msg portion is re-prefilled.
+//
+// Fire-and-forget — returns immediately. No streaming. The byte sequence
+// produced here MUST mirror chat.ts (same field order, same time tags, same
+// memory snapshot, same JSON shape) — otherwise EXO sees a different prefix
+// and the cache misses.
+//
+// Triggered by the frontend when a conversation is opened or the model
+// selection changes. Skipped if the conversation has no messages yet.
+const prewarmSchema = z.object({
+  model: z.string().min(1).max(200),
+  system_prompt: z.string().optional(),
+});
+
+conversationsRoute.post(
+  "/:id/prewarm",
+  zValidator("json", prewarmSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const id = c.req.param("id");
+    const opts = c.req.valid("json");
+
+    const [conv] = await db
+      .select()
+      .from(conversations)
+      .where(eq(conversations.id, id))
+      .limit(1);
+    if (!conv || conv.userId !== userId) {
+      return c.json({ error: "not_found" }, 404);
+    }
+
+    const msgRows = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.conversationId, id))
+      .orderBy(asc(messages.createdAt));
+    if (msgRows.length === 0) {
+      return c.json({ ok: false, reason: "empty" });
+    }
+
+    const [user] = await db
+      .select({
+        timezone: users.timezone,
+        litellmUrl: users.litellmUrl,
+        litellmApiKey: users.litellmApiKey,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!user) return c.json({ error: "user_not_found" }, 404);
+
+    // Memory snapshot — read frozen value, lazy-backfill if missing.
+    let memoryBlock = conv.memorySnapshot ?? "";
+    if (conv.memorySnapshot == null) {
+      memoryBlock = await getMemoryContext(userId, conv.projectId);
+      await db
+        .update(conversations)
+        .set({
+          memorySnapshot: memoryBlock || null,
+          memorySnapshotAt: memoryBlock ? new Date() : null,
+        })
+        .where(eq(conversations.id, id));
+    }
+
+    // System prompt composition — must match chat.ts byte-for-byte.
+    const systemSegments: string[] = [];
+    if (opts.system_prompt && opts.system_prompt.trim().length > 0) {
+      systemSegments.push(opts.system_prompt.trim());
+    }
+    if (memoryBlock.trim().length > 0) systemSegments.push(memoryBlock);
+    const composedSystem = systemSegments.join("\n\n---\n\n");
+
+    // Tag user messages — same logic as chat.ts (uniform: stamp=createdAt,
+    // previous=previous user msg's createdAt).
+    const tz = user.timezone || "Europe/Brussels";
+    type WireMsg = { role: string; content: string; createdAt?: string };
+    const tagged: WireMsg[] = [];
+    let lastUserAt: Date | null = null;
+    for (const m of msgRows) {
+      const createdIso = m.createdAt.toISOString();
+      if (m.role !== "user") {
+        tagged.push({
+          role: m.role,
+          content: m.content,
+          createdAt: createdIso,
+        });
+        continue;
+      }
+      const stamp = m.createdAt;
+      const tag = buildTag({ now: stamp, previous: lastUserAt, timezone: tz });
+      tagged.push({
+        role: m.role,
+        content: `${tag} ${m.content}`,
+        createdAt: createdIso,
+      });
+      lastUserAt = stamp;
+    }
+
+    // Append a tiny dummy user msg to satisfy "user-last" requirement and
+    // make the upstream prefill the entire conversation prefix. Its tag
+    // will differ from the next real user msg's tag (different now/previous),
+    // but that only affects the LAST few tokens — the cacheable prefix
+    // (sys + memory + tagged history) is byte-identical to what chat.ts
+    // will send next.
+    const dummyAt = new Date();
+    const dummyTag = buildTag({
+      now: dummyAt,
+      previous: lastUserAt,
+      timezone: tz,
+    });
+    tagged.push({
+      role: "user",
+      content: `${dummyTag} .`,
+      createdAt: dummyAt.toISOString(),
+    });
+
+    const finalMessages =
+      composedSystem.length > 0
+        ? [{ role: "system" as const, content: composedSystem }, ...tagged]
+        : tagged;
+
+    // Resolve LiteLLM target the same way chat.ts does.
+    const target = {
+      baseUrl: (
+        user.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
+      ).replace(/\/+$/, ""),
+      apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+    };
+
+    const upstreamBody = {
+      model: opts.model,
+      stream: false,
+      max_tokens: 1,
+      messages: finalMessages,
+    };
+
+    // Fire-and-forget. Don't block the response; the frontend doesn't care
+    // about the result. Errors are logged but not surfaced.
+    fetch(`${target.baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(target) },
+      body: JSON.stringify(upstreamBody),
+      // 60s ceiling — cold prefill of a long prompt on a 397B can take 30-50s.
+      // We don't wait, but the underlying socket will eventually hang up.
+      signal: AbortSignal.timeout(120_000),
+    }).catch((err: Error) => {
+      // Aborted/timed-out prewarms are normal under load — don't spam logs.
+      if (err.name !== "AbortError" && err.name !== "TimeoutError") {
+        console.warn("[prewarm] failed:", err.message);
+      }
+    });
+
+    return c.json({ ok: true, scheduled: true, msgs: msgRows.length });
   },
 );
 
