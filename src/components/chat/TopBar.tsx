@@ -24,9 +24,9 @@ export default function TopBar({
   const voiceMode = useVoiceMode();
   const isMobile = useIsMobile();
 
-  // Mobile gets a single, thinner row: hamburger + voice + sliders. We drop
-  // LastSeen and StyleTabs (both available via Custom panel / settings) to
-  // make room for 44px touch targets.
+  // Mobile gets a single thin row: hamburger + Creative/Normal/Code tabs +
+  // voice. We drop the inference-settings sliders, Custom tab, and ToolsMenu —
+  // those are admin/power-user surfaces, not consumer ones.
   if (isMobile) {
     return (
       <header className="flex items-center justify-between gap-2 border-b border-gray-200 bg-white px-3 py-2">
@@ -34,41 +34,28 @@ export default function TopBar({
           type="button"
           onClick={onOpenMobileSidebar}
           aria-label="Open sidebar"
-          className="flex h-11 w-11 items-center justify-center rounded-lg text-ink hover:bg-gray-50"
+          className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg text-ink hover:bg-gray-50"
         >
           <HamburgerIcon />
         </button>
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={onTogglePanel}
-            aria-label={
-              panelOpen ? "Close inference settings" : "Open inference settings"
-            }
-            className={`flex h-11 w-11 items-center justify-center rounded-lg border transition-colors ${
-              panelOpen
-                ? "border-navy bg-navy text-white"
-                : "border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-ink"
-            }`}
-            title="Inference settings"
-          >
-            <SlidersIcon />
-          </button>
-          <ToolsMenu />
-          <button
-            type="button"
-            onClick={voiceMode.toggle}
-            aria-label="Voice mode"
-            aria-pressed={voiceMode.enabled}
-            className={`flex h-11 w-11 items-center justify-center rounded-full border transition-colors ${
-              voiceMode.enabled
-                ? "border-cyan bg-cyan text-white"
-                : "border-gray-200 bg-white text-ink hover:bg-gray-50"
-            }`}
-          >
-            <VoiceIcon />
-          </button>
-        </div>
+        <StyleTabs
+          active={activeStyle}
+          onChange={onStyleChange}
+          tabs={["Creative", "Normal", "Code"]}
+        />
+        <button
+          type="button"
+          onClick={voiceMode.toggle}
+          aria-label="Voice mode"
+          aria-pressed={voiceMode.enabled}
+          className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border transition-colors ${
+            voiceMode.enabled
+              ? "border-cyan bg-cyan text-white"
+              : "border-gray-200 bg-white text-ink hover:bg-gray-50"
+          }`}
+        >
+          <VoiceIcon />
+        </button>
       </header>
     );
   }
@@ -186,11 +173,12 @@ function formatAgo(d: Date): string {
 function StyleTabs({
   active,
   onChange,
+  tabs = ["Creative", "Normal", "Code", "Custom"],
 }: {
   active: ChatStyle;
   onChange: (s: ChatStyle) => void;
+  tabs?: ChatStyle[];
 }) {
-  const tabs: ChatStyle[] = ["Creative", "Normal", "Code", "Custom"];
   return (
     <div className="flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white p-0.5">
       {tabs.map((tab) => (
