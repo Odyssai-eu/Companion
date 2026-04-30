@@ -412,11 +412,36 @@ adminNodesRoute.post("/:id/ssh-setup", async (c) => {
       event: "node.ssh.setup",
       ip: meta.ip,
       userAgent: meta.userAgent,
-      meta: { nodeId: id, ok: false, code: installResult.code },
+      meta: {
+        nodeId: id,
+        ok: false,
+        code: installResult.code,
+        stderr: installResult.stderr.slice(-500),
+      },
     });
+    console.error(
+      `[admin-nodes] ssh-setup install failed for ${node.name} (${node.ip}): code=${installResult.code} stderr=${installResult.stderr.slice(-500)}`,
+    );
+    // Map the most common sshpass exit codes to a human-readable hint
+    // surfaced as `detail` (which is what the UI displays).
+    let hint = "";
+    switch (installResult.code) {
+      case 5:
+        hint = "Invalid SSH password.";
+        break;
+      case 6:
+        hint = "Host key verification failed (unexpected).";
+        break;
+      case 124:
+        hint = "Timed out connecting to the node.";
+        break;
+      default:
+        hint = `sshpass exit code ${installResult.code}`;
+    }
     return c.json(
       {
         error: "ssh_install_failed",
+        detail: `${hint}${installResult.stderr ? ` — ${installResult.stderr.slice(-300).trim()}` : ""}`,
         code: installResult.code,
         stderr: installResult.stderr,
       },
@@ -439,11 +464,23 @@ adminNodesRoute.post("/:id/ssh-setup", async (c) => {
       event: "node.ssh.setup",
       ip: meta.ip,
       userAgent: meta.userAgent,
-      meta: { nodeId: id, ok: false, phase: "verify" },
+      meta: {
+        nodeId: id,
+        ok: false,
+        phase: "verify",
+        code: verify.code,
+        stderr: verify.stderr.slice(-500),
+      },
     });
+    console.error(
+      `[admin-nodes] ssh-setup verify failed for ${node.name} (${node.ip}): code=${verify.code} stderr=${verify.stderr.slice(-500)}`,
+    );
     return c.json(
       {
         error: "ssh_verify_failed",
+        detail:
+          verify.stderr.trim() ||
+          "Pubkey installed but verify with the new key failed. Try Probe in 10s.",
         code: verify.code,
         stdout: verify.stdout,
         stderr: verify.stderr,
