@@ -2257,17 +2257,20 @@ function RowBtn({
   onClick,
   danger,
   disabled,
+  title,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   danger?: boolean;
   disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={`rounded-md border px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${
         danger
           ? "border-red-200 text-red-600 hover:bg-red-50"
