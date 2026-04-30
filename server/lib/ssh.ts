@@ -149,11 +149,20 @@ export async function runSsh(
     if (!opts.password) {
       throw new Error("runSsh: usePassword=true but no password provided");
     }
+    // Force password auth: macOS sshd advertises both `password` AND
+    // `keyboard-interactive`, and sshpass sometimes fails to feed its
+    // password into the keyboard-interactive flow. We also disable
+    // pubkey + GSSAPI explicitly so ssh doesn't burn time trying them
+    // first when the orchestrator key isn't yet on the node.
     const args = [
       "-p", opts.password,
       "ssh",
       "-o", "StrictHostKeyChecking=accept-new",
       "-o", "ConnectTimeout=15",
+      "-o", "PreferredAuthentications=password",
+      "-o", "PubkeyAuthentication=no",
+      "-o", "GSSAPIAuthentication=no",
+      "-o", "NumberOfPasswordPrompts=1",
       "-T",
       target,
       command,
