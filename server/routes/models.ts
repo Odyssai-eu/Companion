@@ -34,9 +34,14 @@ modelsRoute.get("/", async (c) => {
   const userId = c.get("userId");
   const target = await resolveLiteLLM(userId);
 
+  // Use LiteLLM's /model/info — richer than /v1/models, returns per-model
+  // litellm_params (the underlying upstream model id) and model_info flags.
+  // We need litellm_params.model so the heuristic can detect capabilities
+  // from the actual backend model name (e.g. `gemma-4-26b-a4b`) rather than
+  // just the user-facing alias (e.g. `agent-fast`).
   let upstream: Response;
   try {
-    upstream = await fetch(`${target.baseUrl}/v1/models`, {
+    upstream = await fetch(`${target.baseUrl}/model/info`, {
       headers: authHeaders(target),
     });
   } catch (err) {
@@ -55,21 +60,38 @@ modelsRoute.get("/", async (c) => {
 
   const data = (await upstream.json().catch(() => null)) as {
     data?: Array<{
-      id?: string;
-      model_info?: { name?: string; tags?: string[] };
+      model_name?: string;
+      litellm_params?: { model?: string };
+      model_info?: {
+        name?: string;
+        tags?: string[];
+        supports_vision?: boolean;
+        supports_function_calling?: boolean;
+      };
     }>;
   } | null;
 
+  const seen = new Set<string>();
   const models: GlobalModel[] = (data?.data ?? [])
     .map((m) => {
-      const id = m.id ?? "";
-      if (!id) return null;
+      const id = m.model_name ?? "";
+      if (!id || seen.has(id)) return null;
+      seen.add(id);
       const info = m.model_info ?? {};
+      const upstreamModel = m.litellm_params?.model ?? "";
+      // 1. Honour explicit LiteLLM flags when present.
+      // 2. Fallback to heuristic on alias + upstream model path together —
+      //    the upstream path (e.g. ".../gemma-4-26b...") is much more
+      //    reliable than the alias ("agent-fast") for capability detection.
+      const heuristic = heuristicCaps(`${id} ${upstreamModel}`);
       return {
         id,
         name: info.name ?? id,
         tags: info.tags ?? [],
-        capabilities: heuristicCaps(id),
+        capabilities: {
+          vision: info.supports_vision ?? heuristic.vision,
+          tools: info.supports_function_calling ?? heuristic.tools,
+        },
       };
     })
     .filter((m): m is GlobalModel => m !== null);
@@ -103,14 +125,20 @@ modelsRoute.get("/", async (c) => {
   return c.json({ models });
 });
 
-/** Cheap heuristic: flag vision / tools by name patterns. The admin can
- *  override by surfacing capability flags in LiteLLM model_info if needed. */
-function heuristicCaps(id: string): { vision: boolean; tools: boolean } {
-  const s = id.toLowerCase();
+/** Cheap heuristic: flag vision / tools by name patterns. We test against
+ *  alias + underlying upstream model path together — the alias may be
+ *  uninformative ("agent-fast") but the upstream typically reveals the
+ *  actual family ("gemma-4-26b-a4b" → vision-capable). LiteLLM admin can
+ *  also set explicit `supports_vision` / `supports_function_calling` flags
+ *  in model_info to short-circuit this. */
+function heuristicCaps(s: string): { vision: boolean; tools: boolean } {
+  const lower = s.toLowerCase();
   const vision =
-    /(?:vl|vision|gemma-?3|gemma-?4|qwen-?vl|llava|claude|gpt-4o|gpt-4-?turbo)/.test(s);
+    /(?:vl|vision|gemma-?3|gemma-?4|qwen-?vl|qwen-?3\.6|qwen3_5_moe|llava|claude|gpt-4o|gpt-4-?turbo|minimax-m2)/.test(
+      lower,
+    );
   const tools =
-    /(?:claude|gpt-4|gpt-3\.5|qwen|llama-?3|hermes|tool)/.test(s);
+    /(?:claude|gpt-4|gpt-3\.5|qwen|llama-?3|hermes|tool)/.test(lower);
   return { vision, tools };
 }
 
