@@ -592,15 +592,28 @@ function NodesTab() {
     }
   }
 
-  async function setupSsh(n: ApiAdminNode) {
+  async function setupSsh(n: ApiAdminNode, providedPassword?: string) {
     markBusy(`ssh:${n.id}`, true);
     setBanner(null);
     try {
-      await api.sshSetupAdminNode(n.id);
+      await api.sshSetupAdminNode(n.id, providedPassword);
       setBanner(`${n.name}: SSH key installed`);
       await refresh();
     } catch (e) {
-      setBanner(`${n.name}: ${(e as Error).message}`);
+      const msg = (e as Error).message;
+      // Stored password was cleared after first setup. Prompt inline so
+      // the admin doesn't have to re-edit the node row.
+      if (msg.includes("no_password") && !providedPassword) {
+        markBusy(`ssh:${n.id}`, false);
+        const pw = prompt(
+          `Re-setup ${n.name} (${n.ip}) — re-enter the SSH password for ${n.sshUser}:`,
+        );
+        if (pw && pw.length > 0) {
+          await setupSsh(n, pw);
+        }
+        return;
+      }
+      setBanner(`${n.name}: ${msg}`);
     } finally {
       markBusy(`ssh:${n.id}`, false);
     }

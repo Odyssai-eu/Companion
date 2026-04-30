@@ -568,10 +568,13 @@ export const api = {
     }),
   deleteAdminNode: (id: string) =>
     request<void>(`/api/admin/nodes/${id}`, { method: "DELETE" }),
-  sshSetupAdminNode: (id: string) =>
+  sshSetupAdminNode: (id: string, password?: string) =>
     request<{ ok: true } | { error: string; detail?: string }>(
       `/api/admin/nodes/${id}/ssh-setup`,
-      { method: "POST" },
+      {
+        method: "POST",
+        body: password ? JSON.stringify({ password }) : JSON.stringify({}),
+      },
     ),
   getOrchestratorPubkey: () =>
     request<{ pubkey: string }>("/api/admin/nodes/orchestrator/pubkey"),

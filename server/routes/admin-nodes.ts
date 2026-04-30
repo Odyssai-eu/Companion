@@ -305,11 +305,31 @@ adminNodesRoute.delete("/:id", async (c) => {
   return c.body(null, 204);
 });
 
-// POST /api/admin/nodes/:id/ssh-setup — bootstrap orchestrator's SSH key on remote
+// POST /api/admin/nodes/:id/ssh-setup — install (or re-install) the
+// orchestrator's pubkey on the remote node's authorized_keys.
+//
+// Idempotent: safe to run again after a key rotation or a probe failure.
+// Body: { password?: string } — when omitted, uses the stored password
+// (set at node creation, cleared on first successful setup). When the
+// stored password has been cleared, the body password is required.
 adminNodesRoute.post("/:id/ssh-setup", async (c) => {
   const id = c.req.param("id");
   const actor = c.get("user");
   const meta = reqMeta(c);
+
+  // Optional password override (re-setup case where the stored value was
+  // cleared after the first successful run).
+  let bodyPassword: string | undefined;
+  try {
+    const raw = (await c.req.json().catch(() => null)) as
+      | { password?: unknown }
+      | null;
+    if (raw && typeof raw.password === "string" && raw.password.length > 0) {
+      bodyPassword = raw.password;
+    }
+  } catch {
+    /* no body — fine */
+  }
 
   const [node] = await db
     .select()
@@ -318,20 +338,26 @@ adminNodesRoute.post("/:id/ssh-setup", async (c) => {
     .limit(1);
   if (!node) return c.json({ error: "not_found" }, 404);
 
-  if (node.sshKeySetup) {
-    return c.json({ error: "already_setup" }, 400);
+  // Resolve the password to use: body override > stored value.
+  let password: string | null = bodyPassword ?? null;
+  if (!password && node.sshPassword) {
+    try {
+      password = decryptSecret(node.sshPassword);
+    } catch (err) {
+      return c.json(
+        { error: "decrypt_failed", detail: (err as Error).message },
+        500,
+      );
+    }
   }
-  if (!node.sshPassword) {
-    return c.json({ error: "no_password" }, 400);
-  }
-
-  let password: string;
-  try {
-    password = decryptSecret(node.sshPassword);
-  } catch (err) {
+  if (!password) {
     return c.json(
-      { error: "decrypt_failed", detail: (err as Error).message },
-      500,
+      {
+        error: "no_password",
+        detail:
+          "Stored password is cleared. Re-send the password in the request body to re-setup.",
+      },
+      400,
     );
   }
 
