@@ -491,6 +491,20 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     navigate("/");
   }, [navigate]);
 
+  const toggleMemoryEnabled = useCallback(async () => {
+    if (!conversation) return;
+    const next = !conversation.memoryEnabled;
+    // Optimistic — flip locally so the UI feels snappy. Roll back on error.
+    setConversation({ ...conversation, memoryEnabled: next });
+    try {
+      const r = await api.setConversationMemoryEnabled(conversation.id, next);
+      setConversation(r.conversation);
+    } catch (e) {
+      setConversation(conversation);
+      setError((e as Error).message);
+    }
+  }, [conversation]);
+
   return {
     messages,
     sending,
@@ -508,6 +522,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     editAndResend,
     cancel,
     startNew,
+    toggleMemoryEnabled,
   };
 }
 

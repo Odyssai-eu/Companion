@@ -49,6 +49,7 @@ const createSchema = z.object({
   category: z.string().max(60).optional(),
   systemPrompt: z.string().max(8000).optional(),
   instructions: z.string().max(8000).optional(),
+  memoryEnabled: z.boolean().optional(),
 });
 
 const updateSchema = z.object({
@@ -56,6 +57,7 @@ const updateSchema = z.object({
   category: z.string().max(60).optional(),
   systemPrompt: z.string().max(8000).nullish(),
   instructions: z.string().max(8000).nullish(),
+  memoryEnabled: z.boolean().optional(),
 });
 
 function iconForCategory(id: string): string | null {
@@ -88,6 +90,7 @@ projectsRoute.post("/", zValidator("json", createSchema), async (c) => {
       icon: iconForCategory(category),
       systemPrompt: data.systemPrompt ?? cat?.systemPrompt ?? "",
       instructions: data.instructions,
+      memoryEnabled: data.memoryEnabled ?? true,
     })
     .returning();
   return c.json({ project: row }, 201);
@@ -134,6 +137,7 @@ projectsRoute.patch(
       patch.systemPrompt = data.systemPrompt ?? null;
     if (data.instructions !== undefined)
       patch.instructions = data.instructions ?? null;
+    if (data.memoryEnabled !== undefined) patch.memoryEnabled = data.memoryEnabled;
     const [updated] = await db
       .update(projects)
       .set(patch)

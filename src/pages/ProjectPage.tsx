@@ -21,6 +21,7 @@ export default function ProjectPage() {
   const [category, setCategory] = useState("general");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [instructions, setInstructions] = useState("");
+  const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -37,6 +38,7 @@ export default function ProjectPage() {
       setCategory("general");
       setSystemPrompt("");
       setInstructions("");
+      setMemoryEnabled(true);
       return;
     }
     if (!id) return;
@@ -48,6 +50,7 @@ export default function ProjectPage() {
         setCategory(p.project.category);
         setSystemPrompt(p.project.systemPrompt ?? "");
         setInstructions(p.project.instructions ?? "");
+        setMemoryEnabled(p.project.memoryEnabled ?? true);
         setConversations(c.conversations.filter((x) => x.projectId === id));
       })
       .catch((e) => setError((e as Error).message));
@@ -76,6 +79,7 @@ export default function ProjectPage() {
           category,
           systemPrompt,
           instructions,
+          memoryEnabled,
         });
         navigate(`/projects/${project.id}`, { replace: true });
       } else if (id) {
@@ -84,6 +88,7 @@ export default function ProjectPage() {
           category,
           systemPrompt,
           instructions,
+          memoryEnabled,
         });
         setProject(project);
       }
@@ -262,6 +267,45 @@ export default function ProjectPage() {
                 placeholder="Anything you want to remember about how you're using this project."
                 className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3.5 py-2.5 text-[13px] leading-[20px] text-ink outline-none placeholder:text-gray-400 focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
               />
+            </Field>
+
+            <Field
+              label="Memory"
+              hint="When ON, every new conversation in this project starts with your memory wiki injected into the system prompt. Each conversation can still flip its own toggle from the chat header. Turn OFF if this project deals with sensitive context that shouldn't bleed into your wiki — or if you simply want a clean slate."
+            >
+              <button
+                type="button"
+                role="switch"
+                aria-checked={memoryEnabled}
+                onClick={() => setMemoryEnabled((v) => !v)}
+                className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-3 transition-colors ${
+                  memoryEnabled
+                    ? "border-cyan bg-[rgba(79,179,217,0.06)]"
+                    : "border-gray-200 bg-white hover:bg-gray-50"
+                }`}
+              >
+                <span className="flex flex-col gap-0.5 text-left">
+                  <span className="text-[13px] font-medium text-ink">
+                    Memory injection {memoryEnabled ? "ON" : "OFF"}
+                  </span>
+                  <span className="text-[12px] text-gray-500">
+                    {memoryEnabled
+                      ? "Wiki snapshot is loaded into every new conversation here."
+                      : "New conversations start with no wiki context."}
+                  </span>
+                </span>
+                <span
+                  className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${
+                    memoryEnabled ? "bg-cyan" : "bg-gray-300"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                      memoryEnabled ? "translate-x-5" : "translate-x-0.5"
+                    }`}
+                  />
+                </span>
+              </button>
             </Field>
 
             <div className="flex items-center justify-between gap-3 pt-2">

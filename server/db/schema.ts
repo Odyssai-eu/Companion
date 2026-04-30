@@ -40,6 +40,10 @@ export const projects = pgTable(
     icon: text("icon"),
     systemPrompt: text("system_prompt"),
     instructions: text("instructions"),
+    // Default for new conversations created under this project. The
+    // conversation can override it. When false, no memory wiki is read,
+    // injected, or written for any conversation in this project.
+    memoryEnabled: boolean("memory_enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
@@ -75,6 +79,10 @@ export const conversations = pgTable(
     // background.
     memorySnapshot: text("memory_snapshot"),
     memorySnapshotAt: timestamp("memory_snapshot_at", { withTimezone: true }),
+    // Per-conversation memory toggle. Inherited from project.memoryEnabled
+    // at creation; user can flip it from the chat header. When false, the
+    // wiki is not injected into the prompt and "Remember now" is disabled.
+    memoryEnabled: boolean("memory_enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),

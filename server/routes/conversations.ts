@@ -3,7 +3,7 @@ import { asc, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
-import { conversations, messages, users } from "../db/schema";
+import { conversations, messages, projects, users } from "../db/schema";
 import { authHeaders } from "../lib/litellm";
 import { compileNow, getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
@@ -33,6 +33,7 @@ const updateSchema = z.object({
   model: z.string().max(200).optional(),
   pinned: z.boolean().optional(),
   projectId: z.string().uuid().nullish(),
+  memoryEnabled: z.boolean().optional(),
 });
 
 conversationsRoute.get("/", async (c) => {
@@ -72,11 +73,26 @@ conversationsRoute.post(
   async (c) => {
     const userId = c.get("userId");
     const data = c.req.valid("json");
-    // Snapshot the user's memory wiki at conversation creation. We freeze
-    // this for the lifetime of the conversation so the system-prompt prefix
-    // stays byte-stable (= EXO KV prefix cache hits) and the model never
-    // sees its "memory" change mid-conversation.
-    const memorySnapshot = await getMemoryContext(userId, data.projectId ?? null);
+
+    // Inherit memory toggle from the parent project (if any). When the
+    // project disables memory, the new conversation starts with it off too,
+    // and we don't bother snapshotting.
+    let memoryEnabled = true;
+    if (data.projectId) {
+      const [proj] = await db
+        .select({ memoryEnabled: projects.memoryEnabled })
+        .from(projects)
+        .where(eq(projects.id, data.projectId))
+        .limit(1);
+      if (proj) memoryEnabled = proj.memoryEnabled;
+    }
+
+    // Snapshot the user's memory wiki at conversation creation (only when
+    // enabled). Frozen for the lifetime of the conversation so the system-
+    // prompt prefix stays byte-stable across turns.
+    const memorySnapshot = memoryEnabled
+      ? await getMemoryContext(userId, data.projectId ?? null)
+      : "";
     const [row] = await db
       .insert(conversations)
       .values({
@@ -84,6 +100,7 @@ conversationsRoute.post(
         title: data.title ?? "New conversation",
         projectId: data.projectId,
         model: data.model,
+        memoryEnabled,
         memorySnapshot: memorySnapshot || null,
         memorySnapshotAt: memorySnapshot ? new Date() : null,
       })
@@ -127,14 +144,37 @@ conversationsRoute.patch(
       return c.json({ error: "not_found" }, 404);
     }
     // Don't bump updatedAt on metadata-only changes (rename, pin, project
-    // move) — only message activity should mark a conversation as "recent".
+    // move, memory toggle) — only message activity should mark a
+    // conversation as "recent".
     const isMetadataOnly =
       data.title !== undefined ||
       data.pinned !== undefined ||
-      data.projectId !== undefined;
+      data.projectId !== undefined ||
+      data.memoryEnabled !== undefined;
     const patch: Record<string, unknown> = { ...data };
     if (!isMetadataOnly) patch.updatedAt = new Date();
     if (data.projectId === null) patch.projectId = null;
+
+    // Toggling memory ON — backfill the snapshot now so the next chat turn
+    // has it ready without paying a memory-service round-trip on the hot
+    // path.
+    if (data.memoryEnabled === true) {
+      const [conv] = await db
+        .select({
+          projectId: conversations.projectId,
+          memorySnapshot: conversations.memorySnapshot,
+        })
+        .from(conversations)
+        .where(eq(conversations.id, id))
+        .limit(1);
+      if (conv && conv.memorySnapshot == null) {
+        const fresh = await getMemoryContext(userId, conv.projectId);
+        if (fresh) {
+          patch.memorySnapshot = fresh;
+          patch.memorySnapshotAt = new Date();
+        }
+      }
+    }
 
     const [updated] = await db
       .update(conversations)
@@ -392,17 +432,23 @@ conversationsRoute.post(
       .limit(1);
     if (!user) return c.json({ error: "user_not_found" }, 404);
 
-    // Memory snapshot — read frozen value, lazy-backfill if missing.
-    let memoryBlock = conv.memorySnapshot ?? "";
-    if (conv.memorySnapshot == null) {
-      memoryBlock = await getMemoryContext(userId, conv.projectId);
-      await db
-        .update(conversations)
-        .set({
-          memorySnapshot: memoryBlock || null,
-          memorySnapshotAt: memoryBlock ? new Date() : null,
-        })
-        .where(eq(conversations.id, id));
+    // Memory snapshot — read frozen value, lazy-backfill if missing. When
+    // the conversation has memory disabled, skip injection entirely (must
+    // match chat.ts behaviour or the prewarm prefix differs from the real
+    // chat's, defeating the whole point).
+    let memoryBlock = "";
+    if (conv.memoryEnabled !== false) {
+      memoryBlock = conv.memorySnapshot ?? "";
+      if (conv.memorySnapshot == null) {
+        memoryBlock = await getMemoryContext(userId, conv.projectId);
+        await db
+          .update(conversations)
+          .set({
+            memorySnapshot: memoryBlock || null,
+            memorySnapshotAt: memoryBlock ? new Date() : null,
+          })
+          .where(eq(conversations.id, id));
+      }
     }
 
     // System prompt composition — must match chat.ts byte-for-byte.
@@ -529,12 +575,19 @@ conversationsRoute.post("/:id/refresh-memory", async (c) => {
     .select({
       userId: conversations.userId,
       projectId: conversations.projectId,
+      memoryEnabled: conversations.memoryEnabled,
     })
     .from(conversations)
     .where(eq(conversations.id, id))
     .limit(1);
   if (!conv || conv.userId !== userId) {
     return c.json({ error: "not_found" }, 404);
+  }
+  if (conv.memoryEnabled === false) {
+    return c.json(
+      { ok: false, reason: "memory_disabled" },
+      400,
+    );
   }
   // 1. Run the compile pass (consolidate this conversation into the wiki)
   const ok = await compileNow(userId, id);

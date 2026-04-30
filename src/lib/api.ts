@@ -26,6 +26,9 @@ export type ApiConversation = {
   title: string;
   model: string | null;
   pinned: boolean;
+  /** Memory wiki injection toggle for this conversation. Inherited from
+   *  the parent project at creation; user-flippable from the chat header. */
+  memoryEnabled: boolean;
   lastMessage?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -39,6 +42,8 @@ export type ApiProject = {
   icon: string | null;
   systemPrompt: string | null;
   instructions: string | null;
+  /** Default for new conversations under this project. */
+  memoryEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -162,6 +167,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ pinned }),
     }),
+  setConversationMemoryEnabled: (id: string, memoryEnabled: boolean) =>
+    request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ memoryEnabled }),
+    }),
   moveConversationToProject: (id: string, projectId: string | null) =>
     request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
       method: "PATCH",
@@ -257,6 +267,7 @@ export const api = {
     category?: string;
     systemPrompt?: string;
     instructions?: string;
+    memoryEnabled?: boolean;
   }) =>
     request<{ project: ApiProject }>("/api/projects", {
       method: "POST",
@@ -269,6 +280,7 @@ export const api = {
       category: string;
       systemPrompt: string | null;
       instructions: string | null;
+      memoryEnabled: boolean;
     }>,
   ) =>
     request<{ project: ApiProject }>(`/api/projects/${id}`, {

@@ -153,13 +153,18 @@ chatRoute.post("/completions", async (c) => {
           projectId: conversations.projectId,
           userId: conversations.userId,
           memorySnapshot: conversations.memorySnapshot,
+          memoryEnabled: conversations.memoryEnabled,
         })
         .from(conversations)
         .where(eq(conversations.id, body.conversationId))
         .limit(1);
       if (conv && conv.userId === userId) {
         projectId = conv.projectId;
-        if (conv.memorySnapshot != null) {
+        // Memory toggle (per-conversation, inherited from project at creation):
+        // when off, do not inject the wiki into the system prompt at all.
+        if (conv.memoryEnabled === false) {
+          memoryBlock = "";
+        } else if (conv.memorySnapshot != null) {
           memoryBlock = conv.memorySnapshot;
         } else {
           // Lazy backfill — fetch once, persist, reuse from now on.

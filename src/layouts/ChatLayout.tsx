@@ -90,6 +90,8 @@ export default function ChatLayout() {
           panelOpen={panelOpen}
           onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
           conversationId={id ?? null}
+          memoryEnabled={chat.conversation?.memoryEnabled ?? true}
+          onToggleMemory={chat.toggleMemoryEnabled}
         />
         {panelOpen && !isMobile && (
           <InferencePanel

@@ -13,6 +13,8 @@ type Props = {
   panelOpen: boolean;
   onOpenMobileSidebar?: () => void;
   conversationId?: string | null;
+  memoryEnabled?: boolean;
+  onToggleMemory?: () => void;
 };
 
 export default function TopBar({
@@ -22,6 +24,8 @@ export default function TopBar({
   panelOpen,
   onOpenMobileSidebar,
   conversationId,
+  memoryEnabled = true,
+  onToggleMemory,
 }: Props) {
   const voiceMode = useVoiceMode();
   const isMobile = useIsMobile();
@@ -46,7 +50,16 @@ export default function TopBar({
           tabs={["Creative", "Normal", "Code"]}
         />
         <div className="flex items-center gap-1.5">
-          <RememberNowButton conversationId={conversationId ?? null} compact />
+          <MemoryToggleButton
+            enabled={memoryEnabled}
+            onToggle={onToggleMemory}
+            disabled={!conversationId}
+            compact
+          />
+          <RememberNowButton
+            conversationId={memoryEnabled ? conversationId ?? null : null}
+            compact
+          />
           <button
             type="button"
             onClick={voiceMode.toggle}
@@ -95,7 +108,14 @@ export default function TopBar({
         </div>
         <div className="flex items-center gap-3">
           <ToolsMenu />
-          <RememberNowButton conversationId={conversationId ?? null} />
+          <MemoryToggleButton
+            enabled={memoryEnabled}
+            onToggle={onToggleMemory}
+            disabled={!conversationId}
+          />
+          <RememberNowButton
+            conversationId={memoryEnabled ? conversationId ?? null : null}
+          />
           <button
             type="button"
             onClick={voiceMode.toggle}
@@ -194,6 +214,68 @@ function RememberNowButton({
     >
       {state === "loading" ? <SmallSpinner /> : <BookmarkIcon />}
     </button>
+  );
+}
+
+/**
+ * Memory ON/OFF toggle. When OFF, the wiki is neither read nor injected
+ * into this conversation's prompt, and "Remember now" is disabled. The
+ * default for new conversations is inherited from their parent project
+ * (Settings → Project → Memory toggle).
+ */
+function MemoryToggleButton({
+  enabled,
+  onToggle,
+  disabled,
+  compact = false,
+}: {
+  enabled: boolean;
+  onToggle?: () => void;
+  disabled?: boolean;
+  compact?: boolean;
+}) {
+  const size = compact ? "h-11 w-11" : "h-8 w-8";
+  const ringColor = enabled
+    ? "border-cyan bg-white text-cyan hover:bg-cyan/5"
+    : "border-gray-200 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-600";
+  const title = !disabled
+    ? enabled
+      ? "Memory ON — wiki is injected into this conversation's prompt. Click to disable."
+      : "Memory OFF — wiki is not used in this conversation. Click to enable."
+    : "Start a conversation to toggle memory";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={disabled || !onToggle}
+      aria-label={enabled ? "Disable memory" : "Enable memory"}
+      aria-pressed={enabled}
+      title={title}
+      className={`flex ${size} flex-shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${ringColor}`}
+    >
+      <MemoryIcon strikethrough={!enabled} />
+    </button>
+  );
+}
+
+function MemoryIcon({ strikethrough = false }: { strikethrough?: boolean }) {
+  // A "brain" silhouette built from arcs — same stroke language as the
+  // other inline SVGs (1.75 stroke, rounded caps).
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 1 5 3 3 0 0 0 4 4 3 3 0 0 0 3-3V3z" />
+      <path d="M15 3a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-1 5 3 3 0 0 1-4 4 3 3 0 0 1-3-3V3z" />
+      {strikethrough && <line x1="4" y1="20" x2="20" y2="4" />}
+    </svg>
   );
 }
 
