@@ -50,16 +50,16 @@ export const CATEGORIES = [
 const createSchema = z.object({
   name: z.string().min(1).max(120),
   category: z.string().max(60).optional(),
-  systemPrompt: z.string().max(8000).optional(),
-  instructions: z.string().max(8000).optional(),
+  systemPrompt: z.string().max(64000).optional(),
+  instructions: z.string().max(64000).optional(),
   memoryEnabled: z.boolean().optional(),
 });
 
 const updateSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   category: z.string().max(60).optional(),
-  systemPrompt: z.string().max(8000).nullish(),
-  instructions: z.string().max(8000).nullish(),
+  systemPrompt: z.string().max(64000).nullish(),
+  instructions: z.string().max(64000).nullish(),
   memoryEnabled: z.boolean().optional(),
 });
 
