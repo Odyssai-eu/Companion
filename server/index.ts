@@ -8,6 +8,7 @@ import { logger } from "hono/logger";
 import { runMigrations } from "./db/migrate";
 import { ensureAdminExists, seedIfEmpty } from "./db/seed";
 import { requireUser, sessionLoader } from "./middleware/auth";
+import { guestSessionLoader, requireUserOrGuest } from "./middleware/guest";
 import { licenseGate } from "./middleware/license";
 import addonsRoute from "./routes/addons";
 import exoAddonRoute from "./routes/addon-exo";
@@ -15,12 +16,14 @@ import hermesAddonRoute from "./routes/addon-hermes";
 import obsidianRoute, { obsidianBearerLoader } from "./routes/addon-obsidian";
 import tavilyRoute from "./routes/addon-tavily";
 import adminGroupsRoute from "./routes/admin-groups";
+import adminGuestTokensRoute from "./routes/admin-guest-tokens";
 import adminNodesRoute from "./routes/admin-nodes";
 import adminSyncRoute from "./routes/admin-sync";
 import adminUsersRoute from "./routes/admin-users";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
+import guestRoute from "./routes/guest";
 import inferenceRoute from "./routes/inference";
 import licenseRoute from "./routes/license";
 import modelsRoute from "./routes/models";
@@ -55,16 +58,21 @@ app.route("/api/license", licenseRoute);
 
 // License gate + user gate on everything else
 app.use("/api/conversations/*", licenseGate, requireUser);
-app.use("/api/chat/*", licenseGate, requireUser);
+// Chat, models, and inference accept guest tokens (Bearer / ?g= / cookie)
+// in addition to regular sessions. License still applies — guests count
+// against the inviting admin's license.
+app.use("/api/chat/*", licenseGate, guestSessionLoader, requireUserOrGuest);
 app.use("/api/projects/*", licenseGate, requireUser);
 app.use("/api/tts/*", licenseGate, requireUser);
-app.use("/api/inference/*", licenseGate, requireUser);
+app.use("/api/inference/*", licenseGate, guestSessionLoader, requireUserOrGuest);
 // Resolve bearer-token auth for the Obsidian plugin BEFORE requireUser runs,
 // so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
 app.use("/api/addons/*", licenseGate, requireUser);
-app.use("/api/models/*", licenseGate, requireUser);
-app.use("/api/models", licenseGate, requireUser);
+app.use("/api/models/*", licenseGate, guestSessionLoader, requireUserOrGuest);
+app.use("/api/models", licenseGate, guestSessionLoader, requireUserOrGuest);
+// /api/guest/session is the public snapshot endpoint — gated inside the route.
+app.use("/api/guest/*", licenseGate, guestSessionLoader);
 app.use("/api/admin/*", licenseGate, requireUser);
 
 app.route("/api/conversations", conversationsRoute);
@@ -82,6 +90,8 @@ app.route("/api/admin/users", adminUsersRoute);
 app.route("/api/admin/nodes", adminNodesRoute);
 app.route("/api/admin/groups", adminGroupsRoute);
 app.route("/api/admin/sync", adminSyncRoute);
+app.route("/api/admin/guest-tokens", adminGuestTokensRoute);
+app.route("/api/guest", guestRoute);
 
 if (process.env.NODE_ENV === "production") {
   app.use("/*", serveStatic({ root: "./dist/client" }));

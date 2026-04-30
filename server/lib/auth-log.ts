@@ -20,6 +20,8 @@ export type AuthEvent =
   | "role.change"
   | "guest.mint"
   | "guest.use"
+  | "guest.revoke"
+  | "guest.extend"
   | "node.create"
   | "node.update"
   | "node.delete"

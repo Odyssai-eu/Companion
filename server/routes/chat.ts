@@ -23,9 +23,12 @@ import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db/index";
 import { conversations, users } from "../db/schema";
+import { logAuthEvent, reqMeta } from "../lib/auth-log";
+import { incrementGuestUsage } from "../lib/guest-token";
 import { authHeaders } from "../lib/litellm";
 import { getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
+import type { GuestTokenContext } from "../lib/guest-token";
 import { resolveExoEndpoint } from "./addon-exo";
 import {
   executeTool,
@@ -80,6 +83,13 @@ chatRoute.post("/completions", async (c) => {
   }
 
   const userId = c.get("userId");
+  const guest: GuestTokenContext | undefined = c.get("guest");
+
+  // Guest budget pre-check — short-circuit before we stream anything.
+  // tokenBudget = 0 means unlimited.
+  if (guest && guest.tokenBudget > 0 && guest.tokensUsed >= guest.tokenBudget) {
+    return c.json({ error: "guest_budget_exceeded" }, 429);
+  }
 
   // ── 1. Atomic last-interaction swap ────────────────────────────────────
   // SELECT … FOR UPDATE locks the user row for the duration of the tx.
@@ -322,6 +332,12 @@ chatRoute.post("/completions", async (c) => {
   void (async () => {
     let conversation: ChatTurn[] = withSystem as ChatTurn[];
     const MAX_TOOL_ITERATIONS = 3;
+    // Aggregate usage across tool-loop iterations — guests are billed for
+    // every upstream call, not just the final one.
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
+    let totalChunkCount = 0;
+    let sawUpstreamUsage = false;
 
     try {
       for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
@@ -386,8 +402,14 @@ chatRoute.post("/completions", async (c) => {
           break;
         }
 
-        const { toolCalls, finishReason, assistantContent } =
+        const { toolCalls, finishReason, assistantContent, usage, chunkCount } =
           await pipeAndCollect(upstream, writer, encoder);
+        totalChunkCount += chunkCount;
+        if (usage) {
+          sawUpstreamUsage = true;
+          totalPromptTokens += usage.promptTokens;
+          totalCompletionTokens += usage.completionTokens;
+        }
 
         if (
           toolsEnabled &&
@@ -456,6 +478,35 @@ chatRoute.post("/completions", async (c) => {
       }
       // End-of-stream marker for the client parser
       await writer.write(encoder.encode("data: [DONE]\n\n"));
+
+      // Guest accounting — bill the token, log the use. We do this after
+      // the stream has fully drained so we have the real usage numbers.
+      if (guest) {
+        // Fallback: when upstream didn't report `usage` (older EXO, some
+        // local engines), use the chunk count as a coarse proxy. Each
+        // streamed delta is ~1 token in practice for OpenAI-compat servers.
+        const completionTokens = sawUpstreamUsage
+          ? totalCompletionTokens
+          : totalChunkCount;
+        try {
+          await incrementGuestUsage(guest.id, completionTokens);
+        } catch (err) {
+          console.error("[chat] guest usage increment failed:", err);
+        }
+        const meta = reqMeta(c);
+        logAuthEvent({
+          userId: guest.createdBy,
+          event: "guest.use",
+          ip: meta.ip,
+          userAgent: meta.userAgent,
+          meta: {
+            tokenId: guest.id,
+            promptTokens: sawUpstreamUsage ? totalPromptTokens : null,
+            completionTokens,
+            usageReported: sawUpstreamUsage,
+          },
+        });
+      }
     } catch (err) {
       console.error("[chat] upstream pipe failed:", err);
       try {
@@ -555,6 +606,8 @@ async function pipeAndCollect(
   toolCalls: AccumulatedToolCall[];
   finishReason: string | null;
   assistantContent: string;
+  usage: { promptTokens: number; completionTokens: number } | null;
+  chunkCount: number;
 }> {
   const reader = upstream.body!.getReader();
   const decoder = new TextDecoder();
@@ -562,6 +615,8 @@ async function pipeAndCollect(
   const tcByIndex = new Map<number, AccumulatedToolCall>();
   let finishReason: string | null = null;
   let assistantContent = "";
+  let usage: { promptTokens: number; completionTokens: number } | null = null;
+  let chunkCount = 0;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -598,10 +653,23 @@ async function pipeAndCollect(
             };
             finish_reason?: string | null;
           }>;
+          usage?: {
+            prompt_tokens?: number;
+            completion_tokens?: number;
+          };
         };
+        if (parsed.usage) {
+          usage = {
+            promptTokens: parsed.usage.prompt_tokens ?? 0,
+            completionTokens: parsed.usage.completion_tokens ?? 0,
+          };
+        }
         const choice = parsed.choices?.[0];
         if (!choice) continue;
-        if (choice.delta?.content) assistantContent += choice.delta.content;
+        if (choice.delta?.content) {
+          assistantContent += choice.delta.content;
+          chunkCount += 1;
+        }
         if (choice.delta?.tool_calls) {
           for (const tc of choice.delta.tool_calls) {
             const idx = tc.index ?? 0;
@@ -631,6 +699,8 @@ async function pipeAndCollect(
     toolCalls: Array.from(tcByIndex.values()).filter((tc) => tc.name),
     finishReason,
     assistantContent,
+    usage,
+    chunkCount,
   };
 }
 
