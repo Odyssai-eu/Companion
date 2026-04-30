@@ -1,8 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { api, type AuthUser } from "~/lib/api";
+import { api, type AuthRole, type AuthUser } from "~/lib/api";
 
 type AuthState = {
   user: AuthUser | null;
+  /** Convenience: the current user's role, or null when no user is loaded. */
+  role: AuthRole | null;
+  /** Convenience: whether the current user is active. Defaults to true when
+   *  the field isn't surfaced (older sessions). */
+  active: boolean;
   loading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
@@ -68,6 +73,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const value: AuthState = {
     user,
+    role: user?.role ?? null,
+    active: user?.active ?? true,
     loading,
     error,
     login,

@@ -4,6 +4,8 @@ import ChatLayout from "./layouts/ChatLayout";
 import SettingsLayout from "./layouts/SettingsLayout";
 import LoginPage from "./pages/auth/LoginPage";
 import SignupPage from "./pages/auth/SignupPage";
+import AdminExtPage from "./pages/AdminExtPage";
+import GuestEntry from "./pages/GuestEntry";
 import ProjectPage from "./pages/ProjectPage";
 import AccessibilityPage from "./pages/settings/AccessibilityPage";
 import AddonsPage from "./pages/settings/AddonsPage";
@@ -21,6 +23,16 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
+      <Route path="/g/:token" element={<GuestEntry />} />
+
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute>
+            <AdminExtPage />
+          </ProtectedRoute>
+        }
+      />
 
       <Route
         path="/"

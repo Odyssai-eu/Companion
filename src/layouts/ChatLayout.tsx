@@ -9,6 +9,7 @@ import { STYLE_PRESETS, useChat } from "~/hooks/useChat";
 import { useGlobalShortcuts } from "~/hooks/useGlobalShortcuts";
 import { useIsMobile } from "~/hooks/useIsMobile";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
+import { api } from "~/lib/api";
 import { voiceInput } from "~/lib/voice-input";
 
 export default function ChatLayout() {
@@ -83,6 +84,7 @@ export default function ChatLayout() {
         onMobileClose={() => setMobileSidebarOpen(false)}
       />
       <main className="flex min-w-0 flex-1 flex-col bg-gray-50">
+        <GuestBanner />
         <TopBar
           activeStyle={style}
           onStyleChange={onStyleChange}
@@ -146,6 +148,58 @@ export default function ChatLayout() {
           models={chat.globalModels}
         />
       </main>
+    </div>
+  );
+}
+
+/**
+ * Surfaces the guest token's remaining budget when the chat is opened via a
+ * `/g/<token>` link. The banner is dismissible per page load. We poll
+ * /api/guest/session lazily — only when the localStorage flag is set, to
+ * avoid a 400 round-trip on every regular session.
+ */
+function GuestBanner() {
+  const [snap, setSnap] = useState<{
+    tokenBudget: number;
+    tokensUsed: number;
+  } | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const hasGuest =
+      typeof localStorage !== "undefined" &&
+      !!localStorage.getItem("thecompai:guestToken");
+    if (!hasGuest) return;
+    api
+      .guestSession()
+      .then((s) => {
+        if (alive) {
+          setSnap({ tokenBudget: s.tokenBudget, tokensUsed: s.tokensUsed });
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!snap || dismissed) return null;
+  const total = snap.tokenBudget === 0 ? "∞" : snap.tokenBudget.toLocaleString();
+  return (
+    <div className="flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-[12px] text-amber-900">
+      <span className="font-medium">Guest session</span>
+      <span className="font-mono">
+        {snap.tokensUsed.toLocaleString()} / {total} tokens used
+      </span>
+      <button
+        type="button"
+        onClick={() => setDismissed(true)}
+        aria-label="Dismiss"
+        className="ml-auto text-amber-700 hover:text-amber-900"
+      >
+        ×
+      </button>
     </div>
   );
 }

@@ -113,11 +113,91 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+export type AuthRole = "admin" | "organiser" | "user" | "guest";
+
 export type AuthUser = {
   id: string;
   email: string;
   name: string | null;
+  role?: AuthRole;
+  active?: boolean;
 };
+
+// ── Admin Extended types ────────────────────────────────────────────────
+
+export type ApiAdminUser = {
+  id: string;
+  email: string;
+  name: string | null;
+  role: AuthRole;
+  active: boolean;
+  createdAt: string;
+  lastInteractionAt: string | null;
+};
+
+export type ApiAdminGroup = {
+  id: string;
+  name: string;
+  createdAt: string;
+  nodeCount: number;
+};
+
+export type ApiAdminNode = {
+  id: string;
+  name: string;
+  ip: string;
+  sshUser: string;
+  sshKeySetup: boolean;
+  modelPath: string;
+  status: string;
+  lastSeenAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  groups: Array<{ id: string; name: string }>;
+};
+
+export type ApiSyncJob = {
+  id: string;
+  userId: string;
+  sourceNodeId: string;
+  targetNodeIds: string[];
+  groupId: string | null;
+  modelPath: string;
+  status: "queued" | "running" | "done" | "failed" | "canceled";
+  progress: number;
+  log: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  liveProgress?: number;
+  liveLog?: string;
+  currentTarget?: string | null;
+};
+
+export type ApiSyncMatrixEntry = {
+  nodeId: string;
+  nodeName: string;
+  models: Array<{ name: string; sizeBytes?: number }>;
+};
+
+export type ApiGuestToken = {
+  id: string;
+  label: string | null;
+  tokenBudget: number;
+  tokensUsed: number;
+  scope: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+};
+
+export type SyncStreamEvent =
+  | { type: "snapshot"; status: ApiSyncJob["status"]; progress: number; currentTarget: string | null }
+  | { type: "progress"; progress: number; currentTarget?: string | null }
+  | { type: "log"; line: string }
+  | { type: "status"; status: ApiSyncJob["status"]; error?: string }
+  | { type: string; [k: string]: unknown };
 
 export const api = {
   // Models — proxied from LiteLLM /v1/models
@@ -418,4 +498,191 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // ── Admin Extended ──────────────────────────────────────────────────
+  adminExtInfo: () =>
+    request<{ addonId: string; enabled: boolean }>(
+      "/api/addons/admin-ext/info",
+    ),
+
+  // Users
+  listAdminUsers: () =>
+    request<{ users: ApiAdminUser[] }>("/api/admin/users"),
+  createAdminUser: (body: {
+    email: string;
+    name?: string;
+    password: string;
+    role: AuthRole;
+  }) =>
+    request<{ user: ApiAdminUser }>("/api/admin/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateAdminUser: (
+    id: string,
+    body: Partial<{
+      name: string;
+      role: AuthRole;
+      active: boolean;
+      password: string;
+    }>,
+  ) =>
+    request<{ user: ApiAdminUser }>(`/api/admin/users/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteAdminUser: (id: string) =>
+    request<void>(`/api/admin/users/${id}`, { method: "DELETE" }),
+
+  // Nodes
+  listAdminNodes: () =>
+    request<{ nodes: ApiAdminNode[] }>("/api/admin/nodes"),
+  createAdminNode: (body: {
+    name: string;
+    ip: string;
+    sshUser?: string;
+    sshPassword?: string;
+    modelPath: string;
+    groupIds?: string[];
+  }) =>
+    request<{ node: ApiAdminNode }>("/api/admin/nodes", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateAdminNode: (
+    id: string,
+    body: Partial<{
+      name: string;
+      ip: string;
+      sshUser: string;
+      sshPassword: string | null;
+      modelPath: string;
+      status: string;
+      groupIds: string[];
+    }>,
+  ) =>
+    request<{ node: ApiAdminNode }>(`/api/admin/nodes/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteAdminNode: (id: string) =>
+    request<void>(`/api/admin/nodes/${id}`, { method: "DELETE" }),
+  sshSetupAdminNode: (id: string) =>
+    request<{ ok: true } | { error: string; detail?: string }>(
+      `/api/admin/nodes/${id}/ssh-setup`,
+      { method: "POST" },
+    ),
+  probeAdminNode: (id: string) =>
+    request<{
+      ok: boolean;
+      output?: string;
+      stderr?: string;
+      code?: number;
+      status: string;
+      lastSeenAt: string | null;
+      error?: string;
+    }>(`/api/admin/nodes/${id}/probe`, { method: "POST" }),
+
+  // Groups
+  listAdminGroups: () =>
+    request<{ groups: ApiAdminGroup[] }>("/api/admin/groups"),
+  createAdminGroup: (name: string) =>
+    request<{ group: ApiAdminGroup }>("/api/admin/groups", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  updateAdminGroup: (id: string, name: string) =>
+    request<{ group: ApiAdminGroup }>(`/api/admin/groups/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+  deleteAdminGroup: (id: string) =>
+    request<void>(`/api/admin/groups/${id}`, { method: "DELETE" }),
+  seedDefaultGroups: () =>
+    request<{ seeded: boolean; groups: ApiAdminGroup[] }>(
+      "/api/admin/groups/seed-defaults",
+      { method: "POST" },
+    ),
+
+  // Sync
+  listSyncJobs: (opts?: { status?: ApiSyncJob["status"]; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (opts?.status) q.set("status", opts.status);
+    if (opts?.limit) q.set("limit", String(opts.limit));
+    const qs = q.toString();
+    return request<{ jobs: ApiSyncJob[] }>(
+      `/api/admin/sync${qs ? `?${qs}` : ""}`,
+    );
+  },
+  getSyncJob: (id: string) =>
+    request<{ job: ApiSyncJob }>(`/api/admin/sync/${id}`),
+  startSync: (body: {
+    sourceNodeId: string;
+    targetNodeIds?: string[];
+    groupId?: string;
+    modelPath: string;
+  }) =>
+    request<{ jobId: string }>("/api/admin/sync", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  cancelSync: (id: string) =>
+    request<{ ok: true }>(`/api/admin/sync/${id}/cancel`, { method: "POST" }),
+  syncMatrix: () =>
+    request<{ matrix: ApiSyncMatrixEntry[] }>("/api/admin/sync/matrix"),
+
+  // Guest tokens
+  listGuestTokens: () =>
+    request<{ tokens: ApiGuestToken[] }>("/api/admin/guest-tokens"),
+  mintGuestToken: (body: {
+    label?: string;
+    tokenBudget?: number;
+    scope?: "chat";
+    expiresInDays?: number;
+  }) =>
+    request<{ token: string; row: ApiGuestToken }>(
+      "/api/admin/guest-tokens",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  revokeGuestToken: (id: string) =>
+    request<{ ok: true }>(`/api/admin/guest-tokens/${id}`, {
+      method: "DELETE",
+    }),
+  extendGuestToken: (id: string, days: number) =>
+    request<{ row: ApiGuestToken }>(
+      `/api/admin/guest-tokens/${id}/extend`,
+      { method: "POST", body: JSON.stringify({ days }) },
+    ),
+
+  // Guest session (snapshot of current guest token's budget + expiry)
+  guestSession: () =>
+    request<{
+      ok: true;
+      scope: string;
+      tokenBudget: number;
+      tokensUsed: number;
+      expiresAt: string | null;
+    }>("/api/guest/session"),
 };
+
+/** Subscribe to live SSE events for a sync job. Returns a cleanup fn that
+ *  closes the EventSource. The handler is called for every parsed event. */
+export function streamSyncEvents(
+  jobId: string,
+  onEvent: (ev: SyncStreamEvent) => void,
+): () => void {
+  const es = new EventSource(`/api/admin/sync/${jobId}/events`);
+  es.onmessage = (msg) => {
+    try {
+      const data = JSON.parse(msg.data) as SyncStreamEvent;
+      onEvent(data);
+    } catch {
+      /* ignore */
+    }
+  };
+  es.onerror = () => {
+    // Let the consumer decide when to give up; we just stop receiving.
+    es.close();
+  };
+  return () => es.close();
+}

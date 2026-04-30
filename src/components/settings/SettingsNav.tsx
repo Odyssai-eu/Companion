@@ -1,9 +1,10 @@
 import { NavLink } from "react-router";
+import { useAuth } from "~/hooks/useAuth";
 
 type NavItem = { to: string; label: string };
 type NavSection = { title: string; items: NavItem[] };
 
-const sections: NavSection[] = [
+const baseSections: NavSection[] = [
   {
     title: "Account",
     items: [
@@ -41,6 +42,22 @@ const sections: NavSection[] = [
 ];
 
 export default function SettingsNav() {
+  const { role } = useAuth();
+  const isAdminish = role === "admin" || role === "organiser";
+
+  // Surface the Admin link to admin/organiser only. Slot it in the
+  // Extensions section right next to Add-ons.
+  const sections: NavSection[] = isAdminish
+    ? baseSections.map((s) =>
+        s.title === "Extensions"
+          ? {
+              ...s,
+              items: [...s.items, { to: "/admin", label: "Admin Extended" }],
+            }
+          : s,
+      )
+    : baseSections;
+
   return (
     <nav className="flex h-full w-[240px] flex-col gap-6 border-r border-gray-200 bg-white px-4 pt-8 pb-4">
       <h1 className="px-2 font-display text-[30px] font-light text-navy">

@@ -55,7 +55,13 @@ authRoute.post("/signup", zValidator("json", signupSchema), async (c) => {
   const [user] = await db
     .insert(users)
     .values({ email: normalized, name, passwordHash })
-    .returning({ id: users.id, email: users.email, name: users.name });
+    .returning({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      role: users.role,
+      active: users.active,
+    });
 
   const token = await createSessionToken({
     userId: user.id,
@@ -126,7 +132,13 @@ authRoute.post("/login", zValidator("json", loginSchema), async (c) => {
   });
 
   return c.json({
-    user: { id: user.id, email: user.email, name: user.name },
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      active: user.active,
+    },
   });
 });
 
@@ -211,6 +223,8 @@ authRoute.patch(
         id: users.id,
         email: users.email,
         name: users.name,
+        role: users.role,
+        active: users.active,
       });
     return c.json({ user: updated });
   },
@@ -220,7 +234,13 @@ authRoute.get("/me", async (c) => {
   const userId = c.get("userId");
   if (!userId) return c.json({ user: null });
   const [user] = await db
-    .select({ id: users.id, email: users.email, name: users.name })
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      role: users.role,
+      active: users.active,
+    })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);

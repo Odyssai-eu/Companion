@@ -100,6 +100,15 @@ export async function seedIfEmpty() {
     },
     {
       userId: sophie.id,
+      name: "Admin Extended",
+      kind: "plugin",
+      description:
+        "Manage users, nodes, groups, file syncs and guest tokens. Required for multi-user / multi-station setups.",
+      version: "0.1.0",
+      enabled: false,
+    },
+    {
+      userId: sophie.id,
       name: "EXO Direct",
       kind: "plugin",
       description:
