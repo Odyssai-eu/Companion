@@ -102,8 +102,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let code: string | undefined;
     try {
       const body = await res.json();
-      detail = body.detail ?? body.error ?? JSON.stringify(body);
-      code = body.error;
+      // zValidator (Hono) returns errors as
+      //   { success: false, error: { issues: [{ path, message }, ...] } }
+      // Plain handlers return { error: 'code', detail: 'human reason' }.
+      if (body && typeof body.error === "object" && body.error !== null) {
+        const issues = (body.error.issues ?? []) as Array<{
+          path?: Array<string | number>;
+          message?: string;
+        }>;
+        if (issues.length > 0) {
+          detail = issues
+            .map((i) => `${(i.path ?? []).join(".") || "?"}: ${i.message ?? "invalid"}`)
+            .join("; ");
+        } else {
+          detail = JSON.stringify(body.error);
+        }
+        code = "validation_error";
+      } else {
+        detail = body.detail ?? body.error ?? JSON.stringify(body);
+        code = typeof body.error === "string" ? body.error : undefined;
+      }
     } catch {
       detail = await res.text().catch(() => "");
     }
