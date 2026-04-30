@@ -16,6 +16,7 @@ import obsidianRoute, { obsidianBearerLoader } from "./routes/addon-obsidian";
 import tavilyRoute from "./routes/addon-tavily";
 import adminGroupsRoute from "./routes/admin-groups";
 import adminNodesRoute from "./routes/admin-nodes";
+import adminSyncRoute from "./routes/admin-sync";
 import adminUsersRoute from "./routes/admin-users";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
@@ -80,6 +81,7 @@ app.route("/api/inference", inferenceRoute);
 app.route("/api/admin/users", adminUsersRoute);
 app.route("/api/admin/nodes", adminNodesRoute);
 app.route("/api/admin/groups", adminGroupsRoute);
+app.route("/api/admin/sync", adminSyncRoute);
 
 if (process.env.NODE_ENV === "production") {
   app.use("/*", serveStatic({ root: "./dist/client" }));

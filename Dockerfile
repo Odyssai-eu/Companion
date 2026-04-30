@@ -16,6 +16,12 @@ WORKDIR /app
 ENV NODE_ENV=production
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
+# Admin Extended: the orchestrator runs rsync over ssh from this container
+# to user-managed nodes. sshpass is used during the one-shot key-bootstrap
+# step (POST /api/admin/nodes/:id/ssh-setup); after that all auth is by
+# the orchestrator's ed25519 key, persisted under /home/node/.thecompai/.
+RUN apk add --no-cache rsync openssh-client sshpass
+
 COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --prod --frozen-lockfile || pnpm install --prod
 

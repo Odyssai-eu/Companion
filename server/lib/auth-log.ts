@@ -28,7 +28,11 @@ export type AuthEvent =
   | "group.create"
   | "group.update"
   | "group.delete"
-  | "group.seed";
+  | "group.seed"
+  | "sync.start"
+  | "sync.cancel"
+  | "sync.done"
+  | "sync.failed";
 
 export interface LogAuthEventInput {
   userId?: string | null;
