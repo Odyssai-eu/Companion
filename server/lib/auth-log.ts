@@ -27,6 +27,7 @@ export type AuthEvent =
   | "node.delete"
   | "node.ssh.setup"
   | "node.probe"
+  | "node.models.delete"
   | "group.create"
   | "group.update"
   | "group.delete"

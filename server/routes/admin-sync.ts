@@ -55,6 +55,12 @@ adminSyncRoute.get("/", zValidator("query", listQuerySchema), async (c) => {
 });
 
 // ── GET /api/admin/sync/matrix — model presence matrix ──────────────────
+// Returns one entry per node with:
+//   - freeBytes: filesystem free space at modelPath
+//   - models[]:  every direct subdir of modelPath with its sizeBytes
+// The UI pivots this server payload into a per-model table where rows are
+// models, columns are nodes, each cell shows ✓ + size, with a delete button
+// per cell and a sync button per row.
 adminSyncRoute.get("/matrix", async (c) => {
   const actor = c.get("user");
   const rows = await db
@@ -70,19 +76,28 @@ adminSyncRoute.get("/matrix", async (c) => {
     .from(nodes)
     .where(eq(nodes.userId, actor.id));
 
-  // Fan out in parallel; offline / missing-key nodes return [].
   const results = await Promise.all(
     rows.map(async (n) => {
       if (!n.sshKeySetup) {
-        return { nodeId: n.id, nodeName: n.name, models: [] };
+        return {
+          nodeId: n.id,
+          nodeName: n.name,
+          freeBytes: null,
+          models: [],
+        };
       }
-      const models = await listNodeModels({
+      const listing = await listNodeModels({
         id: n.id,
         ip: n.ip,
         sshUser: n.sshUser,
         modelPath: n.modelPath,
       });
-      return { nodeId: n.id, nodeName: n.name, models };
+      return {
+        nodeId: n.id,
+        nodeName: n.name,
+        freeBytes: listing.freeBytes,
+        models: listing.models,
+      };
     }),
   );
   return c.json({ matrix: results });

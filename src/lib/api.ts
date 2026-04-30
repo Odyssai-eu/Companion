@@ -178,7 +178,8 @@ export type ApiSyncJob = {
 export type ApiSyncMatrixEntry = {
   nodeId: string;
   nodeName: string;
-  models: Array<{ name: string; sizeBytes?: number }>;
+  freeBytes: number | null;
+  models: Array<{ name: string; sizeBytes: number }>;
 };
 
 export type ApiGuestToken = {
@@ -572,6 +573,15 @@ export const api = {
       `/api/admin/nodes/${id}/ssh-setup`,
       { method: "POST" },
     ),
+  deleteNodeModels: (id: string, modelNames: string[]) =>
+    request<{
+      ok: boolean;
+      results: Record<string, "deleted" | "missing" | "error">;
+      stderr?: string;
+    }>(`/api/admin/nodes/${id}/models/delete`, {
+      method: "POST",
+      body: JSON.stringify({ modelNames }),
+    }),
   probeAdminNode: (id: string) =>
     request<{
       ok: boolean;

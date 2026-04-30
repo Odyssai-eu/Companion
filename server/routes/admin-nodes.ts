@@ -512,10 +512,119 @@ adminNodesRoute.post("/:id/probe", async (c) => {
   });
 });
 
+// POST /api/admin/nodes/:id/models/delete — batch delete model dirs on a node
+//
+// Body: { modelNames: string[] } — names of subdirectories under modelPath
+// to remove. Each name is treated as a literal directory name (no globs, no
+// path traversal). We sanity-check no slashes and no '..' before passing to
+// the remote shell.
+//
+// Implementation: a single SSH session that runs `rm -rf <modelPath>/<name>`
+// for each requested name. Reports per-name result. Logs to auth_log.
+adminNodesRoute.post(
+  "/:id/models/delete",
+  zValidator(
+    "json",
+    z.object({ modelNames: z.array(z.string().min(1).max(200)).min(1).max(50) }),
+  ),
+  async (c) => {
+    const actor = c.get("user");
+    const id = c.req.param("id");
+    const { modelNames } = c.req.valid("json");
+
+    const [node] = await db
+      .select()
+      .from(nodes)
+      .where(and(eq(nodes.id, id), eq(nodes.userId, actor.id)))
+      .limit(1);
+    if (!node) return c.json({ error: "not_found" }, 404);
+    if (!node.sshKeySetup) {
+      return c.json(
+        { error: "ssh_not_setup", detail: "Run SSH setup first" },
+        400,
+      );
+    }
+
+    // Defensive sanitisation: each name must be a single dirname, no
+    // separator, no parent-traversal, no leading dot-dot. Anything else
+    // is rejected outright — we never trust user input in a shell.
+    const safe: string[] = [];
+    const rejected: string[] = [];
+    for (const n of modelNames) {
+      if (n.includes("/") || n.includes("\\") || n === "." || n === ".." || n.startsWith("..")) {
+        rejected.push(n);
+      } else {
+        safe.push(n);
+      }
+    }
+    if (rejected.length > 0) {
+      return c.json(
+        { error: "unsafe_names", rejected },
+        400,
+      );
+    }
+
+    // Build a single shell pipeline that emits a status line per name so we
+    // can report partial success cleanly.
+    const cmds = safe
+      .map((n) => {
+        const dir = `"$P"/${shellQuote(n)}`;
+        return (
+          `if [ -d ${dir} ]; then ` +
+          `rm -rf ${dir} && echo "OK:${n}" || echo "ERR:${n}"; ` +
+          `else echo "MISSING:${n}"; fi`
+        );
+      })
+      .join("; ");
+    const cmd = `set -u; P=${shellQuote(node.modelPath)}; ${cmds}`;
+
+    let result;
+    try {
+      result = await runSsh(
+        { ip: node.ip, sshUser: node.sshUser },
+        cmd,
+        { timeoutMs: 60_000 },
+      );
+    } catch (err) {
+      return c.json({ error: "ssh_failed", detail: (err as Error).message }, 500);
+    }
+
+    const perName: Record<string, "deleted" | "missing" | "error"> = {};
+    for (const line of result.stdout.split("\n")) {
+      const t = line.trim();
+      if (t.startsWith("OK:")) perName[t.slice(3)] = "deleted";
+      else if (t.startsWith("MISSING:")) perName[t.slice(8)] = "missing";
+      else if (t.startsWith("ERR:")) perName[t.slice(4)] = "error";
+    }
+    for (const n of safe) {
+      if (!(n in perName)) perName[n] = "error";
+    }
+
+    const meta = reqMeta(c);
+    logAuthEvent({
+      userId: actor.id,
+      event: "node.models.delete",
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      meta: { nodeId: node.id, nodeName: node.name, perName },
+    });
+
+    return c.json({
+      ok: result.code === 0,
+      results: perName,
+      stderr: result.stderr.slice(-512),
+    });
+  },
+);
+
 class HttpError extends Error {
   constructor(public status: number, public code: string) {
     super(code);
   }
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'"'"'`)}'`;
 }
 
 // Touch sql import to satisfy linter when not used (kept for future filters).
