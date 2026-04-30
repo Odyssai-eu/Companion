@@ -2,8 +2,10 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
+  integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -23,6 +25,9 @@ export const users = pgTable("users", {
   // Temporal awareness — fed into every inference as a context tag.
   timezone: text("timezone").notNull().default("Europe/Brussels"),
   lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
+  // Admin Extended — RBAC. Values: 'admin' | 'organiser' | 'user' | 'guest'.
+  role: text("role").notNull().default("user"),
+  active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .default(sql`now()`),
@@ -220,3 +225,172 @@ export const memoryCompileState = pgTable(
 
 export type MemoryArticle = typeof memoryArticles.$inferSelect;
 export type NewMemoryArticle = typeof memoryArticles.$inferInsert;
+
+// ── Admin Extended ───────────────────────────────────────────────────
+// Multi-tenant orchestrator for remote nodes (rsync model distribution),
+// guest tokens with budget caps, and an append-only auth log.
+
+export const nodes = pgTable(
+  "nodes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    // Hostname (e.g. "studio-01.lan") or IPv4.
+    ip: text("ip").notNull(),
+    sshUser: text("ssh_user").notNull().default("admin"),
+    // Encrypted (libsodium). Cleared once sshKeySetup = true.
+    sshPassword: text("ssh_password"),
+    sshKeySetup: boolean("ssh_key_setup").notNull().default(false),
+    // e.g. '~/mlx-models' or '~/.exo/models'
+    modelPath: text("model_path").notNull(),
+    status: text("status").notNull().default("unknown"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userIdx: index("nodes_user_idx").on(t.userId),
+  }),
+);
+
+export const nodeGroups = pgTable(
+  "node_groups",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userNameUniq: uniqueIndex("node_groups_user_name_idx").on(t.userId, t.name),
+  }),
+);
+
+export const nodeGroupMembers = pgTable(
+  "node_group_members",
+  {
+    nodeId: uuid("node_id")
+      .notNull()
+      .references(() => nodes.id, { onDelete: "cascade" }),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => nodeGroups.id, { onDelete: "cascade" }),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.nodeId, t.groupId] }),
+  }),
+);
+
+export const syncJobs = pgTable(
+  "sync_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    sourceNodeId: uuid("source_node_id")
+      .notNull()
+      .references(() => nodes.id, { onDelete: "cascade" }),
+    targetNodeIds: uuid("target_node_ids").array().notNull(),
+    groupId: uuid("group_id").references(() => nodeGroups.id, {
+      onDelete: "set null",
+    }),
+    // e.g. 'mlx-community/gemma-4-26b-a4b-it-bf16'
+    modelPath: text("model_path").notNull(),
+    status: text("status").notNull().default("queued"),
+    progress: integer("progress").notNull().default(0),
+    // Last 4KB of stdout/stderr.
+    log: text("log"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userCreatedIdx: index("sync_jobs_user_created_idx").on(
+      t.userId,
+      t.createdAt.desc(),
+    ),
+    statusIdx: index("sync_jobs_status_idx").on(t.status),
+  }),
+);
+
+export const guestTokens = pgTable(
+  "guest_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // sha256 of the raw token. The token is shown once at creation.
+    tokenHash: text("token_hash").notNull().unique(),
+    label: text("label"),
+    // Max LLM tokens this guest can consume. 0 = unlimited.
+    tokenBudget: integer("token_budget").notNull(),
+    tokensUsed: integer("tokens_used").notNull().default(0),
+    // Future: 'chat' | 'chat+memory' | etc.
+    scope: text("scope").notNull().default("chat"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    tokenHashIdx: index("guest_tokens_token_hash_idx").on(t.tokenHash),
+    createdByCreatedIdx: index("guest_tokens_created_by_created_idx").on(
+      t.createdBy,
+      t.createdAt.desc(),
+    ),
+  }),
+);
+
+export const authLog = pgTable(
+  "auth_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Nullable so we can log failed-login attempts where no user resolved.
+    userId: uuid("user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // 'login.success' | 'login.fail' | 'logout' | 'password.change'
+    // | 'role.change' | 'guest.mint' | 'guest.use'
+    event: text("event").notNull(),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    meta: jsonb("meta").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    createdIdx: index("auth_log_created_idx").on(t.createdAt.desc()),
+    userCreatedIdx: index("auth_log_user_created_idx").on(
+      t.userId,
+      t.createdAt.desc(),
+    ),
+  }),
+);
+
+export type Node = typeof nodes.$inferSelect;
+export type NewNode = typeof nodes.$inferInsert;
+export type NodeGroup = typeof nodeGroups.$inferSelect;
+export type SyncJob = typeof syncJobs.$inferSelect;
+export type NewSyncJob = typeof syncJobs.$inferInsert;
+export type GuestToken = typeof guestTokens.$inferSelect;
+export type NewGuestToken = typeof guestTokens.$inferInsert;
+export type AuthLog = typeof authLog.$inferSelect;
+export type NewAuthLog = typeof authLog.$inferInsert;
