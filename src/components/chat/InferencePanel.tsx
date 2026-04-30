@@ -245,19 +245,30 @@ function SystemPromptSection({
       {library.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {library.map((p) => (
-            <button
+            <span
               key={p.id}
-              type="button"
-              onContextMenu={(e) => {
-                e.preventDefault();
-                onDelete(p.id);
-              }}
-              onClick={() => onLoad(p.id)}
-              title={`Right-click to delete · ${p.content.slice(0, 80)}…`}
-              className="rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-[11px] text-gray-600 hover:border-cyan hover:text-navy"
+              className="group inline-flex items-center rounded-full border border-gray-200 bg-white text-[11px] text-gray-600 hover:border-cyan hover:text-navy"
             >
-              {p.name}
-            </button>
+              <button
+                type="button"
+                onClick={() => onLoad(p.id)}
+                title={p.content.slice(0, 200)}
+                className="rounded-l-full pr-1 pl-2.5 py-0.5"
+              >
+                {p.name}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(`Delete saved prompt "${p.name}"?`)) onDelete(p.id);
+                }}
+                title="Delete this saved prompt"
+                aria-label={`Delete ${p.name}`}
+                className="ml-0.5 rounded-r-full pr-2 pl-1 py-0.5 text-gray-300 hover:text-red-500"
+              >
+                ×
+              </button>
+            </span>
           ))}
         </div>
       )}
