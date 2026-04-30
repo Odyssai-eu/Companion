@@ -7,6 +7,7 @@ import { createSessionToken } from "../auth/jwt";
 import { hashPassword, verifyPassword } from "../auth/password";
 import { db } from "../db/index";
 import { users } from "../db/schema";
+import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { SESSION_COOKIE } from "../middleware/auth";
 
 const authRoute = new Hono();
@@ -81,7 +82,29 @@ authRoute.post("/login", zValidator("json", loginSchema), async (c) => {
     "$2a$10$CwTycUXWue0Thq9StjUM0uJ8gZ4m1C0Zn5e1bIdV5C5yJ3g5wLn6u"; // placeholder
 
   const ok = await verifyPassword(password, hashForCompare);
+  const meta = reqMeta(c);
   if (!user || !ok) {
+    logAuthEvent({
+      userId: user?.id ?? null,
+      event: "login.fail",
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      meta: { email_attempted: normalized },
+    });
+    return c.json(
+      { error: "invalid_credentials", detail: "Wrong email or password." },
+      401,
+    );
+  }
+
+  if (!user.active) {
+    logAuthEvent({
+      userId: user.id,
+      event: "login.fail",
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      meta: { email_attempted: normalized, reason: "inactive" },
+    });
     return c.json(
       { error: "invalid_credentials", detail: "Wrong email or password." },
       401,
@@ -94,13 +117,31 @@ authRoute.post("/login", zValidator("json", loginSchema), async (c) => {
   });
   setSessionCookie(c, token);
 
+  logAuthEvent({
+    userId: user.id,
+    event: "login.success",
+    ip: meta.ip,
+    userAgent: meta.userAgent,
+    meta: { method: "password" },
+  });
+
   return c.json({
     user: { id: user.id, email: user.email, name: user.name },
   });
 });
 
 authRoute.post("/logout", (c) => {
+  const userId = c.get("userId");
+  const meta = reqMeta(c);
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  if (userId) {
+    logAuthEvent({
+      userId,
+      event: "logout",
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+    });
+  }
   return c.body(null, 204);
 });
 
@@ -139,6 +180,14 @@ authRoute.post(
       .update(users)
       .set({ passwordHash: newHash })
       .where(eq(users.id, userId));
+
+    const meta = reqMeta(c);
+    logAuthEvent({
+      userId,
+      event: "password.change",
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+    });
     return c.json({ ok: true });
   },
 );

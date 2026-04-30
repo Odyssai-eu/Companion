@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { hashPassword } from "../auth/password";
 import { db } from "./index";
 import { addons, users } from "./schema";
@@ -110,4 +110,36 @@ export async function seedIfEmpty() {
   ]);
 
   console.log("→ seed complete");
+}
+
+/**
+ * Promote the oldest active user to admin if no active admin exists.
+ * Runs on every startup; idempotent.
+ */
+export async function ensureAdminExists() {
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(users)
+    .where(and(eq(users.role, "admin"), eq(users.active, true)));
+
+  if (count > 0) return;
+
+  const [oldest] = await db
+    .select({ id: users.id, email: users.email })
+    .from(users)
+    .where(eq(users.active, true))
+    .orderBy(asc(users.createdAt))
+    .limit(1);
+
+  if (!oldest) {
+    // No users at all (yet). Nothing to do — seedIfEmpty handles the dev case.
+    return;
+  }
+
+  await db
+    .update(users)
+    .set({ role: "admin" })
+    .where(eq(users.id, oldest.id));
+
+  console.log(`→ promoted ${oldest.email} to admin (no admin existed)`);
 }

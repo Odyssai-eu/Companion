@@ -6,7 +6,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { runMigrations } from "./db/migrate";
-import { seedIfEmpty } from "./db/seed";
+import { ensureAdminExists, seedIfEmpty } from "./db/seed";
 import { requireUser, sessionLoader } from "./middleware/auth";
 import { licenseGate } from "./middleware/license";
 import addonsRoute from "./routes/addons";
@@ -14,6 +14,7 @@ import exoAddonRoute from "./routes/addon-exo";
 import hermesAddonRoute from "./routes/addon-hermes";
 import obsidianRoute, { obsidianBearerLoader } from "./routes/addon-obsidian";
 import tavilyRoute from "./routes/addon-tavily";
+import adminUsersRoute from "./routes/admin-users";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
@@ -61,6 +62,7 @@ app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
 app.use("/api/addons/*", licenseGate, requireUser);
 app.use("/api/models/*", licenseGate, requireUser);
 app.use("/api/models", licenseGate, requireUser);
+app.use("/api/admin/*", licenseGate, requireUser);
 
 app.route("/api/conversations", conversationsRoute);
 app.route("/api/chat", chatRoute);
@@ -73,6 +75,7 @@ app.route("/api/addons/hermes", hermesAddonRoute);
 app.route("/api/addons/exo", exoAddonRoute);
 app.route("/api/models", modelsRoute);
 app.route("/api/inference", inferenceRoute);
+app.route("/api/admin/users", adminUsersRoute);
 
 if (process.env.NODE_ENV === "production") {
   app.use("/*", serveStatic({ root: "./dist/client" }));
@@ -84,6 +87,7 @@ const port = Number(process.env.PORT ?? 3001);
 async function main() {
   await runMigrations();
   await seedIfEmpty();
+  await ensureAdminExists();
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`→ thecomp.ai api listening on :${info.port}`);
   });
