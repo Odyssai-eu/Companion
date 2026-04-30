@@ -7,38 +7,41 @@ import { projects } from "../db/schema";
 
 const projectsRoute = new Hono();
 
+// Icon values are SLUGS — the frontend's <ProjectIcon /> resolves them to
+// inline SVGs (Lucide-style stroke 1.75, currentColor). Keeps the brand
+// language uniform; no emoji, no cartoon.
 export const CATEGORIES = [
   {
     id: "general",
     name: "General",
-    icon: "💼",
+    icon: "briefcase",
     systemPrompt: "",
   },
   {
     id: "writing",
     name: "Writing",
-    icon: "✍️",
+    icon: "pencil",
     systemPrompt:
       "You are a writing coach. Preserve voice, focus on clarity and structure, explain edits.",
   },
   {
     id: "code",
     name: "Code",
-    icon: "⌨️",
+    icon: "code",
     systemPrompt:
       "You are a senior engineer. Give concise, correct answers with runnable code. Point out edge cases you notice.",
   },
   {
     id: "research",
     name: "Research",
-    icon: "🔬",
+    icon: "flask",
     systemPrompt:
       "You are a research assistant. Cite sources when possible, distinguish facts from speculation, surface counter-arguments.",
   },
   {
     id: "personal",
     name: "Personal",
-    icon: "🧭",
+    icon: "compass",
     systemPrompt:
       "You are a thinking partner. Ask clarifying questions before giving advice. Respect privacy.",
   },

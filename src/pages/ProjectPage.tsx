@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import Sidebar from "~/components/chat/Sidebar";
+import { ProjectIcon } from "~/components/ProjectIcon";
 import {
   api,
   type ApiConversation,
@@ -157,7 +158,11 @@ export default function ProjectPage() {
                 Project
               </span>
               <h1 className="flex items-center gap-3 font-display text-[40px] leading-[48px] font-light text-navy">
-                <span>{categoryIcon(categories, category)}</span>
+                <ProjectIcon
+                  name={categoryIcon(categories, category)}
+                  size={32}
+                  className="text-navy"
+                />
                 {isNew ? "New project." : `${project?.name ?? "…"}.`}
               </h1>
             </div>
@@ -237,7 +242,13 @@ export default function ProjectPage() {
                         : "border-gray-200 bg-white text-gray-600 hover:border-gray-300"
                     }`}
                   >
-                    <span className="text-[20px]">{cat.icon}</span>
+                    <ProjectIcon
+                      name={cat.icon}
+                      size={22}
+                      className={
+                        category === cat.id ? "text-navy" : "text-gray-500"
+                      }
+                    />
                     <span className="font-medium">{cat.name}</span>
                   </button>
                 ))}

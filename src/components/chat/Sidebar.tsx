@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAuth } from "~/hooks/useAuth";
 import { api, type ApiConversation, type ApiProject } from "~/lib/api";
+import { ChatIcon, ProjectIcon } from "../ProjectIcon";
 import Wordmark from "../Wordmark";
 
 type Props = {
@@ -159,7 +160,7 @@ export default function Sidebar({
             }`}
           >
             <span className="flex min-w-0 items-center gap-2">
-              <span className="text-[13px]">💬</span>
+              <ChatIcon size={14} className="flex-shrink-0 text-gray-500" />
               <span
                 className={`truncate text-[13px] ${
                   !activeProjectId ? "font-medium" : "font-normal"
@@ -295,7 +296,11 @@ function ProjectRow({
       }`}
     >
       <span className="flex min-w-0 items-center gap-2">
-        <span className="text-[13px]">{project.icon ?? "📁"}</span>
+        <ProjectIcon
+          name={project.icon}
+          size={14}
+          className="flex-shrink-0 text-gray-500"
+        />
         <span
           className={`truncate text-[13px] ${active ? "font-medium" : "font-normal"}`}
         >
@@ -512,7 +517,7 @@ function ConversationRow({
             <option value="">No project</option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.icon ?? "📁"} {p.name}
+                {p.name}
               </option>
             ))}
           </select>
