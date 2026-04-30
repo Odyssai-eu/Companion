@@ -30,11 +30,32 @@ export async function getMemoryContext(
     clearTimeout(timer);
     if (!res.ok) return "";
     const data = (await res.json()) as { markdown?: string };
-    return data.markdown ?? "";
+    return stripWikilinks(data.markdown ?? "");
   } catch (err) {
     console.warn("[memory] getMemoryContext failed:", (err as Error).message);
     return "";
   }
+}
+
+/**
+ * Strip Obsidian-style wikilink syntax from the memory markdown before
+ * injecting it into the model's system prompt.
+ *
+ * Why: the wiki is rendered with `[[tools/litellm]]`, `[[concepts/foo|alias]]`
+ * etc. The model picks up the pattern and starts emitting wikilinks in its
+ * own answers, polluting the chat output. We replace:
+ *   `[[a/b/c|alias]]`  → `alias`
+ *   `[[a/b/c]]`        → `c` (the leaf name — most readable, retains semantics)
+ *
+ * This change is invisible to the wiki itself (Obsidian sync still gets the
+ * raw markdown). It only affects what the LLM sees.
+ */
+function stripWikilinks(md: string): string {
+  return md.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, target, alias) => {
+    if (alias) return alias.trim();
+    const leaf = String(target).split("/").pop() ?? target;
+    return leaf;
+  });
 }
 
 /** Fire-and-forget compile trigger. Resolves immediately; the LLM call
