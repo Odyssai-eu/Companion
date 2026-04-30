@@ -19,7 +19,16 @@ export type AuthEvent =
   | "user.password.reset"
   | "role.change"
   | "guest.mint"
-  | "guest.use";
+  | "guest.use"
+  | "node.create"
+  | "node.update"
+  | "node.delete"
+  | "node.ssh.setup"
+  | "node.probe"
+  | "group.create"
+  | "group.update"
+  | "group.delete"
+  | "group.seed";
 
 export interface LogAuthEventInput {
   userId?: string | null;
