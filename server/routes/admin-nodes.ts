@@ -6,7 +6,7 @@ import { db } from "../db/index";
 import { nodeGroupMembers, nodeGroups, nodes } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { decryptSecret, encryptSecret } from "../lib/secrets";
-import { getOrchestratorPubkey, runSsh } from "../lib/ssh";
+import { getOrchestratorPubkey, runSsh, runSshCopyId } from "../lib/ssh";
 import { requireRole } from "../middleware/auth";
 
 const adminNodesRoute = new Hono();
@@ -361,30 +361,14 @@ adminNodesRoute.post("/:id/ssh-setup", async (c) => {
     );
   }
 
-  let pubkey: string;
-  try {
-    pubkey = await getOrchestratorPubkey();
-  } catch (err) {
-    return c.json(
-      { error: "pubkey_unavailable", detail: (err as Error).message },
-      500,
-    );
-  }
-
-  // Base64-encode the pubkey to avoid quoting issues on the remote.
-  const pubkeyB64 = Buffer.from(pubkey + "\n", "utf8").toString("base64");
-  const installCmd =
-    `umask 077 && mkdir -p ~/.ssh && chmod 700 ~/.ssh && ` +
-    `KEY="$(echo ${pubkeyB64} | base64 -d)" && ` +
-    `touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && ` +
-    `grep -qF "$KEY" ~/.ssh/authorized_keys || printf '%s' "$KEY" >> ~/.ssh/authorized_keys`;
-
+  // Use ssh-copy-id — the canonical tool for installing a pubkey on a
+  // remote's authorized_keys. Handles ~/.ssh creation, perms, dedup,
+  // and the right auth-method handshake that bare-ssh + echo gets wrong
+  // on macOS sshd. Pattern lifted from Starbase, which has been doing
+  // this in production for months without issue.
   let installResult;
   try {
-    installResult = await runSsh(node, installCmd, {
-      usePassword: true,
-      password,
-    });
+    installResult = await runSshCopyId(node, password);
   } catch (err) {
     logAuthEvent({
       userId: actor.id,

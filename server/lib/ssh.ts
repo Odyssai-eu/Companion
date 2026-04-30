@@ -194,6 +194,43 @@ export async function runSsh(
   return runProc("ssh", args, timeoutMs);
 }
 
+/**
+ * Install the orchestrator's pubkey on a remote's authorized_keys via
+ * `ssh-copy-id`. The canonical bootstrap path: ssh-copy-id handles
+ * ~/.ssh creation, mode bits, dedup, and the right authentication
+ * negotiation that bare ssh + echo gets wrong on macOS sshd
+ * (which advertises both `password` and `keyboard-interactive`).
+ *
+ * Mirrors what Starbase does and ships in production on rpi-dev.
+ */
+export async function runSshCopyId(
+  node: SshNode,
+  password: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<RunResult> {
+  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const keyPath = await getOrchestratorKeyPath();
+  const target = `${node.sshUser}@${node.ip}`;
+  const args = [
+    "-p", password,
+    "ssh-copy-id",
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "ConnectTimeout=15",
+    "-i", `${keyPath}.pub`,
+    target,
+  ];
+  try {
+    return await runProc("sshpass", args, timeoutMs);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(
+        "sshpass missing — install on the orchestrator host to bootstrap nodes via password.",
+      );
+    }
+    throw err;
+  }
+}
+
 function runProc(
   bin: string,
   args: string[],
