@@ -300,8 +300,8 @@ export default function ProjectPage() {
                   }`}
                 >
                   <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
-                      memoryEnabled ? "translate-x-5" : "translate-x-0.5"
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-[left] ${
+                      memoryEnabled ? "left-[22px]" : "left-0.5"
                     }`}
                   />
                 </span>
