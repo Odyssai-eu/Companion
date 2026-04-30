@@ -663,33 +663,37 @@ function NodesTab() {
             <thead className="bg-gray-50 text-[11px] uppercase tracking-[0.06em] text-gray-500">
               <tr>
                 <Th>Name</Th>
-                <Th>IP</Th>
                 <Th>Groups</Th>
                 <Th>Model path</Th>
                 <Th>Status</Th>
-                <Th>Last seen</Th>
                 <Th className="text-right">Actions</Th>
               </tr>
             </thead>
             <tbody>
               {nodes === null && (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center font-mono text-[11px] text-gray-400">
+                  <td colSpan={5} className="py-8 text-center font-mono text-[11px] text-gray-400">
                     Loading…
                   </td>
                 </tr>
               )}
               {nodes !== null && visibleNodes.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center font-mono text-[11px] text-gray-400">
+                  <td colSpan={5} className="py-8 text-center font-mono text-[11px] text-gray-400">
                     No nodes in this view.
                   </td>
                 </tr>
               )}
               {visibleNodes.map((n) => (
                 <tr key={n.id} className="border-t border-gray-100">
-                  <Td>{n.name}</Td>
-                  <Td><span className="font-mono">{n.ip}</span></Td>
+                  <Td>
+                    <div className="flex flex-col">
+                      <span className="text-[13px] text-ink">{n.name}</span>
+                      <span className="font-mono text-[11px] text-gray-400">
+                        {n.ip}
+                      </span>
+                    </div>
+                  </Td>
                   <Td>
                     <div className="flex flex-wrap gap-1">
                       {n.groups.length === 0 ? (
@@ -712,11 +716,6 @@ function NodesTab() {
                     </span>
                   </Td>
                   <Td><NodeStatusPill node={n} /></Td>
-                  <Td>
-                    <span className="font-mono text-[12px] text-gray-500">
-                      {fmtDate(n.lastSeenAt)}
-                    </span>
-                  </Td>
                   <Td className="text-right">
                     <div className="inline-flex gap-1">
                       <RowBtn
