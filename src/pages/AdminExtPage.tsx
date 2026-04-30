@@ -535,6 +535,7 @@ function NodesTab() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | "all">("all");
   const [error, setError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [showPubkey, setShowPubkey] = useState(false);
   const [editing, setEditing] = useState<ApiAdminNode | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [banner, setBanner] = useState<string | null>(null);
@@ -621,14 +622,24 @@ function NodesTab() {
         title="Nodes & Groups"
         subtitle="Stations on the user's server. Group them to target syncs."
         action={
-          <button
-            type="button"
-            onClick={() => setShowAdd(true)}
-            className="flex h-9 items-center gap-2 rounded-md bg-navy px-3.5 text-[13px] font-medium text-white hover:opacity-95"
-          >
-            <PlusIcon />
-            Add node
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowPubkey(true)}
+              className="flex h-9 items-center gap-2 rounded-md border border-gray-200 bg-white px-3 text-[13px] font-medium text-gray-700 hover:bg-gray-50"
+              title="Show the orchestrator's SSH public key — paste it into a node's authorized_keys to authorize it manually"
+            >
+              SSH pubkey
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAdd(true)}
+              className="flex h-9 items-center gap-2 rounded-md bg-navy px-3.5 text-[13px] font-medium text-white hover:opacity-95"
+            >
+              <PlusIcon />
+              Add node
+            </button>
+          </div>
         }
       />
 
@@ -714,12 +725,21 @@ function NodesTab() {
                       >
                         {busy.has(`probe:${n.id}`) ? "…" : "Probe"}
                       </RowBtn>
-                      {!n.sshKeySetup && (
+                      {(!n.sshKeySetup || n.status === "offline" || n.status === "error") && (
                         <RowBtn
                           disabled={busy.has(`ssh:${n.id}`)}
                           onClick={() => setupSsh(n)}
+                          title={
+                            n.sshKeySetup
+                              ? "Re-install the orchestrator's pubkey (key rotation / probe failed)"
+                              : "Install the orchestrator's pubkey using the stored password"
+                          }
                         >
-                          {busy.has(`ssh:${n.id}`) ? "…" : "Setup SSH"}
+                          {busy.has(`ssh:${n.id}`)
+                            ? "…"
+                            : n.sshKeySetup
+                              ? "Re-setup"
+                              : "Setup SSH"}
                         </RowBtn>
                       )}
                       <RowBtn onClick={() => setEditing(n)}>Edit</RowBtn>
@@ -744,6 +764,7 @@ function NodesTab() {
           }}
         />
       )}
+      {showPubkey && <PubkeyModal onClose={() => setShowPubkey(false)} />}
       {editing && (
         <NodeModal
           mode="edit"
@@ -2426,6 +2447,85 @@ function XIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
       <path d="M18 6 6 18M6 6l12 12" />
     </svg>
+  );
+}
+
+/**
+ * Shows the orchestrator's SSH public key. The admin can copy it and paste
+ * it manually into a node's ~/.ssh/authorized_keys when the in-app SSH
+ * setup flow is impractical (e.g. password no longer available, or after
+ * a key rotation that orphaned previous setups). Once the pubkey is in
+ * place, "Re-setup" / "Probe" should succeed without re-entering a password.
+ */
+function PubkeyModal({ onClose }: { onClose: () => void }) {
+  const [pubkey, setPubkey] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    api
+      .getOrchestratorPubkey()
+      .then((r) => setPubkey(r.pubkey))
+      .catch((e) => setError((e as Error).message));
+  }, []);
+
+  async function copy() {
+    if (!pubkey) return;
+    try {
+      await navigator.clipboard.writeText(pubkey);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Clipboard write failed — copy manually.");
+    }
+  }
+
+  return (
+    <Modal title="Orchestrator SSH public key" onClose={onClose}>
+      <div className="flex flex-col gap-4">
+        <p className="text-[13px] leading-[20px] text-gray-700">
+          This is the public key used by the orchestrator to authenticate to
+          your nodes. Paste it into each node's{" "}
+          <code className="font-mono text-[12px]">~/.ssh/authorized_keys</code>{" "}
+          if the in-app SSH setup is unavailable.
+        </p>
+
+        {error && <ErrorBanner error={error} />}
+
+        <div className="rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-[11px] break-all whitespace-pre-wrap text-ink">
+          {pubkey ?? "Loading…"}
+        </div>
+
+        <details className="text-[12px] text-gray-600">
+          <summary className="cursor-pointer">
+            One-liner to install on a node
+          </summary>
+          <pre className="mt-2 overflow-x-auto rounded-md bg-gray-900 p-3 font-mono text-[11px] text-emerald-300">
+{`ssh admin@<NODE_IP> "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
+  echo '${pubkey ?? "<pubkey here>"}' >> ~/.ssh/authorized_keys && \\
+  chmod 600 ~/.ssh/authorized_keys"`}
+          </pre>
+        </details>
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={copy}
+            disabled={!pubkey}
+            className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-40"
+          >
+            {copied ? "Copied ✓" : "Copy"}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] text-gray-700 hover:bg-gray-50"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

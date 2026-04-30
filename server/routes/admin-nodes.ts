@@ -13,6 +13,16 @@ const adminNodesRoute = new Hono();
 
 adminNodesRoute.use("*", requireRole("admin", "organiser"));
 
+// GET /api/admin/nodes/orchestrator/pubkey — exposes the orchestrator's
+// public key so the admin can install it manually on a node when re-setup
+// via password is impractical (e.g. the password is no longer available
+// because we cleared it after a previous successful setup, or the node
+// fleet was migrated to a new orchestrator instance).
+adminNodesRoute.get("/orchestrator/pubkey", async (c) => {
+  const pubkey = await getOrchestratorPubkey();
+  return c.json({ pubkey });
+});
+
 const createSchema = z.object({
   name: z.string().min(1).max(120),
   ip: z.string().min(1).max(255),

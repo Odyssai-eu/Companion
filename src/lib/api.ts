@@ -573,6 +573,8 @@ export const api = {
       `/api/admin/nodes/${id}/ssh-setup`,
       { method: "POST" },
     ),
+  getOrchestratorPubkey: () =>
+    request<{ pubkey: string }>("/api/admin/nodes/orchestrator/pubkey"),
   deleteNodeModels: (id: string, modelNames: string[]) =>
     request<{
       ok: boolean;
