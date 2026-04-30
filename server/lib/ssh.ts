@@ -58,6 +58,61 @@ export async function getOrchestratorKeyPath(): Promise<string> {
   return KEY_PATH;
 }
 
+/**
+ * Boots a singleton ssh-agent process inside the container, loads the
+ * orchestrator key into it, and returns the SSH_AUTH_SOCK path so callers
+ * can spawn ssh/rsync with `-A` (agent forwarding).
+ *
+ * This is what enables direct A→B rsync without per-node key distribution
+ * and without staging through the orchestrator's disk: ssh-A forwards the
+ * orchestrator's loaded key down to source A; A's rsync invokes ssh to
+ * target B; that ssh authenticates via the forwarded agent (which has the
+ * orchestrator's key); B accepts because the orchestrator's pubkey is in
+ * B's authorized_keys (installed during ssh-setup).
+ *
+ * Requires `AllowAgentForwarding yes` on each node's sshd. macOS default
+ * is yes; Linux dev distros default yes too.
+ */
+let agentSock: string | null = null;
+let agentBootPromise: Promise<string> | null = null;
+
+export async function ensureSshAgent(): Promise<string> {
+  if (agentSock) return agentSock;
+  if (agentBootPromise) return agentBootPromise;
+  agentBootPromise = (async () => {
+    const keyPath = await getOrchestratorKeyPath();
+    // Start ssh-agent and capture SSH_AUTH_SOCK from its stdout.
+    const out = await runProc("ssh-agent", ["-s"], 5_000);
+    if (out.code !== 0) {
+      throw new Error(`ssh-agent failed: ${out.stderr || out.stdout}`);
+    }
+    const sockMatch = /SSH_AUTH_SOCK=([^;]+);/.exec(out.stdout);
+    if (!sockMatch) {
+      throw new Error(`ssh-agent malformed output: ${out.stdout}`);
+    }
+    const sock = sockMatch[1];
+    // Load the orchestrator key into the agent. Pass SSH_AUTH_SOCK in env
+    // so ssh-add talks to the freshly-started agent.
+    const add = await runProc(
+      "ssh-add",
+      [keyPath],
+      5_000,
+      { env: { ...process.env, SSH_AUTH_SOCK: sock } as NodeJS.ProcessEnv },
+    );
+    if (add.code !== 0) {
+      throw new Error(`ssh-add failed: ${add.stderr || add.stdout}`);
+    }
+    agentSock = sock;
+    return sock;
+  })();
+  try {
+    return await agentBootPromise;
+  } finally {
+    agentBootPromise = null;
+  }
+}
+
+
 export interface SshNode {
   ip: string;
   sshUser: string;
@@ -134,9 +189,13 @@ function runProc(
   bin: string,
   args: string[],
   timeoutMs: number,
+  opts: { env?: NodeJS.ProcessEnv } = {},
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: opts.env ?? process.env,
+    });
     let stdout = "";
     let stderr = "";
     let settled = false;
