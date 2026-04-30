@@ -1121,6 +1121,19 @@ function SyncTab() {
   const [jobs, setJobs] = useState<ApiSyncJob[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [adminNodes, setAdminNodes] = useState<ApiAdminNode[]>([]);
+  const [groups, setGroups] = useState<ApiAdminGroup[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<string>("__all__");
+  // Cells selected for batch delete: key = `${nodeId}::${modelName}`
+  const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  // Pre-fill payload pushed into NewSyncModal when the user clicks the
+  // per-row "Sync" button. Reset to null when the modal closes.
+  const [syncPrefill, setSyncPrefill] = useState<{
+    modelPath: string;
+    sourceNodeId?: string;
+    groupId?: string;
+  } | null>(null);
 
   const refreshMatrix = useCallback(async () => {
     setMatrixLoading(true);
@@ -1144,12 +1157,26 @@ function SyncTab() {
     }
   }, []);
 
+  const refreshNodesGroups = useCallback(async () => {
+    try {
+      const [n, g] = await Promise.all([
+        api.listAdminNodes(),
+        api.listAdminGroups(),
+      ]);
+      setAdminNodes(n.nodes);
+      setGroups(g.groups);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
     refreshMatrix();
     refreshJobs();
+    refreshNodesGroups();
     const t = setInterval(refreshJobs, 5000);
     return () => clearInterval(t);
-  }, [refreshMatrix, refreshJobs]);
+  }, [refreshMatrix, refreshJobs, refreshNodesGroups]);
 
   const active = (jobs ?? []).filter(
     (j) => j.status === "queued" || j.status === "running",
@@ -1158,14 +1185,142 @@ function SyncTab() {
     .filter((j) => j.status !== "queued" && j.status !== "running")
     .slice(0, 20);
 
-  // Union of all model names from the matrix.
-  const allModels = useMemo(() => {
-    const s = new Set<string>();
-    for (const entry of matrix ?? []) {
-      for (const m of entry.models) s.add(m.name);
+  // Apply group filter — when a group is selected, hide nodes outside it.
+  const visibleNodeIds = useMemo<Set<string>>(() => {
+    if (selectedGroup === "__all__") {
+      return new Set(adminNodes.map((n) => n.id));
     }
-    return Array.from(s).sort();
-  }, [matrix]);
+    return new Set(
+      adminNodes
+        .filter((n) => n.groups.some((g) => g.id === selectedGroup))
+        .map((n) => n.id),
+    );
+  }, [selectedGroup, adminNodes]);
+
+  // Filtered matrix: only nodes in the visible set.
+  const filteredMatrix = useMemo(
+    () => (matrix ?? []).filter((m) => visibleNodeIds.has(m.nodeId)),
+    [matrix, visibleNodeIds],
+  );
+
+  // Build the model-centric view: rows = unique model names across the
+  // visible nodes, with per-node presence + size.
+  type ModelRow = {
+    name: string;
+    /** Pick the largest size we saw for this model across nodes — gives a
+     *  stable "headline size" for the row. */
+    headlineSize: number;
+    /** sizeBytes per node id (only nodes that have it). */
+    sizeByNode: Map<string, number>;
+  };
+  const modelRows = useMemo<ModelRow[]>(() => {
+    const map = new Map<string, ModelRow>();
+    for (const node of filteredMatrix) {
+      for (const m of node.models) {
+        const r = map.get(m.name) ?? {
+          name: m.name,
+          headlineSize: 0,
+          sizeByNode: new Map(),
+        };
+        r.sizeByNode.set(node.nodeId, m.sizeBytes);
+        if (m.sizeBytes > r.headlineSize) r.headlineSize = m.sizeBytes;
+        map.set(m.name, r);
+      }
+    }
+    return Array.from(map.values()).sort(
+      (a, b) => b.headlineSize - a.headlineSize,
+    );
+  }, [filteredMatrix]);
+
+  // Drop selections that no longer exist (after filter change or refresh).
+  useEffect(() => {
+    setSelectedCells((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const k of prev) {
+        const [nodeId, name] = k.split("::");
+        const node = filteredMatrix.find((n) => n.nodeId === nodeId);
+        if (node && node.models.some((m) => m.name === name)) {
+          next.add(k);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [filteredMatrix]);
+
+  function toggleCell(nodeId: string, modelName: string) {
+    setSelectedCells((prev) => {
+      const k = `${nodeId}::${modelName}`;
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  }
+
+  function selectRowAll(modelName: string) {
+    setSelectedCells((prev) => {
+      const next = new Set(prev);
+      for (const node of filteredMatrix) {
+        const has = node.models.some((m) => m.name === modelName);
+        if (has) next.add(`${node.nodeId}::${modelName}`);
+      }
+      return next;
+    });
+  }
+
+  async function deleteSelected() {
+    if (selectedCells.size === 0) return;
+    if (
+      !confirm(
+        `Delete ${selectedCells.size} model file(s) across the selected nodes? This is permanent.`,
+      )
+    )
+      return;
+    // Group selections by node so we issue one batch per node.
+    const byNode = new Map<string, string[]>();
+    for (const k of selectedCells) {
+      const [nodeId, name] = k.split("::");
+      const arr = byNode.get(nodeId) ?? [];
+      arr.push(name);
+      byNode.set(nodeId, arr);
+    }
+    setDeleting(true);
+    try {
+      await Promise.all(
+        Array.from(byNode.entries()).map(([nodeId, names]) =>
+          api.deleteNodeModels(nodeId, names).catch((e) => {
+            console.warn("[admin-ext] delete failed for node", nodeId, e);
+          }),
+        ),
+      );
+      setSelectedCells(new Set());
+      await refreshMatrix();
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function syncOneRow(row: ModelRow) {
+    // Pick the source: the node with the largest copy of this model. If
+    // a single group is currently filtered, scope the sync to that group.
+    let bestNodeId = "";
+    let bestSize = -1;
+    for (const [nodeId, size] of row.sizeByNode.entries()) {
+      if (size > bestSize) {
+        bestSize = size;
+        bestNodeId = nodeId;
+      }
+    }
+    setSyncPrefill({
+      modelPath: row.name,
+      sourceNodeId: bestNodeId || undefined,
+      groupId: selectedGroup === "__all__" ? undefined : selectedGroup,
+    });
+    setShowNew(true);
+  }
 
   return (
     <section className="flex flex-col gap-8">
@@ -1184,58 +1339,188 @@ function SyncTab() {
         }
       />
 
-      {/* Models matrix */}
+      {/* Models matrix — rows=models, cols=nodes, per-cell size + delete */}
       <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h3 className="font-display text-[18px] font-light text-navy">
-            Models matrix
-          </h3>
-          <button
-            type="button"
-            onClick={refreshMatrix}
-            disabled={matrixLoading}
-            className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            {matrixLoading ? "Refreshing…" : "Refresh"}
-          </button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <h3 className="font-display text-[18px] font-light text-navy">
+              Models matrix
+            </h3>
+            <select
+              value={selectedGroup}
+              onChange={(e) => setSelectedGroup(e.target.value)}
+              className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-[12px] text-gray-700 hover:bg-gray-50"
+            >
+              <option value="__all__">All groups</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name} ({g.nodeCount})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            {selectedCells.size > 0 && (
+              <button
+                type="button"
+                onClick={deleteSelected}
+                disabled={deleting}
+                className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-[12px] font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+              >
+                {deleting
+                  ? "Deleting…"
+                  : `Delete selected (${selectedCells.size})`}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={refreshMatrix}
+              disabled={matrixLoading}
+              className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {matrixLoading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
         </div>
         {matrixError && <ErrorBanner error={matrixError} />}
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
           <table className="w-full text-[13px]">
             <thead className="bg-gray-50 text-[11px] uppercase tracking-[0.06em] text-gray-500">
               <tr>
-                <Th>Node</Th>
-                {allModels.map((m) => (
-                  <Th key={m}>
-                    <span className="font-mono text-[11px] normal-case tracking-normal">
-                      {m}
-                    </span>
+                <Th className="w-[44px]">{/* select-all */}</Th>
+                <Th className="text-left normal-case tracking-normal">
+                  <span className="text-[11px] font-medium text-gray-500 uppercase tracking-[0.06em]">
+                    Model
+                  </span>
+                </Th>
+                {filteredMatrix.map((node) => (
+                  <Th key={node.nodeId} className="text-center">
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="font-medium text-gray-700 normal-case">
+                        {node.nodeName}
+                      </span>
+                      <span className="font-mono text-[10px] text-gray-400 normal-case tracking-normal">
+                        {node.freeBytes != null
+                          ? `${formatGB(node.freeBytes)} free`
+                          : "offline"}
+                      </span>
+                    </div>
                   </Th>
                 ))}
+                <Th className="w-[80px] text-center">{/* sync */}</Th>
               </tr>
             </thead>
             <tbody>
-              {(matrix ?? []).filter((e) => e.models.length > 0 || allModels.length === 0).length === 0 && (
+              {modelRows.length === 0 && (
                 <tr>
-                  <td colSpan={Math.max(1, allModels.length + 1)} className="py-8 text-center font-mono text-[11px] text-gray-400">
-                    No models discovered yet. Set up SSH keys on your nodes, then refresh.
+                  <td
+                    colSpan={filteredMatrix.length + 3}
+                    className="py-8 text-center font-mono text-[11px] text-gray-400"
+                  >
+                    No models discovered yet. Set up SSH keys on your nodes,
+                    then refresh.
                   </td>
                 </tr>
               )}
-              {(matrix ?? []).map((row) => {
-                const present = new Set(row.models.map((m) => m.name));
+              {modelRows.map((row) => {
+                const allCellKeys = filteredMatrix
+                  .filter((n) => row.sizeByNode.has(n.nodeId))
+                  .map((n) => `${n.nodeId}::${row.name}`);
+                const allSelected =
+                  allCellKeys.length > 0 &&
+                  allCellKeys.every((k) => selectedCells.has(k));
                 return (
-                  <tr key={row.nodeId} className="border-t border-gray-100">
-                    <Td>{row.nodeName}</Td>
-                    {allModels.map((m) => (
-                      <Td key={m}>
-                        {present.has(m) ? (
-                          <span className="text-emerald-600">✓</span>
-                        ) : (
-                          <span className="text-gray-300">–</span>
-                        )}
-                      </Td>
-                    ))}
+                  <tr key={row.name} className="border-t border-gray-100">
+                    <Td className="w-[44px] text-center">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={() => {
+                          if (allSelected) {
+                            setSelectedCells((prev) => {
+                              const next = new Set(prev);
+                              for (const k of allCellKeys) next.delete(k);
+                              return next;
+                            });
+                          } else {
+                            selectRowAll(row.name);
+                          }
+                        }}
+                        title="Select all instances of this model"
+                        className="h-4 w-4 cursor-pointer rounded border-gray-300 text-navy focus:ring-cyan"
+                      />
+                    </Td>
+                    <Td className="text-left">
+                      <div className="flex flex-col">
+                        <span className="font-mono text-[12px] font-medium text-ink">
+                          {row.name}
+                        </span>
+                        <span className="font-mono text-[10px] text-gray-400">
+                          {formatGB(row.headlineSize)}
+                        </span>
+                      </div>
+                    </Td>
+                    {filteredMatrix.map((node) => {
+                      const size = row.sizeByNode.get(node.nodeId);
+                      const cellKey = `${node.nodeId}::${row.name}`;
+                      const isSelected = selectedCells.has(cellKey);
+                      if (size == null) {
+                        return (
+                          <Td key={node.nodeId} className="text-center text-gray-300">
+                            –
+                          </Td>
+                        );
+                      }
+                      return (
+                        <Td key={node.nodeId} className="text-center">
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="font-mono text-[12px] text-emerald-700">
+                              {formatGB(size)}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleCell(node.nodeId, row.name)}
+                                title={`Select ${row.name} on ${node.nodeName} for delete`}
+                                className="h-3.5 w-3.5 cursor-pointer rounded border-gray-300 text-red-600 focus:ring-red-400"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (
+                                    confirm(
+                                      `Delete ${row.name} on ${node.nodeName}?`,
+                                    )
+                                  ) {
+                                    api
+                                      .deleteNodeModels(node.nodeId, [row.name])
+                                      .then(() => refreshMatrix())
+                                      .catch((e) =>
+                                        alert(`Delete failed: ${(e as Error).message}`),
+                                      );
+                                  }
+                                }}
+                                title={`Delete ${row.name} on ${node.nodeName}`}
+                                className="text-gray-300 hover:text-red-500"
+                              >
+                                <TrashIcon />
+                              </button>
+                            </div>
+                          </div>
+                        </Td>
+                      );
+                    })}
+                    <Td className="w-[80px] text-center">
+                      <button
+                        type="button"
+                        onClick={() => syncOneRow(row)}
+                        className="rounded-md border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-cyan-700 hover:border-cyan hover:bg-cyan/5"
+                        title={`Sync ${row.name} to other nodes`}
+                      >
+                        Sync
+                      </button>
+                    </Td>
                   </tr>
                 );
               })}
@@ -1295,9 +1580,14 @@ function SyncTab() {
 
       {showNew && (
         <NewSyncModal
-          onClose={() => setShowNew(false)}
+          prefill={syncPrefill ?? undefined}
+          onClose={() => {
+            setShowNew(false);
+            setSyncPrefill(null);
+          }}
           onStarted={(jobId) => {
             setShowNew(false);
+            setSyncPrefill(null);
             setExpanded(jobId);
             refreshJobs();
           }}
@@ -1453,17 +1743,25 @@ function SyncStatusPill({ status }: { status: ApiSyncJob["status"] }) {
 function NewSyncModal({
   onClose,
   onStarted,
+  prefill,
 }: {
   onClose: () => void;
   onStarted: (jobId: string) => void;
+  prefill?: {
+    modelPath?: string;
+    sourceNodeId?: string;
+    groupId?: string;
+  };
 }) {
   const [nodes, setNodes] = useState<ApiAdminNode[]>([]);
   const [groups, setGroups] = useState<ApiAdminGroup[]>([]);
-  const [sourceId, setSourceId] = useState<string>("");
-  const [targetMode, setTargetMode] = useState<"group" | "nodes">("nodes");
-  const [groupId, setGroupId] = useState<string>("");
+  const [sourceId, setSourceId] = useState<string>(prefill?.sourceNodeId ?? "");
+  const [targetMode, setTargetMode] = useState<"group" | "nodes">(
+    prefill?.groupId ? "group" : "nodes",
+  );
+  const [groupId, setGroupId] = useState<string>(prefill?.groupId ?? "");
   const [targetIds, setTargetIds] = useState<Set<string>>(new Set());
-  const [modelPath, setModelPath] = useState("");
+  const [modelPath, setModelPath] = useState(prefill?.modelPath ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1473,9 +1771,12 @@ function NewSyncModal({
         const eligible = n.nodes.filter((x) => x.sshKeySetup);
         setNodes(eligible);
         setGroups(g.groups);
-        if (eligible.length > 0) setSourceId(eligible[0].id);
+        if (!sourceId && eligible.length > 0) {
+          setSourceId(prefill?.sourceNodeId ?? eligible[0].id);
+        }
       })
       .catch((e) => setError((e as Error).message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function toggleTarget(id: string) {
@@ -2126,4 +2427,25 @@ function XIcon() {
       <path d="M18 6 6 18M6 6l12 12" />
     </svg>
   );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
+function formatGB(bytes: number): string {
+  if (bytes < 1024 * 1024 * 1024) {
+    const mb = bytes / (1024 * 1024);
+    return `${mb.toFixed(0)} MB`;
+  }
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb < 10) return `${gb.toFixed(1)} GB`;
+  return `${gb.toFixed(0)} GB`;
 }
