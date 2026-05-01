@@ -111,17 +111,18 @@ function PersonaSection() {
   const [savedAt, setSavedAt] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [showImport, setShowImport] = useState(false);
+
+  async function reloadPersona() {
+    const r = await api.getPersona();
+    setRows(r.persona);
+    const d: Record<string, string> = {};
+    for (const p of r.persona) d[p.slug] = p.body;
+    setDrafts(d);
+  }
 
   useEffect(() => {
-    api
-      .getPersona()
-      .then((r) => {
-        setRows(r.persona);
-        const d: Record<string, string> = {};
-        for (const p of r.persona) d[p.slug] = p.body;
-        setDrafts(d);
-      })
-      .catch((e) => setError((e as Error).message));
+    reloadPersona().catch((e) => setError((e as Error).message));
   }, []);
 
   async function save(slug: string) {
@@ -150,16 +151,26 @@ function PersonaSection() {
 
   return (
     <section className="flex flex-col gap-4">
-      <header className="flex flex-col gap-1">
-        <h2 className="font-display text-[20px] font-light text-navy">
-          Persona
-        </h2>
-        <p className="max-w-[640px] text-[13px] leading-[20px] text-gray-600">
-          Five reserved articles in your memory wiki, hand-authored. They tell
-          the model who you are, how you want to be talked to, and how the
-          output should read. The wiki compiler skips these — only you write
-          them. Edit here or via Obsidian.
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h2 className="font-display text-[20px] font-light text-navy">
+            Persona
+          </h2>
+          <p className="max-w-[640px] text-[13px] leading-[20px] text-gray-600">
+            Five reserved articles in your memory wiki, hand-authored. They
+            tell the model who you are, how you want to be talked to, and how
+            the output should read. The wiki compiler skips these — only you
+            write them. Edit here or via Obsidian.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowImport(true)}
+          className="flex h-9 flex-shrink-0 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50"
+          title="Paste a persona dump from another LLM (ChatGPT memory, Claude project instructions, a bio…) and have Haiku extract the 5 fields."
+        >
+          Import from another LLM
+        </button>
       </header>
 
       {error && (
@@ -248,7 +259,200 @@ function PersonaSection() {
           );
         })}
       </div>
+
+      {showImport && (
+        <ImportPersonaModal
+          onClose={() => setShowImport(false)}
+          onImported={async () => {
+            setShowImport(false);
+            await reloadPersona();
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+/**
+ * Paste-anything migration tool. The user dumps free-form text from
+ * another LLM (ChatGPT memory export, Claude project instructions, a bio,
+ * a CV, anything). Haiku extracts the 5 persona fields and writes them.
+ *
+ * Two-step flow: dryRun first, the user reviews what's about to be
+ * written, then commits. Existing edits are NOT preserved on commit —
+ * the import overwrites the slugs the model returned. Slugs the model
+ * doesn't return are left untouched.
+ */
+function ImportPersonaModal({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<Record<string, string> | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  async function runDry() {
+    if (text.trim().length < 20) {
+      setError("Paste at least a few sentences.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setPreview(null);
+    setNote(null);
+    try {
+      const r = await api.importPersona(text, { dryRun: true });
+      setPreview(
+        r.proposed && typeof r.proposed === "object"
+          ? (r.proposed as Record<string, string>)
+          : {},
+      );
+      if (r.note) setNote(r.note);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function commit() {
+    if (!preview || Object.keys(preview).length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.importPersona(text);
+      onImported();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const proposedKeys = preview ? Object.keys(preview) : [];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-[720px] flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+          <h3 className="font-display text-[18px] font-light text-navy">
+            Import persona from another LLM
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-ink"
+          >
+            ×
+          </button>
+        </header>
+        <div className="flex flex-col gap-3 overflow-y-auto px-5 py-4">
+          <p className="text-[13px] leading-[20px] text-gray-600">
+            Paste anything: ChatGPT memory dump, Claude project custom
+            instructions, a personal bio, a CV section, scattered notes.
+            Haiku will read it and propose 5 articles. You'll see what's
+            about to be written before it commits.
+          </p>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={10}
+            placeholder="Paste here…"
+            spellCheck={false}
+            className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3 py-2 text-[13px] leading-[18px] text-ink outline-none focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
+          />
+
+          {error && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 font-mono text-[12px] text-red-700">
+              {error}
+            </div>
+          )}
+
+          {preview && (
+            <div className="flex flex-col gap-3">
+              <span className="text-[12px] font-medium text-gray-700">
+                Proposed{" "}
+                <span className="text-gray-400">
+                  ({proposedKeys.length}/5 fields)
+                </span>
+              </span>
+              {proposedKeys.length === 0 ? (
+                <span className="text-[12px] text-gray-500">
+                  {note ?? "Nothing extracted from this input."}
+                </span>
+              ) : (
+                proposedKeys.map((slug) => (
+                  <details
+                    key={slug}
+                    className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2"
+                  >
+                    <summary className="cursor-pointer text-[12px] font-medium text-ink">
+                      profile/{slug}.md
+                    </summary>
+                    <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] leading-[16px] text-gray-700">
+                      {preview[slug]}
+                    </pre>
+                  </details>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        <footer className="flex items-center justify-end gap-2 border-t border-gray-200 bg-gray-50 px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-gray-200 bg-white px-3.5 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          {!preview ? (
+            <button
+              type="button"
+              onClick={runDry}
+              disabled={busy || text.trim().length < 20}
+              className="rounded-md bg-navy px-3.5 py-1.5 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-40"
+            >
+              {busy ? "Analysing…" : "Preview"}
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => setPreview(null)}
+                disabled={busy}
+                className="rounded-md border border-gray-200 bg-white px-3.5 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50"
+              >
+                Re-analyse
+              </button>
+              <button
+                type="button"
+                onClick={commit}
+                disabled={busy || proposedKeys.length === 0}
+                className="rounded-md bg-navy px-3.5 py-1.5 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-40"
+              >
+                {busy
+                  ? "Saving…"
+                  : `Save ${proposedKeys.length} ${proposedKeys.length > 1 ? "articles" : "article"}`}
+              </button>
+            </>
+          )}
+        </footer>
+      </div>
+    </div>
   );
 }
 

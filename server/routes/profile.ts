@@ -31,7 +31,8 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
-import { memoryArticles } from "../db/schema";
+import { memoryArticles, users } from "../db/schema";
+import { authHeaders } from "../lib/litellm";
 
 type Env = { Variables: { userId: string } };
 const profileRoute = new Hono<Env>();
@@ -228,5 +229,196 @@ profileRoute.put("/:slug", zValidator("json", putBodySchema), async (c) => {
     },
   });
 });
+
+// POST /api/profile/import — bulk-import persona via Haiku (or whatever fast
+// model the user has). Body: { text: string } — anything the user pasted
+// from another LLM (ChatGPT memory dump, Claude.ai instructions, a personal
+// "about me" doc, etc.). We send it to a small extraction model with a strict
+// JSON schema and write the 5 slugs that come back. We never modify slugs
+// the model doesn't return (so a partial paste just fills what's available).
+const importBodySchema = z.object({
+  text: z.string().min(20).max(50_000),
+  model: z.string().min(1).max(120).optional(),
+  /** When true, return the proposed articles without saving — lets the UI
+   *  show a diff/preview before commit. */
+  dryRun: z.boolean().optional(),
+});
+
+const EXTRACTION_PROMPT = `You read a free-form text the user pasted from another LLM (ChatGPT memory dump, Claude project instructions, a personal bio, a CV, anything).
+
+Your job: extract structured persona facts and return JSON with up to five string fields, each containing a clean Markdown article body. Skip a field entirely (omit it from the JSON) when the input has no relevant material — do NOT invent.
+
+Required JSON shape:
+{
+  "identity":       "<markdown body or omit>",
+  "preferences":    "<markdown body or omit>",
+  "expertise":      "<markdown body or omit>",
+  "working-style":  "<markdown body or omit>",
+  "writing-guide":  "<markdown body or omit>"
+}
+
+Field meanings:
+- identity:        who the user is (name, role, location, current projects). Concrete facts only.
+- preferences:     how they want to be talked to (language, tone, level of detail, things to avoid).
+- expertise:       what they already know — domains, tools, frameworks, level. Skip the basics.
+- working-style:   methods, rituals, decision-making, pace, tools they live in.
+- writing-guide:   rules for how output should be written (audience, voice, formatting, banned phrases).
+
+Each body must:
+- Start with a level-2 heading like \`## Identity\`
+- Use bullet lists, no narrative paragraphs
+- Stay grounded — only what the input actually says
+- Be in the same language as the input
+
+Return ONLY the JSON, no preamble, no code fences.`;
+
+profileRoute.post(
+  "/import",
+  zValidator("json", importBodySchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const { text, model, dryRun } = c.req.valid("json");
+
+    const [u] = await db
+      .select({
+        litellmUrl: users.litellmUrl,
+        litellmApiKey: users.litellmApiKey,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!u) return c.json({ error: "user_not_found" }, 404);
+
+    const target = {
+      baseUrl: (
+        u.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
+      ).replace(/\/+$/, ""),
+      apiKey: u.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+    };
+
+    const upstreamBody = {
+      model: model ?? "claude-haiku",
+      stream: false,
+      max_tokens: 4096,
+      temperature: 0.2,
+      messages: [
+        { role: "system", content: EXTRACTION_PROMPT },
+        { role: "user", content: text },
+      ],
+    };
+
+    let upstreamRes: Response;
+    try {
+      upstreamRes = await fetch(`${target.baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(target),
+        },
+        body: JSON.stringify(upstreamBody),
+        signal: AbortSignal.timeout(60_000),
+      });
+    } catch (err) {
+      return c.json(
+        { error: "llm_unreachable", detail: (err as Error).message },
+        502,
+      );
+    }
+    if (!upstreamRes.ok) {
+      const errText = await upstreamRes.text().catch(() => "");
+      return c.json(
+        {
+          error: "llm_error",
+          status: upstreamRes.status,
+          detail: errText.slice(0, 500),
+        },
+        502,
+      );
+    }
+
+    const data = (await upstreamRes.json().catch(() => null)) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    } | null;
+    const raw = data?.choices?.[0]?.message?.content?.trim() ?? "";
+    if (!raw) {
+      return c.json({ error: "empty_completion" }, 502);
+    }
+
+    // The model is asked for raw JSON, but defensive: strip code fences.
+    const stripped = raw
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```\s*$/i, "")
+      .trim();
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripped);
+    } catch {
+      return c.json(
+        {
+          error: "bad_json",
+          detail:
+            "The model didn't return valid JSON. Try again or paste cleaner input.",
+          raw: stripped.slice(0, 800),
+        },
+        502,
+      );
+    }
+    if (!parsed || typeof parsed !== "object") {
+      return c.json({ error: "bad_shape" }, 502);
+    }
+
+    const proposed: Partial<Record<PersonaSlug, string>> = {};
+    for (const slug of PERSONA_SLUGS) {
+      const v = (parsed as Record<string, unknown>)[slug];
+      if (typeof v === "string" && v.trim().length > 0) {
+        proposed[slug] = v.trim();
+      }
+    }
+
+    if (Object.keys(proposed).length === 0) {
+      return c.json({
+        ok: true,
+        written: [] as string[],
+        proposed,
+        note: "The model didn't extract any persona fields from this input.",
+      });
+    }
+
+    if (dryRun) {
+      return c.json({ ok: true, dryRun: true, proposed, written: [] });
+    }
+
+    // Persist each proposed body, flipping edited_by_user=true.
+    await ensurePersonaArticles(userId);
+    const written: string[] = [];
+    for (const [slug, body] of Object.entries(proposed) as [
+      PersonaSlug,
+      string,
+    ][]) {
+      const def = SLUG_DEFAULTS[slug];
+      await db
+        .update(memoryArticles)
+        .set({
+          title: def.title,
+          summary: firstLineSummary(body, def.title),
+          body,
+          hash: sha256Hex(body),
+          editedByUser: true,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(memoryArticles.userId, userId),
+            eq(memoryArticles.path, slugPath(slug)),
+            isNull(memoryArticles.projectId),
+          ),
+        );
+      written.push(slug);
+    }
+
+    return c.json({ ok: true, written, proposed });
+  },
+);
 
 export default profileRoute;

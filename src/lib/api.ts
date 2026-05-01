@@ -342,6 +342,17 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(title ? { body, title } : { body }),
     }),
+  importPersona: (text: string, opts?: { dryRun?: boolean; model?: string }) =>
+    request<{
+      ok: boolean;
+      written: string[];
+      proposed: Partial<Record<string, string>>;
+      dryRun?: boolean;
+      note?: string;
+    }>("/api/profile/import", {
+      method: "POST",
+      body: JSON.stringify({ text, ...(opts ?? {}) }),
+    }),
 
   // EXO Direct add-on
   exoInfo: () =>
