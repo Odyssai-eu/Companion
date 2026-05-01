@@ -82,7 +82,173 @@ export default function ProfilePage() {
       </section>
 
       <ChangePasswordSection />
+      <PersonaSection />
     </div>
+  );
+}
+
+/**
+ * Persona — the 5 reserved profile/*.md memory articles.
+ *
+ * Each card shows the article body in an editable textarea. Saving writes
+ * to /api/profile/:slug and flips edited_by_user=true server-side, which
+ * tells the wiki compiler (Python service) to never overwrite this article.
+ *
+ * The 5 articles get auto-created on first GET, with placeholder templates,
+ * so the user always sees 5 cards even if they've never edited anything.
+ */
+function PersonaSection() {
+  type Row = {
+    slug: string;
+    title: string;
+    body: string;
+    editedByUser: boolean;
+    updatedAt: string | null;
+  };
+  const [rows, setRows] = useState<Row[] | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<Set<string>>(new Set());
+  const [savedAt, setSavedAt] = useState<Record<string, number>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    api
+      .getPersona()
+      .then((r) => {
+        setRows(r.persona);
+        const d: Record<string, string> = {};
+        for (const p of r.persona) d[p.slug] = p.body;
+        setDrafts(d);
+      })
+      .catch((e) => setError((e as Error).message));
+  }, []);
+
+  async function save(slug: string) {
+    if (saving.has(slug)) return;
+    setSaving((s) => new Set(s).add(slug));
+    setError(null);
+    try {
+      const body = drafts[slug] ?? "";
+      const r = await api.updatePersona(slug, body);
+      setRows((prev) =>
+        prev
+          ? prev.map((p) => (p.slug === slug ? { ...p, ...r.persona } : p))
+          : prev,
+      );
+      setSavedAt((s) => ({ ...s, [slug]: Date.now() }));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving((s) => {
+        const next = new Set(s);
+        next.delete(slug);
+        return next;
+      });
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-4">
+      <header className="flex flex-col gap-1">
+        <h2 className="font-display text-[20px] font-light text-navy">
+          Persona
+        </h2>
+        <p className="max-w-[640px] text-[13px] leading-[20px] text-gray-600">
+          Five reserved articles in your memory wiki, hand-authored. They tell
+          the model who you are, how you want to be talked to, and how the
+          output should read. The wiki compiler skips these — only you write
+          them. Edit here or via Obsidian.
+        </p>
+      </header>
+
+      {error && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-2 font-mono text-[12px] text-red-700">
+          {error}
+        </div>
+      )}
+      {!rows && !error && (
+        <div className="rounded-xl border border-gray-200 bg-white py-6 text-center font-mono text-[11px] text-gray-400">
+          Loading…
+        </div>
+      )}
+
+      <div className="flex flex-col gap-3">
+        {(rows ?? []).map((p) => {
+          const isOpen = open[p.slug] ?? !p.editedByUser;
+          const isSaving = saving.has(p.slug);
+          const recentlySaved =
+            savedAt[p.slug] && Date.now() - savedAt[p.slug] < 2500;
+          const dirty = (drafts[p.slug] ?? "") !== p.body;
+          return (
+            <article
+              key={p.slug}
+              className="overflow-hidden rounded-xl border border-gray-200 bg-white"
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  setOpen((o) => ({ ...o, [p.slug]: !(o[p.slug] ?? !p.editedByUser) }))
+                }
+                className="flex w-full items-center justify-between gap-4 px-5 py-3 text-left hover:bg-gray-50"
+              >
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[14px] font-medium text-ink">
+                    {p.title}
+                  </span>
+                  <span className="font-mono text-[11px] text-gray-400">
+                    profile/{p.slug}.md
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-[11px]">
+                  {p.editedByUser ? (
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">
+                      authored
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-500">
+                      empty
+                    </span>
+                  )}
+                  <span className="text-gray-400">{isOpen ? "▾" : "▸"}</span>
+                </div>
+              </button>
+              {isOpen && (
+                <div className="flex flex-col gap-2 border-t border-gray-100 px-5 py-4">
+                  <textarea
+                    value={drafts[p.slug] ?? ""}
+                    onChange={(e) =>
+                      setDrafts((d) => ({ ...d, [p.slug]: e.target.value }))
+                    }
+                    rows={Math.min(
+                      24,
+                      Math.max(8, (drafts[p.slug] ?? "").split("\n").length + 1),
+                    )}
+                    spellCheck={false}
+                    className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] leading-[18px] text-ink outline-none focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
+                  />
+                  <div className="flex items-center justify-end gap-3">
+                    {recentlySaved && (
+                      <span className="text-[12px] text-emerald-600">
+                        Saved ✓
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => save(p.slug)}
+                      disabled={isSaving || !dirty}
+                      className="flex h-8 items-center rounded-lg bg-navy px-3.5 text-[12px] font-medium text-white hover:opacity-95 disabled:opacity-40"
+                    >
+                      {isSaving ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

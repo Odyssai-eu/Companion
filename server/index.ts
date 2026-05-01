@@ -28,6 +28,7 @@ import guestRoute from "./routes/guest";
 import inferenceRoute from "./routes/inference";
 import licenseRoute from "./routes/license";
 import modelsRoute from "./routes/models";
+import profileRoute from "./routes/profile";
 import projectsRoute from "./routes/projects";
 import ttsRoute from "./routes/tts";
 
@@ -64,6 +65,8 @@ app.use("/api/conversations/*", licenseGate, requireUser);
 // against the inviting admin's license.
 app.use("/api/chat/*", licenseGate, guestSessionLoader, requireUserOrGuest);
 app.use("/api/projects/*", licenseGate, requireUser);
+app.use("/api/profile/*", licenseGate, requireUser);
+app.use("/api/profile", licenseGate, requireUser);
 app.use("/api/tts/*", licenseGate, requireUser);
 app.use("/api/inference/*", licenseGate, guestSessionLoader, requireUserOrGuest);
 // Resolve bearer-token auth for the Obsidian plugin BEFORE requireUser runs,
@@ -79,6 +82,7 @@ app.use("/api/admin/*", licenseGate, requireUser);
 app.route("/api/conversations", conversationsRoute);
 app.route("/api/chat", chatRoute);
 app.route("/api/projects", projectsRoute);
+app.route("/api/profile", profileRoute);
 app.route("/api/tts", ttsRoute);
 app.route("/api/addons", addonsRoute);
 app.route("/api/addons/obsidian", obsidianRoute);

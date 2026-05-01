@@ -317,6 +317,32 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
 
+  // Persona — 5 reserved profile/*.md memory articles, manually authored
+  // by the user; the wiki compiler honours edited_by_user and skips them.
+  getPersona: () =>
+    request<{
+      persona: Array<{
+        slug: string;
+        title: string;
+        body: string;
+        editedByUser: boolean;
+        updatedAt: string | null;
+      }>;
+    }>("/api/profile"),
+  updatePersona: (slug: string, body: string, title?: string) =>
+    request<{
+      persona: {
+        slug: string;
+        title: string;
+        body: string;
+        editedByUser: boolean;
+        updatedAt: string;
+      };
+    }>(`/api/profile/${slug}`, {
+      method: "PUT",
+      body: JSON.stringify(title ? { body, title } : { body }),
+    }),
+
   // EXO Direct add-on
   exoInfo: () =>
     request<{
