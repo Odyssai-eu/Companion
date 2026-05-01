@@ -353,6 +353,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text, ...(opts ?? {}) }),
     }),
+  onboardPersona: (
+    messages: Array<{ role: "user" | "assistant"; content: string }>,
+    model?: string,
+  ) =>
+    request<{
+      reply: string;
+      written: string[];
+      persona: Array<{
+        slug: string;
+        title: string;
+        body: string;
+        editedByUser: boolean;
+        updatedAt: string | null;
+      }>;
+    }>("/api/profile/onboard", {
+      method: "POST",
+      body: JSON.stringify({ messages, ...(model ? { model } : {}) }),
+    }),
 
   // EXO Direct add-on
   exoInfo: () =>

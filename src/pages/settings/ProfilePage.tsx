@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "~/hooks/useAuth";
 import { api } from "~/lib/api";
 
@@ -112,6 +112,7 @@ function PersonaSection() {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [showImport, setShowImport] = useState(false);
+  const [showInterview, setShowInterview] = useState(false);
 
   async function reloadPersona() {
     const r = await api.getPersona();
@@ -163,14 +164,24 @@ function PersonaSection() {
             write them. Edit here or via Obsidian.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowImport(true)}
-          className="flex h-9 flex-shrink-0 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50"
-          title="Paste a persona dump from another LLM (ChatGPT memory, Claude project instructions, a bio…) and have Haiku extract the 5 fields."
-        >
-          Import from another LLM
-        </button>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowImport(true)}
+            className="flex h-9 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50"
+            title="Paste a persona dump from another LLM (ChatGPT memory, Claude project instructions, a bio…) and have Haiku extract the 5 fields."
+          >
+            Import from another LLM
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowInterview(true)}
+            className="flex h-9 items-center gap-2 rounded-lg bg-navy px-3.5 text-[13px] font-medium text-white hover:opacity-95"
+            title="Start a short interview — the model asks questions, fills your persona articles as you answer."
+          >
+            Start interview
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -269,7 +280,245 @@ function PersonaSection() {
           }}
         />
       )}
+
+      {showInterview && (
+        <InterviewModal
+          onClose={() => setShowInterview(false)}
+          onPersonaUpdated={(p) => {
+            setRows(p);
+            const d: Record<string, string> = {};
+            for (const x of p) d[x.slug] = x.body;
+            setDrafts(d);
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+/**
+ * Conversational onboarding interview.
+ *
+ * The model (Haiku by default) asks ~8-15 short questions and writes
+ * profile articles as it goes via the write_persona tool. The right
+ * panel shows the persona snapshot updating live so the user sees
+ * what's been captured.
+ *
+ * State lives in the modal — closing it doesn't persist the conversation.
+ * Only the persona articles persist (those go straight to the DB via
+ * the tool call). Re-opening starts a fresh interview that builds on
+ * whatever's already in the persona articles.
+ */
+function InterviewModal({
+  onClose,
+  onPersonaUpdated,
+}: {
+  onClose: () => void;
+  onPersonaUpdated: (
+    persona: Array<{
+      slug: string;
+      title: string;
+      body: string;
+      editedByUser: boolean;
+      updatedAt: string | null;
+    }>,
+  ) => void;
+}) {
+  type Turn = { role: "user" | "assistant"; content: string };
+  const [history, setHistory] = useState<Turn[]>([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [recentlyWritten, setRecentlyWritten] = useState<string[]>([]);
+  const [snapshot, setSnapshot] = useState<
+    Array<{ slug: string; title: string; editedByUser: boolean }>
+  >([]);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Kick off with an opening message from the model.
+  useEffect(() => {
+    void send("Bonjour, on commence l'interview pour configurer ma persona.", true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [history, sending]);
+
+  async function send(content: string, isOpening = false) {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    setSending(true);
+    setError(null);
+    const next: Turn[] = [...history, { role: "user", content: trimmed }];
+    if (!isOpening) setHistory(next);
+    setInput("");
+    try {
+      const r = await api.onboardPersona(next);
+      const assistantTurn: Turn = { role: "assistant", content: r.reply || "…" };
+      setHistory((h) => (isOpening ? [assistantTurn] : [...h, assistantTurn]));
+      setRecentlyWritten(r.written);
+      setSnapshot(
+        r.persona.map((p) => ({
+          slug: p.slug,
+          title: p.title,
+          editedByUser: p.editedByUser,
+        })),
+      );
+      onPersonaUpdated(r.persona);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex h-[85vh] w-full max-w-[960px] flex-col overflow-hidden rounded-xl bg-white shadow-2xl md:flex-row"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Left: chat */}
+        <div className="flex flex-1 flex-col">
+          <header className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+            <h3 className="font-display text-[18px] font-light text-navy">
+              Persona interview
+            </h3>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-ink"
+            >
+              ×
+            </button>
+          </header>
+          <div
+            ref={scrollRef}
+            className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4"
+          >
+            {history.length === 0 && !error && (
+              <div className="rounded-md bg-gray-50 px-4 py-6 text-center font-mono text-[11px] text-gray-400">
+                Starting interview…
+              </div>
+            )}
+            {history.map((t, i) => (
+              <div
+                key={i}
+                className={`flex ${t.role === "user" ? "justify-end" : "justify-start"}`}
+              >
+                <div
+                  className={`max-w-[80%] rounded-2xl px-4 py-2 text-[13px] leading-[20px] whitespace-pre-wrap ${
+                    t.role === "user"
+                      ? "bg-navy text-white"
+                      : "bg-gray-100 text-ink"
+                  }`}
+                >
+                  {t.content}
+                </div>
+              </div>
+            ))}
+            {sending && (
+              <div className="flex justify-start">
+                <div className="max-w-[80%] rounded-2xl bg-gray-100 px-4 py-2 font-mono text-[11px] text-gray-400">
+                  thinking…
+                </div>
+              </div>
+            )}
+            {error && (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 font-mono text-[12px] text-red-700">
+                {error}
+              </div>
+            )}
+          </div>
+          <footer className="border-t border-gray-200 px-5 py-3">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void send(input);
+              }}
+              className="flex items-center gap-2"
+            >
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Type your answer…"
+                disabled={sending}
+                autoFocus
+                className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
+              />
+              <button
+                type="submit"
+                disabled={sending || !input.trim()}
+                className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-40"
+              >
+                {sending ? "…" : "Send"}
+              </button>
+            </form>
+          </footer>
+        </div>
+
+        {/* Right: persona snapshot */}
+        <aside className="hidden w-[280px] flex-shrink-0 border-l border-gray-200 bg-gray-50 md:flex md:flex-col">
+          <header className="border-b border-gray-200 px-4 py-3">
+            <span className="text-[11px] font-medium tracking-[0.06em] text-gray-500 uppercase">
+              Persona snapshot
+            </span>
+          </header>
+          <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-4 py-3">
+            {snapshot.length === 0 ? (
+              <span className="font-mono text-[11px] text-gray-400">
+                No data captured yet.
+              </span>
+            ) : (
+              snapshot.map((s) => {
+                const just = recentlyWritten.includes(s.slug);
+                return (
+                  <div
+                    key={s.slug}
+                    className={`flex items-center justify-between rounded-md border px-3 py-2 transition-colors ${
+                      just
+                        ? "border-cyan bg-cyan/10"
+                        : s.editedByUser
+                          ? "border-emerald-200 bg-white"
+                          : "border-gray-200 bg-white"
+                    }`}
+                  >
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[12px] font-medium text-ink">
+                        {s.title}
+                      </span>
+                      <span className="font-mono text-[10px] text-gray-400">
+                        profile/{s.slug}.md
+                      </span>
+                    </div>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] ${
+                        just
+                          ? "bg-cyan text-white"
+                          : s.editedByUser
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "bg-gray-100 text-gray-500"
+                      }`}
+                    >
+                      {just ? "just saved" : s.editedByUser ? "authored" : "empty"}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </aside>
+      </div>
+    </div>
   );
 }
 

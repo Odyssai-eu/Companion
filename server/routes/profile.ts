@@ -421,4 +421,328 @@ profileRoute.post(
   },
 );
 
+// POST /api/profile/onboard — conversational onboarding interview.
+//
+// The user sends their last reply; the backend appends a system prompt,
+// includes the current state of the 5 persona articles for context, and
+// runs a tool-using LLM call. The model is given one tool: write_persona.
+// When it calls write_persona it server-side updates the corresponding
+// memory_article (edited_by_user=true). The endpoint returns the
+// assistant's textual reply, the list of slugs written this turn, and
+// a fresh snapshot of all 5 articles so the UI can show live updates.
+//
+// Multi-turn: the client passes the full message history each call. We
+// keep no state between calls — the conversation lives in the client.
+const onboardSchema = z.object({
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().max(20000),
+      }),
+    )
+    .min(1)
+    .max(40),
+  model: z.string().max(120).optional(),
+});
+
+const ONBOARD_SYSTEM = `You are the onboarding interviewer for Thecomp.ai. You are warm but precise — the brand voice is "the Monocle Bear: observes, understands, then speaks". Never rush.
+
+Goal: in a short conversation (8-15 turns), build five short Markdown articles describing the user's persona, and save them via the write_persona tool. The articles get injected into every future chat as the model's "what I know about you", so accuracy matters more than completeness.
+
+The five slugs you can write to:
+- identity        — name, role, where they live, current projects
+- preferences     — language, tone, level of detail, what to avoid
+- expertise       — domains, tools, frameworks, level
+- working-style   — methods, rituals, tools, decision-making, pace
+- writing-guide   — rules for how output should be written
+
+Style for the conversation:
+- Ask ONE question at a time. Wait for the answer.
+- Group related questions when natural ("what's your role and what are you working on right now?").
+- Don't ask about every slug — prioritise what's missing or vague in CURRENT PERSONA below. If a slug is already filled and the user hasn't contradicted it, don't re-ask.
+- After 2-3 substantive answers, write the relevant article(s) via write_persona. Don't wait until the end.
+- When you write, use a level-2 heading (## Title) and bullet lists. Keep it grounded — only what the user actually said. No invention.
+- Speak the user's language (mirror what they used).
+- When you sense the conversation is ~80% there, ask a closing question like "anything else I should know?" then wrap up.
+
+Tone:
+- Don't apologize, don't perform humility, don't say "great answer".
+- Don't pad with filler ("That's really interesting!"). Just ask the next question or write the article.
+- Don't ask for confirmation before saving — just call write_persona and tell the user what you saved in one short line.
+
+When you're done: tell the user the persona is set up, in one sentence, and stop asking questions.`;
+
+const writePersonaTool = {
+  type: "function" as const,
+  function: {
+    name: "write_persona",
+    description:
+      "Save (or overwrite) one of the user's persona articles. Call as soon as you have substantive material for that slug — don't wait until the end of the conversation. Only the 5 listed slugs are accepted.",
+    parameters: {
+      type: "object",
+      properties: {
+        slug: {
+          type: "string",
+          enum: PERSONA_SLUGS as unknown as string[],
+        },
+        body: {
+          type: "string",
+          description:
+            "Full Markdown body for the article. Start with a level-2 heading. Use bullet lists. Stay grounded — only what the user actually said.",
+        },
+      },
+      required: ["slug", "body"],
+    },
+  },
+};
+
+profileRoute.post(
+  "/onboard",
+  zValidator("json", onboardSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const { messages, model } = c.req.valid("json");
+
+    const [u] = await db
+      .select({
+        litellmUrl: users.litellmUrl,
+        litellmApiKey: users.litellmApiKey,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!u) return c.json({ error: "user_not_found" }, 404);
+
+    // Snapshot current persona so the model knows what's already filled.
+    await ensurePersonaArticles(userId);
+    const currentRows = await db
+      .select()
+      .from(memoryArticles)
+      .where(
+        and(
+          eq(memoryArticles.userId, userId),
+          inArray(
+            memoryArticles.path,
+            PERSONA_SLUGS.map(slugPath),
+          ),
+          isNull(memoryArticles.projectId),
+        ),
+      );
+    const currentBySlug = new Map<string, { body: string; edited: boolean }>();
+    for (const r of currentRows) {
+      const slug = r.path.replace(/^profile\//, "").replace(/\.md$/, "");
+      currentBySlug.set(slug, { body: r.body, edited: r.editedByUser });
+    }
+    const currentPersonaBlock = PERSONA_SLUGS.map((slug) => {
+      const v = currentBySlug.get(slug);
+      const status = v?.edited ? "(authored)" : "(empty / template)";
+      const body = v?.edited ? v.body : "_empty_";
+      return `### profile/${slug}.md ${status}\n${body}\n`;
+    }).join("\n");
+
+    const target = {
+      baseUrl: (
+        u.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
+      ).replace(/\/+$/, ""),
+      apiKey: u.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+    };
+
+    type Msg = {
+      role: "system" | "user" | "assistant" | "tool";
+      content: string;
+      tool_call_id?: string;
+      tool_calls?: Array<{
+        id: string;
+        type: string;
+        function: { name: string; arguments: string };
+      }>;
+    };
+    const wireMessages: Msg[] = [
+      { role: "system", content: ONBOARD_SYSTEM },
+      {
+        role: "system",
+        content: `# CURRENT PERSONA\n${currentPersonaBlock}`,
+      },
+      ...messages.map((m) => ({ role: m.role, content: m.content }) as Msg),
+    ];
+
+    const written: string[] = [];
+    let lastAssistant = "";
+    let safety = 0;
+
+    while (safety < 4) {
+      safety += 1;
+      const upstreamBody = {
+        model: model ?? "claude-haiku",
+        stream: false,
+        max_tokens: 2048,
+        temperature: 0.6,
+        tools: [writePersonaTool],
+        tool_choice: "auto",
+        messages: wireMessages,
+      };
+
+      let upstreamRes: Response;
+      try {
+        upstreamRes = await fetch(`${target.baseUrl}/v1/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders(target),
+          },
+          body: JSON.stringify(upstreamBody),
+          signal: AbortSignal.timeout(60_000),
+        });
+      } catch (err) {
+        return c.json(
+          { error: "llm_unreachable", detail: (err as Error).message },
+          502,
+        );
+      }
+      if (!upstreamRes.ok) {
+        const errText = await upstreamRes.text().catch(() => "");
+        return c.json(
+          {
+            error: "llm_error",
+            status: upstreamRes.status,
+            detail: errText.slice(0, 500),
+          },
+          502,
+        );
+      }
+
+      const data = (await upstreamRes.json().catch(() => null)) as {
+        choices?: Array<{
+          message?: {
+            content?: string | null;
+            tool_calls?: Array<{
+              id: string;
+              type: string;
+              function: { name: string; arguments: string };
+            }>;
+          };
+          finish_reason?: string;
+        }>;
+      } | null;
+      const choice = data?.choices?.[0];
+      const msg = choice?.message;
+      lastAssistant = msg?.content?.trim() ?? "";
+
+      if (!msg?.tool_calls || msg.tool_calls.length === 0) {
+        // Plain assistant turn — we're done with this round.
+        break;
+      }
+
+      // Append the assistant message verbatim (with tool_calls), then
+      // execute and append a tool result for each call.
+      wireMessages.push({
+        role: "assistant",
+        content: lastAssistant,
+        tool_calls: msg.tool_calls,
+      });
+
+      for (const tc of msg.tool_calls) {
+        if (tc.function.name !== "write_persona") {
+          wireMessages.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: JSON.stringify({ error: "unknown_tool" }),
+          });
+          continue;
+        }
+        let parsed: { slug?: string; body?: string };
+        try {
+          parsed = JSON.parse(tc.function.arguments);
+        } catch {
+          wireMessages.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: JSON.stringify({ error: "bad_json_args" }),
+          });
+          continue;
+        }
+        const slug = parsed.slug ?? "";
+        const body = (parsed.body ?? "").trim();
+        if (!isPersonaSlug(slug) || body.length === 0) {
+          wireMessages.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: JSON.stringify({ error: "invalid_args" }),
+          });
+          continue;
+        }
+        const def = SLUG_DEFAULTS[slug];
+        await db
+          .update(memoryArticles)
+          .set({
+            title: def.title,
+            summary: firstLineSummary(body, def.title),
+            body,
+            hash: sha256Hex(body),
+            editedByUser: true,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(memoryArticles.userId, userId),
+              eq(memoryArticles.path, slugPath(slug)),
+              isNull(memoryArticles.projectId),
+            ),
+          );
+        written.push(slug);
+        wireMessages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ ok: true, slug }),
+        });
+      }
+      // Loop again — let the model emit a follow-up turn after seeing
+      // the tool results.
+    }
+
+    // Fresh snapshot for the UI's live panel.
+    const refreshed = await db
+      .select()
+      .from(memoryArticles)
+      .where(
+        and(
+          eq(memoryArticles.userId, userId),
+          inArray(memoryArticles.path, PERSONA_SLUGS.map(slugPath)),
+          isNull(memoryArticles.projectId),
+        ),
+      );
+    const refreshedBySlug = new Map(
+      refreshed.map((r) => [
+        r.path.replace(/^profile\//, "").replace(/\.md$/, ""),
+        r,
+      ]),
+    );
+    const persona = PERSONA_SLUGS.map((slug) => {
+      const r = refreshedBySlug.get(slug);
+      return r
+        ? {
+            slug,
+            title: r.title,
+            body: r.body,
+            editedByUser: r.editedByUser,
+            updatedAt: r.updatedAt.toISOString(),
+          }
+        : {
+            slug,
+            title: SLUG_DEFAULTS[slug].title,
+            body: SLUG_DEFAULTS[slug].placeholder,
+            editedByUser: false,
+            updatedAt: null,
+          };
+    });
+
+    return c.json({
+      reply: lastAssistant,
+      written,
+      persona,
+    });
+  },
+);
+
 export default profileRoute;
