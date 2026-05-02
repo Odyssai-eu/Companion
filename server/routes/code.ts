@@ -219,6 +219,7 @@ function buildHermesReadOnlyPrompt({
     "- Do not modify files.",
     "- Do not create files.",
     "- Do not run formatters, migrations, package installs, git checkout, git reset, git commit, rsync, or deploy commands.",
+    "- If the thecompai-code-runner skill is available, use it for repository access. Do not inspect this path through Hermes' local filesystem.",
     "- You may only inspect with read-only commands such as pwd, ls, find, rg, sed, git status, git log, git diff --stat, and package manifest reads.",
     "- If access is missing, report BLOCKED and the exact missing access. Do not invent workarounds.",
     "",
