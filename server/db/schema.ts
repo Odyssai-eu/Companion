@@ -385,6 +385,41 @@ export const authLog = pgTable(
   }),
 );
 
+export const codeSessions = pgTable(
+  "code_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    repoPath: text("repo_path").notNull(),
+    repoName: text("repo_name").notNull(),
+    task: text("task").notNull(),
+    model: text("model"),
+    status: text("status").notNull().default("preflight"),
+    risk: text("risk").notNull().default("medium"),
+    preflight: jsonb("preflight").$type<Record<string, unknown>>(),
+    blockers: jsonb("blockers").$type<string[]>(),
+    hermesSessionId: text("hermes_session_id"),
+    hermesStatus: text("hermes_status"),
+    hermesOutput: text("hermes_output"),
+    hermesError: text("hermes_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userCreatedIdx: index("code_sessions_user_created_idx").on(
+      t.userId,
+      t.createdAt.desc(),
+    ),
+    statusIdx: index("code_sessions_status_idx").on(t.status),
+  }),
+);
+
 export type Node = typeof nodes.$inferSelect;
 export type NewNode = typeof nodes.$inferInsert;
 export type NodeGroup = typeof nodeGroups.$inferSelect;
@@ -394,3 +429,5 @@ export type GuestToken = typeof guestTokens.$inferSelect;
 export type NewGuestToken = typeof guestTokens.$inferInsert;
 export type AuthLog = typeof authLog.$inferSelect;
 export type NewAuthLog = typeof authLog.$inferInsert;
+export type CodeSession = typeof codeSessions.$inferSelect;
+export type NewCodeSession = typeof codeSessions.$inferInsert;

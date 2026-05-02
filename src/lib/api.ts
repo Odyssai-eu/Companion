@@ -78,6 +78,41 @@ export type ApiMessage = {
   createdAt: string;
 };
 
+export type ApiCodePreflight = {
+  repoPath: string;
+  repoName: string;
+  repoExists: boolean;
+  allowed: boolean;
+  gitRepo: boolean;
+  dirtyTree: boolean | null;
+  docsRead: Array<{ path: string; bytes: number; excerpt: string }>;
+  manifests: string[];
+  memorySources: string[];
+  factsUsed: string[];
+  forbiddenMoves: string[];
+  blockers: string[];
+  risk: "low" | "medium" | "high";
+};
+
+export type ApiCodeSession = {
+  id: string;
+  userId: string;
+  repoPath: string;
+  repoName: string;
+  task: string;
+  model: string | null;
+  status: string;
+  risk: "low" | "medium" | "high";
+  preflight: ApiCodePreflight | null;
+  blockers: string[] | null;
+  hermesSessionId: string | null;
+  hermesStatus: string | null;
+  hermesOutput: string | null;
+  hermesError: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -408,6 +443,36 @@ export const api = {
   exportConversationJsonUrl: (id: string) =>
     `/api/conversations/${id}/export.json`,
   exportProjectUrl: (id: string) => `/api/projects/${id}/export.md`,
+
+  // Code Sessions — read-only preflight for now
+  codePreflight: (body: {
+    repoPath: string;
+    task: string;
+    model?: string;
+    project?: string;
+  }) =>
+    request<{ session: ApiCodeSession; preflight: ApiCodePreflight }>(
+      "/api/code/preflight",
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
+  listCodeSessions: (limit = 30) =>
+    request<{ sessions: ApiCodeSession[] }>(`/api/code?limit=${limit}`),
+  getCodeSession: (id: string) =>
+    request<{ session: ApiCodeSession }>(`/api/code/${id}`),
+  codeHermesPreflight: (
+    id: string,
+    body?: { model?: string; skills?: string[] },
+  ) =>
+    request<{ session: ApiCodeSession; hermes?: unknown }>(
+      `/api/code/${id}/hermes-preflight`,
+      {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      },
+    ),
 
   // Projects
   listProjects: () =>

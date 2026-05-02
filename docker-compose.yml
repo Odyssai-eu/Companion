@@ -13,6 +13,10 @@ services:
       # The memory service is deployed independently (see thecompai-memory
       # repo). Defaults assume it runs on the same host on port 8001.
       MEMORY_SERVICE_URL: ${MEMORY_SERVICE_URL:-http://host.docker.internal:8001}
+      # Optional external coding runner. When unset, /api/code/preflight uses
+      # the app container's local read-only preflight.
+      CODE_RUNNER_URL: ${CODE_RUNNER_URL:-}
+      CODE_RUNNER_TOKEN: ${CODE_RUNNER_TOKEN:-}
     ports:
       - "${HOST_PORT:-3000}:3000"
     extra_hosts:

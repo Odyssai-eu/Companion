@@ -23,6 +23,7 @@ import adminSyncRoute from "./routes/admin-sync";
 import adminUsersRoute from "./routes/admin-users";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
+import codeRoute from "./routes/code";
 import conversationsRoute from "./routes/conversations";
 import guestRoute from "./routes/guest";
 import inferenceRoute from "./routes/inference";
@@ -64,6 +65,7 @@ app.use("/api/conversations/*", licenseGate, requireUser);
 // in addition to regular sessions. License still applies — guests count
 // against the inviting admin's license.
 app.use("/api/chat/*", licenseGate, guestSessionLoader, requireUserOrGuest);
+app.use("/api/code/*", licenseGate, requireUser);
 app.use("/api/projects/*", licenseGate, requireUser);
 app.use("/api/profile/*", licenseGate, requireUser);
 app.use("/api/profile", licenseGate, requireUser);
@@ -81,6 +83,7 @@ app.use("/api/admin/*", licenseGate, requireUser);
 
 app.route("/api/conversations", conversationsRoute);
 app.route("/api/chat", chatRoute);
+app.route("/api/code", codeRoute);
 app.route("/api/projects", projectsRoute);
 app.route("/api/profile", profileRoute);
 app.route("/api/tts", ttsRoute);

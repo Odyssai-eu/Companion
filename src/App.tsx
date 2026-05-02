@@ -11,6 +11,7 @@ import AccessibilityPage from "./pages/settings/AccessibilityPage";
 import AddonsPage from "./pages/settings/AddonsPage";
 import AppearancePage from "./pages/settings/AppearancePage";
 import ComingSoonPage from "./pages/settings/ComingSoonPage";
+import CodePage from "./pages/settings/CodePage";
 import DevicesPage from "./pages/settings/DevicesPage";
 import HelpPage from "./pages/settings/HelpPage";
 import InferencePage from "./pages/settings/InferencePage";
@@ -80,6 +81,7 @@ export default function App() {
         <Route path="appearance" element={<AppearancePage />} />
         <Route path="accessibility" element={<AccessibilityPage />} />
         <Route path="shortcuts" element={<ShortcutsPage />} />
+        <Route path="code" element={<CodePage />} />
         <Route path="add-ons" element={<AddonsPage />} />
         <Route path="help" element={<HelpPage />} />
       </Route>

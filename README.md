@@ -25,6 +25,18 @@ docker compose up -d
 
 App on `http://localhost:3000`.
 
+## Optional code runner
+
+Coding sessions can call an external runner on the machine that owns the repos:
+
+```bash
+CODE_RUNNER_URL=http://thecompai.lan:8765
+CODE_RUNNER_TOKEN=...
+```
+
+When unset, `/api/code/preflight` falls back to local read-only inspection from
+inside the app container.
+
 ## Project layout
 
 ```

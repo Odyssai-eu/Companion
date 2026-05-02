@@ -29,7 +29,10 @@ const baseSections: NavSection[] = [
   },
   {
     title: "Extensions",
-    items: [{ to: "/settings/add-ons", label: "Add-ons" }],
+    items: [
+      { to: "/settings/add-ons", label: "Add-ons" },
+      { to: "/settings/code", label: "Code sessions" },
+    ],
   },
   {
     title: "Premium",

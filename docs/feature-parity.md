@@ -1,372 +1,188 @@
 # Feature parity — ExoScopy → Thecomp.ai
 
-Audit initial Saturday 2026-04-25 sur v0.0.38. **Mis à jour le même jour sur v0.0.52** : P0/P1/P2 livrés + petit restant (cost, vision warning, instructions) + syntax highlighting + easter egg.
+Dernière mise à jour : **2026-05-01**, app **v0.1.38**.
 
-## Quick status board
+But de ce document : savoir ce qui est réellement présent dans le code actuel, ce qui reste stub, et ce qui est volontairement hors scope. L'ancien audit du 2026-04-25 est obsolète : plusieurs régressions rouges ont depuis été livrées.
 
-| Catégorie | État au 2026-04-25 |
-|---|---|
-| Markdown rendering (GFM, tables, links, blockquotes, lists) | ✅ marked + sanitisation |
-| Syntax highlighting (hljs, ~35 langues) + copy button | ✅ |
-| Strip markdown avant TTS | ✅ `stripMarkdownForTts` |
-| Code blocks export (.md, individual files, .zip) | ✅ |
-| Attachments (text/code, images, PDF up to 20p) | ✅ |
-| Drag & drop + paste image | ✅ |
-| Edit user message | ✅ pencil + Cmd+Enter, server-side truncation |
-| Regenerate | ✅ |
-| Sidebar search | ✅ |
-| Active stream indicator | ✅ pulse vert dans la liste |
-| Style presets (Creative/Normal/Code/Custom) | ✅ |
-| System prompt library (saved prompts, export/import) | ✅ |
-| Detailed stats (prompt/completion/reasoning tokens, chunks, duration) + Copy | ✅ |
-| Hold Space push-to-talk | ✅ |
-| Global keyboard shortcuts (Cmd+K/N/, ⇧V, Esc) | ✅ |
-| Vision/tools capability badges | ✅ heuristique regex |
-| Mobile drawer + responsive paddings | ✅ |
-| Help page | ✅ (Settings → Reference → Help) |
-| Strip markdown avant TTS | ✅ déjà en place |
-| TTS Voxtral streaming WAV | ✅ (upgrade vs ExoScopy speechSynthesis) |
-| Project view = sidebar identique au chat | ✅ |
-| Auto-fill systemPrompt depuis category | ✅ déjà en place dans ProjectPage |
-| Cost tracking OpenRouter | ✅ table de prix statique ~35 modèles, fallback "X tok · cloud" |
-| Vision model warning | ✅ bannière amber si image attachée sur modèle sans vision |
-| Instructions field (notes privées, non envoyées) | ✅ intentionnellement pas transmis au moteur |
-| Web tools (web_search, web_fetch) | 🔴 hors P3 (gros chantier) |
-| Magic link / Password reset / OAuth | 🔴 P3 (besoin SMTP / creds) |
-| MCP execution | 🔴 P3 (gros chantier) |
-| Customisable shortcuts | 🔴 low value, pas prio |
-| Cluster monitoring SSH / Model matrix / Download HF | ⚪ Hors scope |
+## Statut court
 
-**Légende** :
-- ✅ Présent et fonctionnel dans Thecomp.ai
-- 🟢 Présent mais avec un écart mineur d'UX
-- 🔴 **Régression** — présent dans ExoScopy, absent ou cassé dans Thecomp.ai
-- ⚪ Hors scope par décision (cf. `CLAUDE.md` — Thecomp.ai est client-only, pas de cluster ops)
+| Zone | Statut | Notes |
+|---|---:|---|
+| Chat streaming | ✅ | SSE token-par-token, stop, reasoning, cursor, keepalive backend |
+| LiteLLM / EXO direct | ✅ | LiteLLM par défaut, `exo-direct/...` pour A/B latency |
+| Conversations | ✅ | CRUD, pin, rename, delete, export, search, grouping, active stream indicator |
+| Projects | ✅ | CRUD, categories, system prompt, instructions privées, memory toggle |
+| Memory wiki | ✅ | Snapshot par conversation, `Remember now`, toggle projet/conversation, wikilinks strippés |
+| Attachments | ✅ | Text/code, image, PDF 20 pages, drag/drop, paste image |
+| Rendering | ✅ | Markdown GFM, tables, links, blockquotes, hljs, copy code, `<think>` collapsible |
+| TTS / voice | ✅ | Speak/listen, save WAV, voice mode, talk button, hold Space |
+| Inference controls | ✅ | temperature, max tokens, top_p/top_k/min_p, rep penalty, seed, thinking |
+| Tools add-ons | 🟡 | Backend tool loop présent. Tavily/Hermes/Obsidian existent. UX/config à stabiliser. |
+| Auth locale | ✅ | Email/password, JWT cookie, logout, profile/password change |
+| OAuth / reset | 🔴 | Pas fait : OAuth, magic link, password reset, 2FA |
+| Devices / billing | 🔴 | Pages stub ou absentes côté produit final |
+| Admin Extended | 🟡 | Users/nodes/groups/sync/guest tokens codés, mais hors v1 client-only pur |
 
----
+Légende :
+- ✅ présent et buildable
+- 🟡 présent mais à valider/stabiliser en runtime
+- 🔴 absent/stub
+- ⚪ hors scope assumé
 
-## A. Chat & messaging
-
-### Streaming et flux principal
+## A. Chat & Messaging
 
 | Feature | État | Notes |
-|---|---|---|
-| Streaming SSE token-par-token | ✅ | `chat-stream.ts` lit le ReadableStream, parse `data:` lines |
-| Stop génération | ✅ | AbortController via `chat.cancel()` |
-| Multi-engine dispatch (OpenAI-compat + Anthropic) | ✅ | `engine_kind` sur le serveur |
-| Indicateur "thinking" | ✅ | TypingDots pendant le streaming |
-| Curseur clignotant à la fin du delta | ✅ | `<span class="animate-pulse bg-cyan">` |
-| **Indicateur de tool en cours** | 🔴 | ExoScopy émet `_event: 'tool_start'/'tool_done'` dans le SSE et affiche le nom du tool en train de tourner. Pas de tools dans Thecomp.ai donc N/A pour l'instant. |
-| **Multi-turn context preserved** | ✅ | `convoForModel = [...messages, userMsg]` |
+|---|---:|---|
+| Streaming SSE token-par-token | ✅ | `src/lib/chat-stream.ts`, backend `server/routes/chat.ts` |
+| Stop génération | ✅ | `AbortController`, bouton Stop, `Esc` global |
+| Keepalive pendant cold start | ✅ | Backend ouvre le SSE immédiatement et envoie `:keepalive` |
+| Multi-turn context | ✅ | Historique reconstruit depuis `messages` côté client |
+| Time tags | ✅ | Tags `[ISO | Δ: …]` injectés sur chaque user message |
+| Reasoning stream | ✅ | `reasoning_content` parsé et rendu dans `ReasoningBlock` |
+| Tool lifecycle UI | ✅ | `_event: tool_start/tool_done` parsé et rendu dans `ToolCallsBlock` |
+| Edit message user | ✅ | Inline edit, double-click/pencil, truncation serveur puis resend |
+| Regenerate | ✅ | Tronque depuis l’assistant message puis relance depuis le dernier user |
+| Branching réel | ⚪ | Non repris : ExoScopy était linéaire aussi |
 
-### Edit / Regenerate
-
-| Feature | État | Notes |
-|---|---|---|
-| **Edit message utilisateur** | 🔴 | ExoScopy : double-clic sur un message user → édition inline → tronque l'historique et regénère. Code : `public/index.html:944-964 (handleEdit)`. PUT `/api/conversations/:id` avec messages tronqués. |
-| **Regenerate** | 🔴 | Bouton retiré v0.0.37 (était stub). Pas de re-stream depuis le tour précédent. |
-| **Branching** | 🔴 | ExoScopy : pas de vrai branching (juste edit + regenerate qui réécrit). À implémenter de la même façon. |
-
-**Choix technique ExoScopy à reprendre** : sur edit, on prend `messages.slice(0, idx)` + le nouveau contenu, on pousse en DB (PUT conversation), puis on relance un streamChat. Pas de tree, juste un linear undo.
-
-### Attachments multimodaux
+## B. Attachments & Rendering
 
 | Feature | État | Notes |
-|---|---|---|
-| Texte/code (.txt, .md, .py, etc.) | ✅ | v0.0.38 — embed inline en bloc markdown |
-| Image (image/*) | ✅ | v0.0.38 — data URL en multimodal `image_url` |
-| PDF jusqu'à 20 pages | ✅ | v0.0.38 — pdf.js, texte + raster PNG par page |
-| **Drag & drop sur la zone d'input** | 🔴 | ExoScopy gère `onDragOver` + `onDrop` sur la textarea. À porter dans `Input.tsx`. |
-| **Paste image depuis le presse-papier** | 🔴 | ExoScopy : `onPaste` lit `e.clipboardData.items[].getAsFile()`. À ajouter dans `Input.tsx`. |
-| **Vision model warning** | ✅ | Bannière amber dans l'input si image attachée + `capabilities.vision === false`. Capabilities détectées par regex sur model id. |
+|---|---:|---|
+| Text/code attachments | ✅ | Embed inline en markdown |
+| Images | ✅ | Data URL en `image_url` multimodal |
+| PDF | ✅ | `pdfjs-dist`, texte + raster, limite 20 pages |
+| Drag/drop input | ✅ | `Input.tsx` |
+| Paste image/file | ✅ | `Input.tsx` |
+| Vision warning | ✅ | Banniere si image + modèle détecté non-vision |
+| Markdown GFM | ✅ | `marked`, `breaks`, tables/listes/liens |
+| Sanitisation HTML | ✅ | Allowlist custom dans `src/lib/markdown.ts` |
+| Syntax highlighting | ✅ | `highlight.js`, langage affiché, copy button |
+| Code export | ✅ | Pills, fichier individuel, zip |
+| LaTeX / Mermaid | 🔴 | Pas dans ExoScopy non plus. À ajouter uniquement si besoin produit clair. |
 
-**Choix technique ExoScopy** : le drop+paste se fait sur la textarea elle-même, pas sur un overlay séparé. `e.preventDefault()` + appelle le même `processFile()` que le file input.
-
-### Rendering
-
-| Feature | État | Notes |
-|---|---|---|
-| Whitespace preserved (`pre-wrap`) | ✅ | OK pour du texte simple |
-| **Markdown → HTML rendering** | ✅ | `marked` + GFM + `breaks:true`. Sanitisation custom (`ALLOWED_TAGS`/`ALLOWED_ATTRS`). |
-| **Tables markdown** | ✅ | GFM inclus |
-| **Liens cliquables** | ✅ | `target="_blank" rel="noopener"` auto-ajouté |
-| **Code blocks stylés** (fond sombre, mono, syntax highlight) | ✅ | `highlight.js` (common, ~35 langues) + renderer custom `<div class="code-block">` + label + Copy button |
-| **Blockquotes** | ✅ | Border-left cyan |
-| **Inline code styling** | ✅ | Background rgba navy |
-| **Listes (ordered/unordered)** | ✅ | OK |
-| **`<think>` blocks → `<details>` collapsible** | ✅ | `liftThinkBlocks()` preprocess + `ReasoningBlock` pour le streaming Anthropic |
-| **Math/LaTeX rendering** | 🔴 | ExoScopy n'a pas KaTeX non plus. À ajouter si besoin. |
-| **Mermaid diagrams** | 🔴 | Pas dans ExoScopy non plus. |
-
-**Choix technique ExoScopy à reprendre** :
-- Lib : `marked` (vendor minified, ~30 KB).
-- Config : `marked.parse(text, {breaks: true, gfm: true})`.
-- Pour `<think>` : regex preprocess avant `marked.parse` qui transforme `<think>X</think>` en `<details class="think-block"><summary>Thinking...</summary><div class="think-content">X</div></details>`.
-- Pour les code blocks : juste laisser `marked` produire le `<pre><code class="language-x">` et styler en CSS (Thecomp.ai n'a pas de syntax highlighter ; ExoScopy non plus, juste styling).
-- Pour Thecomp.ai stack moderne : utiliser `marked` directement en npm, ou `react-markdown` + `remark-gfm`. Préférence : `marked` (1 dep, plus léger, équivalence fonctionnelle exacte).
-
-### Code block extraction
+## C. Voice, TTS, Stats
 
 | Feature | État | Notes |
-|---|---|---|
-| Extraction en pills `file-N.ext` | ✅ | v0.0.37 — `extractCodeBlocks` |
-| Save individuel | ✅ | OK |
-| Save all (.zip) | ✅ | OK |
-| Filename inferé de la ligne au-dessus | ✅ | OK |
-
-### Copy / Share / Save
-
-| Feature | État | Notes |
-|---|---|---|
-| Copy to clipboard | ✅ | OK |
-| Save response as `.md` | ✅ | v0.0.37 |
-| **Copy stats** | 🔴 | ExoScopy : bouton "Copy" sur la stats row qui copie un one-liner JSON-like. Trivial à ajouter. |
-
-### TTS (output vocal)
-
-| Feature | État | Notes |
-|---|---|---|
-| Bouton Speak/Listen par message | ✅ | OK |
-| Stop pendant lecture | ✅ | OK |
-| Voice mode (auto-speak) | ✅ | `useVoiceMode` |
+|---|---:|---|
+| Speak/listen par message | ✅ | `src/lib/tts.ts` |
+| Stop lecture | ✅ | OK |
 | Save WAV | ✅ | OK |
-| **Lib** | 🟢 | ExoScopy = `speechSynthesis` browser. Thecomp.ai = mlx-audio VibeVoice (qualité supérieure). C'est un upgrade, pas une régression. |
-| **Auto-strip markdown avant lecture** | ✅ | `stripMarkdownForTts()` dans `lib/markdown.ts` — retire `**`, `` ` ``, blocs de code, liens, balises HTML. |
-
-**Choix technique ExoScopy** : preprocess regex avant TTS :
-```js
-text.replace(/```[\s\S]*?```/g, ' code block ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/<[^>]+>/g, '')  // HTML tags
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // markdown links
-```
-
-### Voice input (push-to-talk)
-
-| Feature | État | Notes |
-|---|---|---|
+| Voice mode auto-speak | ✅ | `useVoiceMode` |
 | Talk button | ✅ | Web Speech API |
-| Continuous mode | ✅ | OK |
-| **Hold Space to talk** | 🔴 | ExoScopy bind la touche Space en hold. Thecomp.ai : seulement clic Talk. À ajouter (cf. ShortcutsPage qui dit déjà "Space hold-to-talk"). |
-| **Auto-send après transcription** | 🟢 | ExoScopy : transcription → ajoute au textarea, l'utilisateur valide. Thecomp.ai : auto-envoie. C'est un choix UX différent, pas une régression. |
+| Hold Space push-to-talk | ✅ | `useGlobalShortcuts` |
+| Strip markdown avant TTS | ✅ | `stripMarkdownForTts` |
+| TTFT / duration / speed | ✅ | `StatsRow` |
+| Prompt/completion/reasoning tokens | ✅ | Usage SSE propagé quand upstream le fournit |
+| Chunks | ✅ | Compteur de chunks client |
+| Copy stats | ✅ | Bouton `Copy` |
+| Cost tracking | ✅ | Table statique modèles cloud + fallback tokens |
 
-### Generation parameters
-
-| Feature | État | Notes |
-|---|---|---|
-| Temperature, max_tokens, top_p, top_k, min_p, repetition_penalty, seed | ✅ | InferencePanel |
-| Thinking + reasoning_effort | ✅ | OK |
-| **Web Tools toggle** | 🔴 | ExoScopy a `web_search`, `web_fetch`, `web_fetch_full`. Pas de tools dans Thecomp.ai. |
-| Presets Creative/Normal/Code | 🟢 | Dans `STYLE_PRESETS` mais **pas de boutons dans l'UI** — uniquement consommé par `setInference`. À exposer en boutons (cf. `useChat.ts:41-48`). |
-
-### System prompts
+## D. Conversations
 
 | Feature | État | Notes |
-|---|---|---|
-| Session-level system prompt | ✅ | InferencePanel |
-| Toggle on/off | ✅ | `systemPromptEnabled` |
-| Project-level override session-level | ✅ | `useChat.ts:259-261` |
-| **Save/load named prompts** | 🔴 | ExoScopy permet de sauvegarder N prompts nommés en localStorage et de les charger via dropdown. À ajouter en localStorage `thecompai:systemPrompts` = `[{name, content}, ...]`. |
-| **Export/import prompts (.json)** | 🔴 | ExoScopy : download all + upload. Trivial à ajouter une fois la liste en place. |
-
-**Choix technique ExoScopy** : juste un objet JSON en localStorage, pas de DB. Modal avec liste + bouton "Save current" qui demande un nom.
-
-### Stats display
-
-| Feature | État | Notes |
-|---|---|---|
-| TTFT, tokens, speed | ✅ | StatsRow |
-| Cost | ✅ | Calculé depuis table statique (~35 modèles OR/Anthropic/OpenAI). Fallback "X tok · cloud" si modèle inconnu. |
-| **Prompt tokens / Completion tokens séparés** | 🔴 | ExoScopy split prompt vs completion. Thecomp.ai : juste "tokens" total. Source = `usage` dans le SSE final. À étendre `StreamChatResult`. |
-| **Generation time / Total time / Chunk count / Chunk rate** | 🔴 | ExoScopy expose tous ces compteurs. À étendre `StreamChatResult` et StatsRow. |
-
----
-
-## B. Conversations
-
-| Feature | État | Notes |
-|---|---|---|
-| Liste sidebar groupée Pinned/Today/Yesterday/Older | ✅ | OK |
-| Search (filter par titre) | 🔴 | **Régression majeure**. ExoScopy a un input de search au-dessus de la liste qui filtre client-side. Sidebar Thecomp.ai : pas de search. |
-| Pin / Unpin | ✅ | OK |
-| Rename (double-click) | ✅ | OK |
-| Last message preview | ✅ | Subquery `lastMessage` |
+|---|---:|---|
+| Sidebar grouping | ✅ | Pinned / Today / Yesterday / Older |
+| Sidebar search | ✅ | Titre + last message |
+| All Chats = orphans only | ✅ | `activeProjectId === null` filtre les conversations sans projet |
+| Conversation inside project | ✅ | Sidebar limitée au projet actif |
+| Pin/unpin | ✅ | OK |
+| Rename | ✅ | Double-click |
 | Delete | ✅ | OK |
-| Export `.md` | ✅ | OK |
-| Export `.json` | ✅ | OK |
-| Auto-title depuis 1er message user | ✅ | OK (80 chars) |
-| Active stream indicator | 🔴 | ExoScopy : dot animé vert sur la conv en train de stream. Implique de tracker `streamingConvId`. À ajouter (utile quand on changera de conv pendant un stream). |
-| **Drag-to-reorder / drag-to-project** | 🔴 | ExoScopy laisse drag une conv vers un projet dans la sidebar. Thecomp.ai : on a un dropdown "Move to project" sur hover, pas de drag. C'est une régression d'ergonomie mais le dropdown existe donc ⚠ mineur. |
+| Export `.md` / `.json` | ✅ | OK |
+| Auto-title | ✅ | Depuis premier message user, 80 chars |
+| Active stream indicator | ✅ | `streamingConversationId` |
+| Drag-to-project | 🟡 | Dropdown move-to-project présent. Pas de DnD ; acceptable pour v1. |
 
----
-
-## C. Projects
+## E. Projects & Memory
 
 | Feature | État | Notes |
-|---|---|---|
-| Create / Edit / Delete | ✅ | OK |
-| Categories (icon + system prompt template) | ✅ | 5 catégories (vs 6 ExoScopy) |
-| System prompt par projet | ✅ | OK |
-| **Auto-fill systemPrompt depuis category** | 🟢 | ExoScopy : changer la catégorie remplit le systemPrompt si vide ou inchangé. À vérifier dans Thecomp.ai. |
-| Export project `.md` | ✅ | OK |
-| Project-level system prompt override session | ✅ | OK |
-| **"All Chats" filter (montrer seulement les conversations sans projet)** | 🔴 | ExoScopy : `activeProjectId === null` montre seulement les non-assignées. Thecomp.ai : à vérifier. |
-| **Instructions field** (séparé du system prompt) | ✅ | Intentionnellement *non* envoyé au moteur — c'est une note privée pour l'utilisateur (label "not sent to engine"). Comportement correct. |
+|---|---:|---|
+| Create/edit/delete project | ✅ | OK |
+| Categories + SVG icons | ✅ | Emoji remplacés par slugs + SVG flat |
+| Auto-fill system prompt depuis category | ✅ | Présent dans `ProjectPage` |
+| System prompt projet | ✅ | Override le prompt session |
+| Instructions privées | ✅ | Non envoyées au moteur |
+| Export projet `.md` | ✅ | OK |
+| Memory toggle projet | ✅ | Défaut pour nouvelles conversations |
+| Memory toggle conversation | ✅ | Bouton cerveau dans TopBar |
+| Remember now | ✅ | Force snapshot mémoire |
+| Memory snapshot stable | ✅ | Préserve le prefix cache EXO |
+| Wikilinks Obsidian strippés | ✅ | Côté injection LLM uniquement |
 
----
-
-## D. Engines & servers
-
-| Feature | État | Notes |
-|---|---|---|
-| Add server | ✅ | OK |
-| Multiple servers | ✅ | OK |
-| Multiple endpoints par serveur (primary/secondary) | ✅ | OK |
-| Test endpoint (latency, healthy) | ✅ | OK |
-| Test all endpoints | ✅ | OK |
-| Bearer auth | ✅ | OK |
-| Engine kinds (openai-compat / anthropic) | ✅ | OK + détection cloud (OpenRouter, Anthropic, OpenAI) |
-| OpenRouter quick-add preset | ✅ | OK |
-| Model picker avec Local/Cloud toggle | ✅ | OK |
-| **Auto-load model on send** (si modèle choisi mais pas chargé sur le cluster) | 🔴 | ExoScopy : si tu envoies avec un modèle pas chargé, il appelle `/api/monitoring/load` et attend. Thecomp.ai : 404 si pas chargé. ⚠ Hors scope si on est client-only (pas de monitoring/load endpoint), à confirmer. |
-| **Vision capability badge** | 🔴 | ExoScopy : badge 👁 sur les modèles vision. Thecomp.ai : flag `vision` pas dans le metadata. |
-| **Tools capability badge** | 🔴 | Idem — pas tracké côté Thecomp.ai. |
-| **Active model badge dans la TopBar** | 🟢 | Thecomp.ai a déjà l'EngineBadge. À vérifier si ça montre le modèle effectivement chargé vs juste sélectionné. |
-| **SSH cluster monitoring** (RAM, temp, etc.) | ⚪ | Hors scope. Thecomp.ai est client-only. |
-| **Model matrix / Model sync rsync** | ⚪ | Hors scope. |
-| **Download queue (HuggingFace catalog)** | ⚪ | Hors scope. |
-| **Node discovery** | ⚪ | Hors scope. |
-
----
-
-## E. Settings
+## F. Inference, Models, Tools
 
 | Feature | État | Notes |
-|---|---|---|
-| Profile (name, password change) | ✅ | OK |
-| Theme (light/dark/system) | ✅ | AppearancePage |
-| Servers detail page | ✅ | OK |
-| Keyboard shortcuts (référence statique) | ✅ | OK |
-| **Customisable shortcuts** | 🔴 | "Coming soon" — pas un blocker |
+|---|---:|---|
+| LiteLLM settings | ✅ | URL, API key, default model, timezone |
+| Model list | ✅ | `/api/models`, tags/capabilities heuristiques |
+| Model picker composer | ✅ | Local/cloud, recherche, capabilities |
+| Style presets | ✅ | Creative / Normal / Code / Custom |
+| Inference panel | ✅ | Paramètres avancés |
+| EXO Direct | ✅ | `exo-direct/<endpointId>/<modelId>` |
+| Prewarm conversation | ✅ | 1-token idle warmup pour prefix cache |
+| Web tools Tavily | 🟡 | Tool runner présent. À valider avec clé/config runtime. |
+| Hermes tools | 🟡 | Add-on + `hermes_quick` / `hermes_deep` présents. Bloquant à analyser ensuite. |
+| MCP execution | 🔴 | CRUD add-ons existe, pas d’exécution MCP réelle |
+| Auto-load model on send | ⚪ | Hors scope client-only ; ce rôle appartient au serveur utilisateur/LiteLLM |
+
+## G. Settings & Auth
+
+| Feature | État | Notes |
+|---|---:|---|
+| Profile | ✅ | Name + persona/memory profile |
+| Password change | ✅ | OK |
+| Appearance | ✅ | Theme page |
+| Shortcuts reference | ✅ | Cohérent avec `useGlobalShortcuts` |
+| Help page | ✅ | Settings → Help |
+| Add-ons page | ✅ | CRUD/toggles/config surface |
 | Devices page | 🔴 | Stub |
 | Accessibility page | 🔴 | Stub |
-| Billing | 🔴 | Stub (Stripe pas encore) |
-| **Admin mode toggle** | ⚪ | Hors scope (Thecomp.ai = SaaS, pas multi-user self-host) |
-| **Guest mode** | ⚪ | Hors scope |
-| **OpenRouter API key field** | 🟢 | Géré par bearer auth sur server, donc équivalent. |
+| Security page | 🔴 | Coming soon |
+| Billing | 🔴 | Pas implémenté |
+| Email/password auth | ✅ | bcrypt + httpOnly JWT cookie |
+| OAuth / magic link / password reset | 🔴 | Besoin SMTP/credentials, pas v0.1 |
+| Multi-device sessions | 🔴 | Pas de session/device roster réel |
+| 2FA | 🔴 | Pas v1 |
 
----
-
-## F. Auth & users
-
-| Feature | État | Notes |
-|---|---|---|
-| Email + password signup/login | ✅ | bcryptjs + JWT cookie |
-| Logout | ✅ | OK |
-| Session persistence | ✅ | httpOnly cookie 30j |
-| Profile update (name) | ✅ | OK |
-| Change password | ✅ | OK |
-| **OAuth Google** | 🔴 | Stub |
-| **Magic link** | 🔴 | Stub (besoin SMTP) |
-| **Password reset** | 🔴 | Pas implémenté côté Thecomp.ai (ExoScopy non plus, mais c'est un must pour SaaS) |
-| **Multi-device sessions** | 🔴 | Stub |
-| **2FA** | 🔴 | Pas dans ExoScopy. Pas dans le scope v1 mais à noter. |
-
----
-
-## G. Add-ons / Plugins
+## H. Admin Extended / Guest
 
 | Feature | État | Notes |
-|---|---|---|
-| List/Create/Update/Delete addons | ✅ | OK |
-| Toggle enable/disable | ✅ | OK |
-| **Web Tools (web_search, web_fetch)** | 🔴 | ExoScopy a un système de tools function-calling. Thecomp.ai : rien. À ajouter via la table `addons` (kind=plugin) une fois qu'on a un dispatcher tool. |
-| **MCP integration** | 🔴 | Schema existe, CRUD wired, mais pas d'exécution. ExoScopy non plus. |
-| **Install from URL** | 🔴 | Stub dans les deux apps |
+|---|---:|---|
+| Admin users | 🟡 | API + page admin présentes |
+| Nodes/groups | 🟡 | API + schema présents |
+| Sync jobs | 🟡 | `sync-runner`, SSH/rsync, live progress |
+| Guest tokens | 🟡 | Budget tokens + `/g/:token` + banner |
+| License gate | 🟡 | Stub dev bypass / future license server |
 
----
+Note : ces features contredisent partiellement la ligne “client-only SaaS pur”. Elles existent parce que Thecomp.ai sert aussi de cockpit privé pour Sophie. Pour le produit public v1, les isoler derrière Admin Extended reste la bonne décision.
 
-## H. Other
+## Backlog restant
 
-| Feature | État | Notes |
-|---|---|---|
-| IndicAI / AI Score | ✅ | TopBar + endpoint |
-| **Easter egg Space Invaders** | ✅ | Chat vierge → taper `atari` → jeu pixel-art 10×4 invaders, vies, score. ESC ferme. |
-| **Cmd/Ctrl+K → New conversation** | 🔴 | Documenté dans ShortcutsPage mais **pas wiré** (pas de listener global). |
-| **Cmd/Ctrl+, → Settings** | 🔴 | Idem documenté mais pas wiré |
-| **Cmd/Ctrl+N → New** | 🔴 | Idem |
-| **Esc → Stop streaming** | 🔴 | Idem |
-| **Cmd/Ctrl+Shift+V → Voice mode** | 🔴 | Idem |
-| Enter to send | ✅ | OK |
-| Shift+Enter newline | ✅ | OK |
-| **Mobile drawer sidebar** | 🔴 | ExoScopy : hamburger + drawer animé. Thecomp.ai : pas vérifié, probablement cassé en mobile (sidebar fixe 280px). |
-| **PWA manifest** | 🔴 | Pas confirmé qu'il y a un `manifest.json` |
-| **Apple touch icon** | 🟢 | À vérifier |
-| **Help modal / Help pages** | 🔴 | Pas de page Help dans Thecomp.ai |
+### Bloquant produit
 
----
+1. **Hermes** — décider et stabiliser le comportement attendu : tool call, modèle compatible, timeout, UX erreurs, configuration.
+2. **Smoke test runtime complet** — Docker DB + login + LiteLLM + chat + image/PDF + memory + tools.
+3. **Billing / entitlement** — minimum viable : plan state + license gate non-stub pour prod.
 
-## Plan d'action proposé (par ordre de douleur)
+### Important mais non bloquant chat
 
-### P0 — régressions qui cassent l'UX de base (à faire en priorité)
+4. Devices/session roster.
+5. Password reset.
+6. OAuth si SaaS public.
+7. Add-ons install/import propre.
+8. Accessibilité réelle, pas stub.
 
-1. ~~**Markdown rendering**~~ ✅ — `marked` + GFM + `liftThinkBlocks` + sanitisation.
-2. **Search dans la sidebar conversations** — filtre client-side trivial.
-3. ~~**Code blocks stylés**~~ ✅ — `highlight.js` + renderer custom + copy button.
-4. ~~**Strip markdown avant TTS**~~ ✅ — `stripMarkdownForTts()`.
-5. **Drag & drop + paste image** dans la zone d'input — workflow standard, déjà attendu par tout utilisateur.
+### Hors scope v1
 
-### P1 — gros confort, peu d'effort
-
-6. **Edit message + regenerate** — workflow clé sur les LLMs. Même sans branching, juste tronquer + restream.
-7. **Style presets buttons (Creative / Normal / Code)** — déjà dans le code, juste à exposer.
-8. **Save/load system prompts nommés** — pure localStorage.
-9. **Hold Space pour talk** — global keydown listener.
-10. **Active stream indicator** sur la conv qui stream dans la sidebar.
-11. **Stats détaillées** (prompt tokens, completion tokens, chunk rate) — extension de `StreamChatResult`.
-12. **Copy stats** — un bouton.
-
-### P2 — features manquantes mais pas critiques
-
-13. **Vision capability badge** — nécessite que l'API exo expose le flag `vision` (déjà le cas, juste à propager).
-14. **Cost calculation OpenRouter** — table de prix par modèle, calcul à partir des tokens.
-15. **Auto-fill systemPrompt depuis category** lors du changement de category dans le ProjectModal.
-16. **Help page** — copier-coller des pages markdown ExoScopy.
-17. **Mobile responsive** — drawer hamburger, breakpoint 768px.
-18. **Keyboard shortcuts globaux** — handler unique sur `document` qui dispatch.
-
-### P3 — gros chantiers
-
-19. **Tools / function calling** (web_search) — nécessite un tool runner backend + intégration dans `chat.ts`.
-20. **Magic link auth + password reset** — nécessite SMTP.
-21. **OAuth Google** — nécessite credentials.
-22. **MCP integration réelle** — chantier conséquent.
-23. **Customisable keybindings** — layer config.
-
-### Hors scope (intentionnel, cf. CLAUDE.md)
-
-- Cluster monitoring SSH
-- Model matrix / sync rsync
+- Cluster monitoring public
+- Model matrix / rsync public
 - Download queue HuggingFace
-- Node discovery
-- Multi-user self-host (admin mode)
-- Guest mode
+- Node discovery public
+- Branching conversation tree
+- Custom keybindings
+- LaTeX/Mermaid sans demande produit explicite
 
----
+## Vérification
 
-## Notes techniques transverses
+Dernière vérification locale : `npm run build` OK le 2026-05-01.
 
-**ExoScopy stack** : single-file React JSX in browser, Babel in-browser, vendored libs (`/vendor/`), Express backend, file-based JSON storage, SSH+rsync for cluster ops.
-
-**Thecomp.ai stack** : Vite + React 19 + TS + Tailwind 4, Hono + Drizzle + Postgres, JWT auth.
-
-Pour porter une feature ExoScopy :
-- Lire le code dans `/Users/sophie/Claude/code/exoscopy/public/index.html` (UI) ou `server/index.js` (API)
-- Adapter à TypeScript / hooks séparés / Tailwind 4
-- Pour les libs : `marked`, `jszip`, `pdfjs-dist` ont déjà été migrées en npm (fait pour ExoScopy en vendor, pour Thecomp.ai en npm)
-
----
-
-*Document à mettre à jour au fur et à mesure de l'implémentation.*

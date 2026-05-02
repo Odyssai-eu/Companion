@@ -21,11 +21,11 @@ export default function AddonsPage() {
   }
 
   useEffect(() => {
-    // Touch the EXO Direct + Admin Extended /info endpoints first — they
-    // lazy-create the addons rows for users that predate these add-ons.
-    // After this returns, the /api/addons list will include both entries.
+    // Touch lazy-created add-on /info endpoints first so users that predate
+    // these add-ons still see them in the list.
     Promise.all([
       api.exoInfo().catch(() => undefined),
+      api.hermesInfo().catch(() => undefined),
       api.adminExtInfo().catch(() => undefined),
     ]).then(() => refresh());
   }, []);
