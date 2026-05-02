@@ -1,6 +1,6 @@
 # Feature parity — ExoScopy → Thecomp.ai
 
-Dernière mise à jour : **2026-05-01**, app **v0.1.38**.
+Dernière mise à jour : **2026-05-02**, app **v0.1.44**.
 
 But de ce document : savoir ce qui est réellement présent dans le code actuel, ce qui reste stub, et ce qui est volontairement hors scope. L'ancien audit du 2026-04-25 est obsolète : plusieurs régressions rouges ont depuis été livrées.
 
@@ -121,7 +121,7 @@ Légende :
 | EXO Direct | ✅ | `exo-direct/<endpointId>/<modelId>` |
 | Prewarm conversation | ✅ | 1-token idle warmup pour prefix cache |
 | Web tools Tavily | 🟡 | Tool runner présent. À valider avec clé/config runtime. |
-| Hermes tools | 🟡 | Add-on + `hermes_quick` / `hermes_deep` présents. Bloquant à analyser ensuite. |
+| Hermes tools | 🟡 | Add-on + `hermes_quick` / `hermes_deep` présents. Read-only code preflight validé via `thecompai-code-runner`. Write mode à faire. |
 | MCP execution | 🔴 | CRUD add-ons existe, pas d’exécution MCP réelle |
 | Auto-load model on send | ⚪ | Hors scope client-only ; ce rôle appartient au serveur utilisateur/LiteLLM |
 
@@ -160,7 +160,7 @@ Note : ces features contredisent partiellement la ligne “client-only SaaS pur�
 
 ### Bloquant produit
 
-1. **Hermes** — décider et stabiliser le comportement attendu : tool call, modèle compatible, timeout, UX erreurs, configuration.
+1. **Hermes write mode** — permettre à Hermes d'écrire des tests via le runner, avec modèle choisi dans LiteLLM, write scope, diff et logs.
 2. **Smoke test runtime complet** — Docker DB + login + LiteLLM + chat + image/PDF + memory + tools.
 3. **Billing / entitlement** — minimum viable : plan state + license gate non-stub pour prod.
 
@@ -184,5 +184,4 @@ Note : ces features contredisent partiellement la ligne “client-only SaaS pur�
 
 ## Vérification
 
-Dernière vérification locale : `npm run build` OK le 2026-05-01.
-
+Dernière vérification locale : `npm run build` OK le 2026-05-02. Déploiement dev `v0.1.44` OK, health check LAN + `dev.thecomp.ai` OK.
