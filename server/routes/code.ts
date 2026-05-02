@@ -67,6 +67,7 @@ codeRoute.delete("/", zValidator("query", clearQuerySchema), async (c) => {
           inArray(codeSessions.status, [
             "blocked",
             "failed",
+            "running",
             "cancelled",
             "canceled",
             "hermes_failed",

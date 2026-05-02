@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type ApiCodePreflight, type ApiCodeSession } from "~/lib/api";
 
-const DEFAULT_REPO = "/Users/sophie/Claude/code/thecompai/app";
+const DEFAULT_REPO = "/Users/admin/repos/runner-smoke";
 const DEFAULT_MODEL = "claude-haiku";
 
 export default function CodePage() {
