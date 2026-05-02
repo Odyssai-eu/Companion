@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { access, readFile, realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { access, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -41,7 +41,7 @@ createServer(async (req, res) => {
         runner: "thecompai-code-runner",
         host: process.env.HOSTNAME ?? "unknown",
         allowedRoots: ALLOWED_ROOTS,
-        writeMode: false,
+        writeMode: true,
       });
     }
 
@@ -56,6 +56,16 @@ createServer(async (req, res) => {
         task: String(body.task ?? ""),
       });
       return json(res, 200, { preflight });
+    }
+
+    if (req.method === "POST" && req.url === "/write-tests") {
+      const body = await readJson(req);
+      const result = await writeTests({
+        repoPath: String(body.repoPath ?? ""),
+        task: String(body.task ?? ""),
+        files: Array.isArray(body.files) ? body.files : [],
+      });
+      return json(res, 200, { write: result });
     }
 
     return json(res, 404, { error: "not_found" });
@@ -114,6 +124,80 @@ async function runPreflight({ repoPath, task }) {
       "No rsync workaround.",
     ],
     risk: blockers.length > 0 ? "high" : git?.dirtyTree ? "medium" : "low",
+  };
+}
+
+async function writeTests({ repoPath, task, files }) {
+  const preflight = await runPreflight({ repoPath, task });
+  if (preflight.blockers.length > 0) {
+    return {
+      ok: false,
+      repoPath: preflight.repoPath,
+      filesWritten: [],
+      blockers: preflight.blockers,
+      diffStat: "",
+      diff: "",
+    };
+  }
+
+  const blockers = [];
+  const normalizedFiles = [];
+  for (const file of files) {
+    const path = String(file?.path ?? "").trim();
+    const content = String(file?.content ?? "");
+    if (!path) {
+      blockers.push("missing_file_path");
+      continue;
+    }
+    if (!isAllowedTestPath(path)) {
+      blockers.push(`path_outside_test_scope:${path}`);
+      continue;
+    }
+    const full = resolve(preflight.repoPath, path);
+    if (!isInside(full, preflight.repoPath)) {
+      blockers.push(`path_escape:${path}`);
+      continue;
+    }
+    normalizedFiles.push({ path, full, content });
+  }
+
+  if (normalizedFiles.length === 0) blockers.push("no_valid_test_files");
+  if (blockers.length > 0) {
+    return {
+      ok: false,
+      repoPath: preflight.repoPath,
+      filesWritten: [],
+      blockers,
+      diffStat: "",
+      diff: "",
+    };
+  }
+
+  for (const file of normalizedFiles) {
+    await mkdir(dirname(file.full), { recursive: true });
+    await writeFile(file.full, file.content, "utf8");
+  }
+
+  const diffStat = preflight.gitRepo ? await gitOutput(preflight.repoPath, ["diff", "--stat"]) : "";
+  const diff = preflight.gitRepo
+    ? await gitOutput(preflight.repoPath, ["diff", "--", ...normalizedFiles.map((f) => f.path)])
+    : "";
+
+  return {
+    ok: true,
+    repoPath: preflight.repoPath,
+    repoName: preflight.repoName,
+    filesWritten: normalizedFiles.map((f) => f.path),
+    blockers: [],
+    gitRepo: preflight.gitRepo,
+    diffStat,
+    diff,
+    forbiddenMoves: [
+      "Only test files were allowed.",
+      "No package install.",
+      "No git reset/checkout/commit.",
+      "No deploy.",
+    ],
   };
 }
 
@@ -178,6 +262,29 @@ async function inspectGit(repo) {
   }
 }
 
+async function gitOutput(repo, args) {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", repo, ...args], {
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+    });
+    return stdout;
+  } catch {
+    return "";
+  }
+}
+
+function isAllowedTestPath(path) {
+  if (isAbsolute(path)) return false;
+  if (path.split(/[\\/]/).some((part) => part === "..")) return false;
+  return (
+    path.startsWith("tests/") ||
+    path.includes("/__tests__/") ||
+    path.startsWith("__tests__/") ||
+    /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
+  );
+}
+
 async function hostname() {
   try {
     const { stdout } = await execFileAsync("hostname", [], { timeout: 1000 });
@@ -222,4 +329,3 @@ function json(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
 }
-

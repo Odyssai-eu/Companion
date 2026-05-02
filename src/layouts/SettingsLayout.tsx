@@ -18,14 +18,8 @@ export default function SettingsLayout() {
     if (!isMobile) setDrawerOpen(false);
   }, [isMobile]);
 
-  // Close-to-chat handler: try going back in history; if there's nothing to
-  // go back to (fresh tab landed straight on /settings/...), navigate home.
   function closeSettings() {
-    if (window.history.length > 1) {
-      navigate(-1);
-    } else {
-      navigate("/");
-    }
+    navigate("/", { replace: true });
   }
 
   // Esc anywhere in /settings/* exits settings. Same affordance as a modal.

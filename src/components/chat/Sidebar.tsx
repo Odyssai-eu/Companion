@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { useAuth } from "~/hooks/useAuth";
-import { api, type ApiConversation, type ApiProject } from "~/lib/api";
-import { ChatIcon, ProjectIcon } from "../ProjectIcon";
+import {
+  api,
+  type ApiCodeSession,
+  type ApiConversation,
+  type ApiProject,
+} from "~/lib/api";
+import { ProjectIcon } from "../ProjectIcon";
 import Wordmark from "../Wordmark";
 
 type Props = {
@@ -27,17 +32,26 @@ export default function Sidebar({
 }: Props) {
   const [conversations, setConversations] = useState<ApiConversation[]>([]);
   const [projectsList, setProjectsList] = useState<ApiProject[]>([]);
+  const [codeSessions, setCodeSessions] = useState<ApiCodeSession[]>([]);
   const [search, setSearch] = useState("");
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const mode: "chat" | "projects" | "code" = pathname.startsWith("/code")
+    ? "code"
+    : pathname.startsWith("/projects")
+      ? "projects"
+      : "chat";
 
   const refresh = async () => {
     try {
-      const [{ conversations }, { projects }] = await Promise.all([
+      const [{ conversations }, { projects }, code] = await Promise.all([
         api.listConversations(),
         api.listProjects(),
+        api.listCodeSessions().catch(() => ({ sessions: [] })),
       ]);
       setConversations(conversations);
       setProjectsList(projects);
+      setCodeSessions(code.sessions);
     } catch {
       // ignore; empty lists are fine for the shell
     }
@@ -74,6 +88,21 @@ export default function Sidebar({
       })
     : projectFiltered;
   const groups = groupByBucket(filtered);
+  const filteredProjects = search.trim()
+    ? projectsList.filter((p) =>
+        p.name.toLowerCase().includes(search.trim().toLowerCase()),
+      )
+    : projectsList;
+  const filteredCodeSessions = search.trim()
+    ? codeSessions.filter((s) => {
+        const q = search.trim().toLowerCase();
+        return (
+          s.task.toLowerCase().includes(q) ||
+          s.repoName.toLowerCase().includes(q) ||
+          s.repoPath.toLowerCase().includes(q)
+        );
+      })
+    : codeSessions;
 
   async function startNewConversation() {
     // If we're inside a project, the new conversation must inherit the
@@ -96,6 +125,10 @@ export default function Sidebar({
     }
   }
 
+  function startNewCodeSession() {
+    navigate("/code");
+  }
+
   return (
     <>
       {mobileOpen && (
@@ -110,108 +143,120 @@ export default function Sidebar({
       }`}
     >
       <header className="px-4 pt-4 pb-3">
-        <Wordmark size="sm" />
+        <Link to="/" aria-label="Home">
+          <Wordmark size="sm" />
+        </Link>
       </header>
 
       <div className="px-3 pb-3">
-        <SearchInput value={search} onChange={setSearch} />
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder={
+            mode === "projects"
+              ? "Search projects"
+              : mode === "code"
+                ? "Search code sessions"
+                : "Search conversations"
+          }
+        />
+      </div>
+
+      <div className="grid grid-cols-3 gap-1 px-3 pb-3">
+        <ModeButton active={mode === "chat"} onClick={() => navigate("/")}>
+          Chat
+        </ModeButton>
+        <ModeButton active={mode === "projects"} onClick={() => navigate("/projects/new")}>
+          Projects
+        </ModeButton>
+        <ModeButton active={mode === "code"} onClick={() => navigate("/code")}>
+          Code
+        </ModeButton>
       </div>
 
       <div className="flex flex-col gap-1.5 px-3 pb-4">
-        <button
-          type="button"
-          onClick={startNewConversation}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-navy px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-95"
-        >
-          <PlusIcon />
-          {activeProjectId ? "New chat in project" : "New conversation"}
-        </button>
-        {activeProjectId && (
+        {mode === "chat" && (
           <button
             type="button"
-            onClick={() => navigate("/")}
-            className="text-center text-[12px] text-gray-500 hover:text-ink"
+            onClick={startNewConversation}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-navy px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-95"
           >
-            ← All chats
+            <PlusIcon />
+            Conversation +
+          </button>
+        )}
+        {mode === "projects" && (
+          <Link
+            to="/projects/new"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-navy px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-95"
+          >
+            <PlusIcon />
+            Project +
+          </Link>
+        )}
+        {mode === "code" && (
+          <button
+            type="button"
+            onClick={startNewCodeSession}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-navy px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-95"
+          >
+            <PlusIcon />
+            Code +
           </button>
         )}
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 pb-4">
-        <Section
-          title="Projects"
-          trailing={
-            <Link
-              to="/projects/new"
-              aria-label="New project"
-              className="flex h-5 w-5 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-ink"
-            >
-              <PlusIcon />
-            </Link>
-          }
-        >
-          <button
-            type="button"
-            onClick={() => navigate("/")}
-            className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left transition-colors ${
-              !activeProjectId
-                ? "bg-[rgba(79,179,217,0.12)] text-navy"
-                : "text-ink hover:bg-gray-50"
-            }`}
-          >
-            <span className="flex min-w-0 items-center gap-2">
-              <ChatIcon size={14} className="flex-shrink-0 text-gray-500" />
-              <span
-                className={`truncate text-[13px] ${
-                  !activeProjectId ? "font-medium" : "font-normal"
-                }`}
-              >
-                All chats
-              </span>
-            </span>
-            <span className="font-mono text-[11px] text-gray-400">
-              {conversations.filter((c) => !c.projectId).length}
-            </span>
-          </button>
-          {projectsList.map((p) => (
-            <ProjectRow
-              key={p.id}
-              project={p}
-              conversationCount={
-                conversations.filter((c) => c.projectId === p.id).length
-              }
-              active={p.id === activeProjectId}
-            />
-          ))}
-          {projectsList.length === 0 && (
-            <span className="px-2 py-1 text-[11px] text-gray-400">
-              No projects yet.
-            </span>
-          )}
-        </Section>
+        {mode === "chat" && (
+          <>
+            {groups.map((g) => (
+              <Section key={g.title} title={g.title}>
+                {g.items.map((c) => (
+                  <ConversationRow
+                    key={c.id}
+                    conversation={c}
+                    active={c.id === activeConversationId}
+                    streaming={c.id === streamingConversationId}
+                    projects={projectsList}
+                    onRemove={(id) =>
+                      setConversations((prev) => prev.filter((x) => x.id !== id))
+                    }
+                    onChange={refresh}
+                  />
+                ))}
+              </Section>
+            ))}
+            {filtered.length === 0 && (
+              <EmptyState label="No conversations yet." />
+            )}
+          </>
+        )}
 
-        {groups.map((g) => (
-          <Section key={g.title} title={g.title}>
-            {g.items.map((c) => (
-              <ConversationRow
-                key={c.id}
-                conversation={c}
-                active={c.id === activeConversationId}
-                streaming={c.id === streamingConversationId}
-                projects={projectsList}
-                onRemove={(id) =>
-                  setConversations((prev) => prev.filter((x) => x.id !== id))
+        {mode === "projects" && (
+          <Section title="Projects">
+            {filteredProjects.map((p) => (
+              <ProjectRow
+                key={p.id}
+                project={p}
+                conversationCount={
+                  conversations.filter((c) => c.projectId === p.id).length
                 }
-                onChange={refresh}
+                active={p.id === activeProjectId}
               />
             ))}
+            {filteredProjects.length === 0 && <EmptyState label="No projects yet." />}
           </Section>
-        ))}
+        )}
 
-        {conversations.length === 0 && (
-          <div className="mt-2 rounded-md px-2 py-3 text-[12px] text-gray-400">
-            No conversations yet. Start one below.
-          </div>
+        {mode === "code" && (
+          <Section title="Code sessions">
+            {filteredCodeSessions.map((s) => (
+              <CodeSessionRow key={s.id} session={s} />
+            ))}
+            {filteredCodeSessions.length === 0 && (
+              <EmptyState label="No code sessions yet." />
+            )}
+          </Section>
         )}
       </nav>
 
@@ -277,6 +322,30 @@ function Section({
   );
 }
 
+function ModeButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`h-8 rounded-md text-[12px] font-medium transition-colors ${
+        active
+          ? "bg-[rgba(79,179,217,0.14)] text-navy"
+          : "text-gray-500 hover:bg-gray-50 hover:text-ink"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function ProjectRow({
   project,
   conversationCount,
@@ -313,6 +382,35 @@ function ProjectRow({
         </span>
       )}
     </Link>
+  );
+}
+
+function CodeSessionRow({ session }: { session: ApiCodeSession }) {
+  return (
+    <Link
+      to={`/code?session=${session.id}`}
+      className="flex flex-col gap-1 rounded-lg px-3 py-2 text-ink transition-colors hover:bg-gray-50"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[13px] font-medium">
+          {session.task || "Code session"}
+        </span>
+        <span className="flex-shrink-0 rounded-full border border-gray-200 px-1.5 py-0.5 font-mono text-[9px] text-gray-500">
+          {session.status}
+        </span>
+      </div>
+      <span className="truncate font-mono text-[11px] text-gray-400">
+        {session.repoName} · {relativeTime(session.createdAt)}
+      </span>
+    </Link>
+  );
+}
+
+function EmptyState({ label }: { label: string }) {
+  return (
+    <div className="mt-2 rounded-md px-2 py-3 text-[12px] text-gray-400">
+      {label}
+    </div>
   );
 }
 
@@ -546,9 +644,11 @@ function relativeTime(iso: string): string {
 function SearchInput({
   value,
   onChange,
+  placeholder,
 }: {
   value: string;
   onChange: (v: string) => void;
+  placeholder: string;
 }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 focus-within:border-cyan">
@@ -557,7 +657,7 @@ function SearchInput({
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Search conversations"
+        placeholder={placeholder}
         className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-gray-400"
       />
       {value ? (
@@ -616,7 +716,7 @@ function UserFooter() {
           <LogoutIcon />
         </button>
         <Link
-          to="/settings/servers"
+          to="/settings/inference"
           aria-label="Settings"
           className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-gray-50 hover:text-ink"
         >

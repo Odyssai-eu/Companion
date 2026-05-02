@@ -26,11 +26,13 @@ export default function IconRail() {
   return (
     <aside className="flex h-full w-[72px] flex-col items-center justify-between border-r border-gray-200 bg-white py-4">
       <div className="flex flex-col items-center gap-4">
-        <img
-          src="/logo/icon-192.png"
-          alt="Thecomp.ai"
-          className="h-9 w-9 rounded-full"
-        />
+        <Link to="/" aria-label="Home">
+          <img
+            src="/logo/icon-192.png"
+            alt="Thecomp.ai"
+            className="h-9 w-9 rounded-full"
+          />
+        </Link>
         <div className="flex flex-col items-center gap-1">
           {items.map((item) => (
             <Link

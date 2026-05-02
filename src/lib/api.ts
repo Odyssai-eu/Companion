@@ -479,6 +479,24 @@ export const api = {
         body: JSON.stringify(body ?? {}),
       },
     ),
+  codeHermesWriteTests: (
+    id: string,
+    body?: { model?: string; skills?: string[] },
+  ) =>
+    request<{
+      session: ApiCodeSession;
+      hermes?: unknown;
+      write?: {
+        ok: boolean;
+        filesWritten: string[];
+        blockers: string[];
+        diffStat: string;
+        diff: string;
+      };
+    }>(`/api/code/${id}/hermes-write-tests`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
 
   // Projects
   listProjects: () =>

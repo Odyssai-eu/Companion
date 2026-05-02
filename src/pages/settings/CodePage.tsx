@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import { api, type ApiCodePreflight, type ApiCodeSession } from "~/lib/api";
 
 const DEFAULT_REPO = "/Users/admin/repos/runner-smoke";
@@ -11,11 +12,13 @@ export default function CodePage() {
   );
   const [busy, setBusy] = useState(false);
   const [hermesBusy, setHermesBusy] = useState(false);
+  const [writeBusy, setWriteBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApiCodePreflight | null>(null);
   const [selectedSession, setSelectedSession] = useState<ApiCodeSession | null>(null);
   const [sessions, setSessions] = useState<ApiCodeSession[]>([]);
   const [model, setModel] = useState(DEFAULT_MODEL);
+  const [searchParams] = useSearchParams();
 
   async function refreshSessions() {
     try {
@@ -29,6 +32,16 @@ export default function CodePage() {
   useEffect(() => {
     refreshSessions();
   }, []);
+
+  useEffect(() => {
+    const id = searchParams.get("session");
+    if (!id) return;
+    api
+      .getCodeSession(id)
+      .then(({ session }) => selectSession(session))
+      .catch((e) => setError((e as Error).message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   async function runPreflight() {
     setBusy(true);
@@ -59,6 +72,30 @@ export default function CodePage() {
     } finally {
       setHermesBusy(false);
     }
+  }
+
+  async function runHermesWriteTests() {
+    if (!selectedSession) return;
+    setWriteBusy(true);
+    setError(null);
+    try {
+      const r = await api.codeHermesWriteTests(selectedSession.id, { model });
+      setSelectedSession(r.session);
+      if (r.session.preflight) setResult(r.session.preflight);
+      await refreshSessions();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setWriteBusy(false);
+    }
+  }
+
+  function selectSession(session: ApiCodeSession) {
+    if (session.preflight) setResult(session.preflight);
+    setSelectedSession(session);
+    setRepoPath(session.repoPath);
+    setTask(session.task);
+    setModel(session.model ?? DEFAULT_MODEL);
   }
 
   async function deleteSession(id: string) {
@@ -155,7 +192,25 @@ export default function CodePage() {
             {hermesBusy ? "Hermes running…" : "Run Hermes read-only"}
           </button>
           <span className="font-mono text-[11px] text-gray-400">
-            Uses the selected LiteLLM model. Write mode is still disabled.
+            Uses the selected LiteLLM model.
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={runHermesWriteTests}
+            disabled={
+              writeBusy ||
+              !selectedSession ||
+              selectedSession.blockers?.length !== 0 ||
+              !model.trim()
+            }
+            className="rounded-md bg-cyan px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
+          >
+            {writeBusy ? "Hermes writing…" : "Hermes write tests"}
+          </button>
+          <span className="font-mono text-[11px] text-gray-400">
+            Test files only. No commits, installs, or deploy.
           </span>
         </div>
         {error && (
@@ -173,13 +228,7 @@ export default function CodePage() {
         sessions={sessions}
         onDelete={deleteSession}
         onClear={clearSessions}
-        onSelect={(session) => {
-          if (session.preflight) setResult(session.preflight);
-          setSelectedSession(session);
-          setRepoPath(session.repoPath);
-          setTask(session.task);
-          setModel(session.model ?? DEFAULT_MODEL);
-        }}
+        onSelect={selectSession}
       />
     </div>
   );

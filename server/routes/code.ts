@@ -4,7 +4,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
 import { codeSessions } from "../db/schema";
-import { runConfiguredCodePreflight } from "../lib/code-runner-client";
+import {
+  runConfiguredCodePreflight,
+  writeConfiguredTests,
+  type CodeWriteFile,
+} from "../lib/code-runner-client";
 import { loadHermesConfig, startHermesSession } from "../lib/hermes-client";
 
 type Env = { Variables: { userId: string } };
@@ -18,6 +22,11 @@ const preflightSchema = z.object({
 });
 
 const hermesPreflightSchema = z.object({
+  model: z.string().min(1).max(160).optional(),
+  skills: z.array(z.string().min(1).max(120)).optional(),
+});
+
+const hermesWriteSchema = z.object({
   model: z.string().min(1).max(160).optional(),
   skills: z.array(z.string().min(1).max(120)).optional(),
 });
@@ -203,6 +212,122 @@ codeRoute.post(
   },
 );
 
+codeRoute.post(
+  "/:id/hermes-write-tests",
+  zValidator("json", hermesWriteSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const id = c.req.param("id");
+    const body = c.req.valid("json");
+    const [session] = await db
+      .select()
+      .from(codeSessions)
+      .where(eq(codeSessions.id, id))
+      .limit(1);
+    if (!session || session.userId !== userId) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    if (!session.preflight) {
+      return c.json({ error: "missing_preflight" }, 400);
+    }
+    if ((session.blockers ?? []).length > 0) {
+      return c.json({ error: "blocked_preflight", blockers: session.blockers }, 400);
+    }
+
+    const hermes = await loadHermesConfig(userId);
+    if (!hermes) {
+      return c.json({ error: "hermes_not_enabled" }, 400);
+    }
+
+    const model = body.model ?? session.model ?? hermes.defaultModel;
+    const skills = body.skills ?? hermes.selectedSkills;
+    const prompt = buildHermesWriteTestsPrompt({
+      task: session.task,
+      repoPath: session.repoPath,
+      preflight: session.preflight,
+    });
+
+    await db
+      .update(codeSessions)
+      .set({
+        model,
+        status: "hermes_writing",
+        hermesStatus: "running",
+        updatedAt: new Date(),
+      })
+      .where(eq(codeSessions.id, id));
+
+    try {
+      const h = await startHermesSession({
+        bridgeUrl: hermes.bridgeUrl,
+        prompt,
+        mode: "quick",
+        model,
+        skills,
+        yolo: false,
+        timeoutMs: 240_000,
+      });
+      if (h.status !== "done") {
+        const [updated] = await db
+          .update(codeSessions)
+          .set({
+            model,
+            status: "hermes_failed",
+            hermesSessionId: h.id,
+            hermesStatus: h.status,
+            hermesOutput: h.output,
+            hermesError: h.error,
+            updatedAt: new Date(),
+          })
+          .where(eq(codeSessions.id, id))
+          .returning();
+        return c.json({ session: updated, hermes: h }, 502);
+      }
+
+      const proposal = parseHermesTestProposal(h.output);
+      const write = await writeConfiguredTests({
+        repoPath: session.repoPath,
+        task: session.task,
+        files: proposal.files,
+      });
+      const status = write.ok ? "write_done" : "write_blocked";
+      const output = [
+        h.output,
+        "",
+        "TheCompAI runner write result:",
+        JSON.stringify(write, null, 2),
+      ].join("\n");
+      const [updated] = await db
+        .update(codeSessions)
+        .set({
+          model,
+          status,
+          hermesSessionId: h.id,
+          hermesStatus: h.status,
+          hermesOutput: output,
+          hermesError: write.ok ? h.error : write.blockers.join("\n"),
+          updatedAt: new Date(),
+        })
+        .where(eq(codeSessions.id, id))
+        .returning();
+      return c.json({ session: updated, hermes: h, write });
+    } catch (e) {
+      const [updated] = await db
+        .update(codeSessions)
+        .set({
+          model,
+          status: "hermes_failed",
+          hermesStatus: "failed",
+          hermesError: (e as Error).message,
+          updatedAt: new Date(),
+        })
+        .where(eq(codeSessions.id, id))
+        .returning();
+      return c.json({ session: updated, error: (e as Error).message }, 502);
+    }
+  },
+);
+
 function buildHermesReadOnlyPrompt({
   task,
   repoPath,
@@ -238,6 +363,73 @@ function buildHermesReadOnlyPrompt({
     "4. whether Hermes can later write tests for this task",
     "5. exact blockers, if any",
   ].join("\n");
+}
+
+function buildHermesWriteTestsPrompt({
+  task,
+  repoPath,
+  preflight,
+}: {
+  task: string;
+  repoPath: string;
+  preflight: Record<string, unknown>;
+}) {
+  return [
+    "You are generating a constrained test-file write proposal for TheCompAI.",
+    "",
+    "Hard rules:",
+    "- Return JSON only. No markdown fence, no prose.",
+    "- Do not ask a question if the needed facts are in the preflight JSON.",
+    "- Only propose test files. Allowed paths: tests/**, __tests__/**, **/*.test.ts, **/*.test.tsx, **/*.spec.ts, **/*.spec.tsx, and JS equivalents.",
+    "- Do not propose edits to application/source files.",
+    "- Do not propose package installs, git commands, deploy commands, or formatting runs.",
+    "- If you cannot produce a useful test file, return {\"files\":[],\"blockers\":[\"reason\"]}.",
+    "",
+    `Repository path: ${repoPath}`,
+    "",
+    "User task:",
+    task,
+    "",
+    "Context preflight JSON:",
+    JSON.stringify(preflight, null, 2).slice(0, 24_000),
+    "",
+    "Required JSON shape:",
+    "{\"files\":[{\"path\":\"tests/example.test.ts\",\"content\":\"...\"}],\"blockers\":[],\"summary\":\"...\"}",
+  ].join("\n");
+}
+
+function parseHermesTestProposal(output: string): {
+  files: CodeWriteFile[];
+  blockers: string[];
+  summary?: string;
+} {
+  const trimmed = output.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const jsonText = fenced?.[1]?.trim() ?? trimmed;
+  const parsed = JSON.parse(jsonText) as {
+    files?: Array<{ path?: unknown; content?: unknown }>;
+    blockers?: unknown;
+    summary?: unknown;
+  };
+  const files = Array.isArray(parsed.files)
+    ? parsed.files
+        .map((f) => ({
+          path: String(f.path ?? "").trim(),
+          content: String(f.content ?? ""),
+        }))
+        .filter((f) => f.path && f.content)
+    : [];
+  const blockers = Array.isArray(parsed.blockers)
+    ? parsed.blockers.map((b) => String(b))
+    : [];
+  if (files.length === 0 && blockers.length === 0) {
+    blockers.push("hermes_returned_no_files");
+  }
+  return {
+    files,
+    blockers,
+    summary: typeof parsed.summary === "string" ? parsed.summary : undefined,
+  };
 }
 
 export default codeRoute;
