@@ -1,6 +1,6 @@
 # Feature parity — ExoScopy → Thecomp.ai
 
-Dernière mise à jour : **2026-05-02**, app **v0.1.46**.
+Dernière mise à jour : **2026-05-02**, app **v0.1.47**.
 
 But de ce document : savoir ce qui est réellement présent dans le code actuel, ce qui reste stub, et ce qui est volontairement hors scope. L'ancien audit du 2026-04-25 est obsolète : plusieurs régressions rouges ont depuis été livrées.
 
@@ -160,7 +160,7 @@ Note : ces features contredisent partiellement la ligne “client-only SaaS pur�
 
 ### Bloquant produit
 
-1. **Hermes code UX** — afficher séparément proposal, files written, diff, test logs, et prochain step dans la Code session.
+1. **Hermes real-repo validation** — tester le full flow sur un vrai repo git pour valider diff, dirty tree, test command et rollback manuel.
 2. **Smoke test runtime complet** — Docker DB + login + LiteLLM + chat + image/PDF + memory + tools.
 3. **Billing / entitlement** — minimum viable : plan state + license gate non-stub pour prod.
 
@@ -184,4 +184,4 @@ Note : ces features contredisent partiellement la ligne “client-only SaaS pur�
 
 ## Vérification
 
-Dernière vérification locale : `npm run build` OK le 2026-05-02. Déploiement dev `v0.1.46` OK, health check LAN + `dev.thecomp.ai` OK. Test API `run-tests` OK sur `runner-smoke`.
+Dernière vérification locale : `npm run build` OK le 2026-05-02. Déploiement dev `v0.1.47` OK, health check LAN + `dev.thecomp.ai` OK. Code session UX structurée en blocs.
