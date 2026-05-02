@@ -278,12 +278,18 @@ function PreflightReport({
   result: ApiCodePreflight;
   session: ApiCodeSession | null;
 }) {
+  const blockers = result.blockers ?? [];
+  const docsRead = result.docsRead ?? [];
+  const memorySources = result.memorySources ?? [];
+  const factsUsed = result.factsUsed ?? [];
+  const forbiddenMoves = result.forbiddenMoves ?? [];
+  const manifests = result.manifests ?? [];
   return (
     <section className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge
-          label={result.blockers.length === 0 ? "Ready" : "Blocked"}
-          tone={result.blockers.length === 0 ? "green" : "red"}
+          label={blockers.length === 0 ? "Ready" : "Blocked"}
+          tone={blockers.length === 0 ? "green" : "red"}
         />
         <StatusBadge label={`Risk ${result.risk}`} tone={riskTone(result.risk)} />
         <StatusBadge label={result.gitRepo ? "Git repo" : "Plain folder"} />
@@ -300,10 +306,10 @@ function PreflightReport({
         </Panel>
 
         <Panel title="Blockers">
-          {result.blockers.length === 0 ? (
+          {blockers.length === 0 ? (
             <span className="text-[13px] text-gray-500">None.</span>
           ) : (
-            <List items={result.blockers} tone="red" />
+            <List items={blockers} tone="red" />
           )}
         </Panel>
       </div>
@@ -315,7 +321,7 @@ function PreflightReport({
               Docs read
             </span>
             <List
-              items={result.docsRead.map(
+              items={docsRead.map(
                 (d) => `${d.path} (${d.bytes.toLocaleString()} bytes)`,
               )}
             />
@@ -324,23 +330,23 @@ function PreflightReport({
             <span className="text-[11px] tracking-[0.04em] text-gray-400 uppercase">
               Memory / RAG sources
             </span>
-            <List items={result.memorySources} empty="No memory source loaded." />
+            <List items={memorySources} empty="No memory source loaded." />
           </div>
         </div>
       </Panel>
 
       <Panel title="Facts used">
-        <List items={result.factsUsed} empty="No external facts used." />
+        <List items={factsUsed} empty="No external facts used." />
       </Panel>
 
       <Panel title="Forbidden moves">
-        <List items={result.forbiddenMoves} />
+        <List items={forbiddenMoves} />
       </Panel>
 
-      {result.manifests.length > 0 && (
+      {manifests.length > 0 && (
         <Panel title="Detected stack">
           <div className="flex flex-wrap gap-2">
-            {result.manifests.map((m) => (
+            {manifests.map((m) => (
               <span
                 key={m}
                 className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-[11px] text-gray-600"
