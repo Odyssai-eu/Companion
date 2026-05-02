@@ -14,6 +14,7 @@ export default function CodePage() {
   const [hermesBusy, setHermesBusy] = useState(false);
   const [writeBusy, setWriteBusy] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
+  const [fullFlowBusy, setFullFlowBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApiCodePreflight | null>(null);
   const [selectedSession, setSelectedSession] = useState<ApiCodeSession | null>(null);
@@ -110,6 +111,38 @@ export default function CodePage() {
     }
   }
 
+  async function runFullFlow() {
+    setFullFlowBusy(true);
+    setError(null);
+    try {
+      const pre = selectedSession
+        ? { session: selectedSession, preflight: selectedSession.preflight }
+        : await api.codePreflight({ repoPath, task, model });
+      if (!pre.session.preflight) throw new Error("missing_preflight");
+      setResult(pre.session.preflight);
+      setSelectedSession(pre.session);
+      await refreshSessions();
+      if ((pre.session.blockers ?? []).length > 0) return;
+
+      const written = await api.codeHermesWriteTests(pre.session.id, { model });
+      setSelectedSession(written.session);
+      if (written.session.preflight) setResult(written.session.preflight);
+      await refreshSessions();
+      if (written.session.status !== "write_done") return;
+
+      const tested = await api.codeRunTests(written.session.id, {
+        command: testCommand.trim() || undefined,
+      });
+      setSelectedSession(tested.session);
+      if (tested.session.preflight) setResult(tested.session.preflight);
+      await refreshSessions();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setFullFlowBusy(false);
+    }
+  }
+
   function selectSession(session: ApiCodeSession) {
     if (session.preflight) setResult(session.preflight);
     setSelectedSession(session);
@@ -193,33 +226,30 @@ export default function CodePage() {
             className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
           />
         </Field>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={runFullFlow}
+            disabled={
+              fullFlowBusy ||
+              !repoPath.trim() ||
+              !task.trim() ||
+              !model.trim()
+            }
+            className="rounded-md bg-cyan px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
+          >
+            {fullFlowBusy ? "Running full flow…" : "Run full flow"}
+          </button>
           <button
             type="button"
             onClick={runPreflight}
             disabled={busy || !repoPath.trim() || !task.trim()}
-            className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
+            className="rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-ink hover:bg-gray-50 disabled:opacity-50"
           >
             {busy ? "Running…" : "Run preflight"}
           </button>
-          <span className="font-mono text-[11px] text-gray-400">
-            No files are written.
-          </span>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={runTests}
-            disabled={testBusy || !selectedSession}
-            className="rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-ink hover:bg-gray-50 disabled:opacity-50"
-          >
-            {testBusy ? "Testing…" : "Run tests"}
-          </button>
-          <span className="font-mono text-[11px] text-gray-400">
-            Allowlisted commands only. Timeout 120s.
-          </span>
-        </div>
-        <div className="flex items-center gap-3 border-t border-gray-100 pt-3">
+        <div className="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-3">
           <button
             type="button"
             onClick={runHermesPreflight}
@@ -236,8 +266,6 @@ export default function CodePage() {
           <span className="font-mono text-[11px] text-gray-400">
             Uses the selected LiteLLM model.
           </span>
-        </div>
-        <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={runHermesWriteTests}
@@ -254,6 +282,14 @@ export default function CodePage() {
           <span className="font-mono text-[11px] text-gray-400">
             Test files only. No commits, installs, or deploy.
           </span>
+          <button
+            type="button"
+            onClick={runTests}
+            disabled={testBusy || !selectedSession}
+            className="rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-ink hover:bg-gray-50 disabled:opacity-50"
+          >
+            {testBusy ? "Testing…" : "Run tests"}
+          </button>
         </div>
         {error && (
           <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 font-mono text-[11px] text-red-700">
@@ -369,6 +405,7 @@ function PreflightReport({
   result: ApiCodePreflight;
   session: ApiCodeSession | null;
 }) {
+  const parsed = parseCodeSessionOutput(session?.hermesOutput ?? "");
   const blockers = result.blockers ?? [];
   const docsRead = result.docsRead ?? [];
   const memorySources = result.memorySources ?? [];
@@ -377,6 +414,25 @@ function PreflightReport({
   const manifests = result.manifests ?? [];
   return (
     <section className="flex flex-col gap-5">
+      {session && (
+        <Panel title="Session">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge
+              label={statusLabel(session.status)}
+              tone={statusTone(session.status)}
+            />
+            <StatusBadge label={`Risk ${result.risk}`} tone={riskTone(result.risk)} />
+            <StatusBadge label={result.gitRepo ? "Git repo" : "Plain folder"} />
+            {result.dirtyTree === true && <StatusBadge label="Dirty tree" tone="amber" />}
+            {result.dirtyTree === false && <StatusBadge label="Clean tree" tone="green" />}
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            <KeyValue label="Model" value={session.model ?? "default"} mono />
+            <KeyValue label="Updated" value={new Date(session.updatedAt).toLocaleString()} />
+          </div>
+        </Panel>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge
           label={blockers.length === 0 ? "Ready" : "Blocked"}
@@ -405,7 +461,7 @@ function PreflightReport({
         </Panel>
       </div>
 
-      <Panel title="Context loaded">
+      <Panel title="Preflight">
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="flex flex-col gap-2">
             <span className="text-[11px] tracking-[0.04em] text-gray-400 uppercase">
@@ -449,11 +505,100 @@ function PreflightReport({
         </Panel>
       )}
 
-      {session?.hermesOutput && (
-        <Panel title="Hermes report">
+      {parsed.proposal && (
+        <Panel title="Hermes proposal">
+          {parsed.proposal.summary && (
+            <p className="text-[13px] leading-[20px] text-gray-700">
+              {parsed.proposal.summary}
+            </p>
+          )}
+          {parsed.proposal.blockers.length > 0 && (
+            <List items={parsed.proposal.blockers} tone="red" />
+          )}
+          {parsed.proposal.files.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {parsed.proposal.files.map((file) => (
+                <div
+                  key={file.path}
+                  className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"
+                >
+                  <div className="mb-2 font-mono text-[11px] text-gray-500">
+                    {file.path}
+                  </div>
+                  <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-[18px] text-gray-700">
+                    {file.content}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {parsed.write && (
+        <Panel title="Files written">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge
+              label={parsed.write.ok ? "write ok" : "write blocked"}
+              tone={parsed.write.ok ? "green" : "red"}
+            />
+            {parsed.write.gitRepo !== undefined && (
+              <StatusBadge label={parsed.write.gitRepo ? "Git repo" : "Plain folder"} />
+            )}
+          </div>
+          <List items={parsed.write.filesWritten} empty="No files written." />
+          {parsed.write.blockers.length > 0 && (
+            <List items={parsed.write.blockers} tone="red" />
+          )}
+          {parsed.write.diffStat && (
+            <pre className="overflow-auto rounded-lg bg-gray-50 px-4 py-3 font-mono text-[12px] leading-[18px] text-gray-700">
+              {parsed.write.diffStat}
+            </pre>
+          )}
+        </Panel>
+      )}
+
+      {parsed.write?.diff && (
+        <Panel title="Diff">
           <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-lg bg-gray-50 px-4 py-3 font-mono text-[12px] leading-[18px] text-gray-700">
-            {session.hermesOutput}
+            {parsed.write.diff}
           </pre>
+        </Panel>
+      )}
+
+      {parsed.test && (
+        <Panel title="Test logs">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge
+              label={parsed.test.ok ? "tests passed" : "tests failed"}
+              tone={parsed.test.ok ? "green" : "red"}
+            />
+            <StatusBadge label={parsed.test.command || "default command"} />
+            {parsed.test.exitCode !== null && (
+              <StatusBadge label={`exit ${parsed.test.exitCode}`} />
+            )}
+          </div>
+          {parsed.test.blockers.length > 0 && (
+            <List items={parsed.test.blockers} tone="red" />
+          )}
+          {parsed.test.stdout && (
+            <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-lg bg-gray-50 px-4 py-3 font-mono text-[12px] leading-[18px] text-gray-700">
+              {parsed.test.stdout}
+            </pre>
+          )}
+          {parsed.test.stderr && (
+            <pre className="max-h-[240px] overflow-auto whitespace-pre-wrap rounded-lg bg-red-50 px-4 py-3 font-mono text-[12px] leading-[18px] text-red-700">
+              {parsed.test.stderr}
+            </pre>
+          )}
+        </Panel>
+      )}
+
+      {session && (
+        <Panel title="Next action">
+          <span className="text-[13px] leading-[20px] text-gray-700">
+            {nextAction(session.status)}
+          </span>
         </Panel>
       )}
 
@@ -571,6 +716,136 @@ function riskTone(risk: ApiCodePreflight["risk"]) {
   if (risk === "low") return "green";
   if (risk === "medium") return "amber";
   return "red";
+}
+
+function statusTone(status: string): "gray" | "green" | "red" | "amber" {
+  if (["tests_passed", "write_done", "hermes_done", "preflight"].includes(status)) {
+    return "green";
+  }
+  if (["blocked", "write_blocked", "tests_failed", "hermes_failed", "failed"].includes(status)) {
+    return "red";
+  }
+  if (["testing", "hermes_writing", "hermes_preflight", "running"].includes(status)) {
+    return "amber";
+  }
+  return "gray";
+}
+
+function statusLabel(status: string) {
+  return status.replaceAll("_", " ");
+}
+
+function nextAction(status: string) {
+  if (status === "preflight") return "Run Hermes write tests, then run tests.";
+  if (status === "write_done") return "Run tests with the selected allowlisted command.";
+  if (status === "tests_passed") return "Review files and diff. For a git repo, the next step is commit/review.";
+  if (status === "tests_failed") return "Inspect logs, adjust the task or test command, then rerun.";
+  if (status === "blocked" || status === "write_blocked") return "Resolve blockers before continuing.";
+  if (status === "hermes_failed") return "Inspect Hermes error and rerun with a better model if needed.";
+  return "Continue with the next available action.";
+}
+
+type ParsedProposal = {
+  files: Array<{ path: string; content: string }>;
+  blockers: string[];
+  summary?: string;
+};
+
+type ParsedWrite = {
+  ok: boolean;
+  filesWritten: string[];
+  blockers: string[];
+  gitRepo?: boolean;
+  diffStat: string;
+  diff: string;
+};
+
+type ParsedTest = {
+  ok: boolean;
+  command: string;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  blockers: string[];
+  elapsedMs: number;
+};
+
+function parseCodeSessionOutput(output: string): {
+  proposal: ParsedProposal | null;
+  write: ParsedWrite | null;
+  test: ParsedTest | null;
+} {
+  return {
+    proposal: parseProposal(output),
+    write: parseJsonAfter<ParsedWrite>(output, "TheCompAI runner write result:"),
+    test: parseJsonAfter<ParsedTest>(output, "TheCompAI runner test result:"),
+  };
+}
+
+function parseProposal(output: string): ParsedProposal | null {
+  const fenced = output.match(/```json\s*([\s\S]*?)```/i);
+  const raw = fenced?.[1]?.trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<ParsedProposal>;
+    return {
+      files: Array.isArray(parsed.files)
+        ? parsed.files.map((f) => ({
+            path: String(f.path ?? ""),
+            content: String(f.content ?? ""),
+          }))
+        : [],
+      blockers: Array.isArray(parsed.blockers)
+        ? parsed.blockers.map((b) => String(b))
+        : [],
+      summary: typeof parsed.summary === "string" ? parsed.summary : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseJsonAfter<T>(output: string, marker: string): T | null {
+  const idx = output.indexOf(marker);
+  if (idx < 0) return null;
+  const rest = output.slice(idx + marker.length).trim();
+  const start = rest.indexOf("{");
+  if (start < 0) return null;
+  const json = extractBalancedJson(rest.slice(start));
+  if (!json) return null;
+  try {
+    return JSON.parse(json) as T;
+  } catch {
+    return null;
+  }
+}
+
+function extractBalancedJson(text: string) {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") depth += 1;
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(0, i + 1);
+    }
+  }
+  return null;
 }
 
 function defaultTestCommand(session: ApiCodeSession) {
