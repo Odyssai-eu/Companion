@@ -61,6 +61,32 @@ export default function CodePage() {
     }
   }
 
+  async function deleteSession(id: string) {
+    setError(null);
+    try {
+      await api.deleteCodeSession(id);
+      if (selectedSession?.id === id) {
+        setSelectedSession(null);
+        setResult(null);
+      }
+      await refreshSessions();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function clearSessions(scope: "terminal" | "all") {
+    setError(null);
+    try {
+      await api.clearCodeSessions(scope);
+      setSelectedSession(null);
+      setResult(null);
+      await refreshSessions();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-2">
@@ -145,6 +171,8 @@ export default function CodePage() {
 
       <SessionsList
         sessions={sessions}
+        onDelete={deleteSession}
+        onClear={clearSessions}
         onSelect={(session) => {
           if (session.preflight) setResult(session.preflight);
           setSelectedSession(session);
@@ -160,9 +188,13 @@ export default function CodePage() {
 function SessionsList({
   sessions,
   onSelect,
+  onDelete,
+  onClear,
 }: {
   sessions: ApiCodeSession[];
   onSelect: (session: ApiCodeSession) => void;
+  onDelete: (id: string) => void;
+  onClear: (scope: "terminal" | "all") => void;
 }) {
   return (
     <section className="flex flex-col gap-3">
@@ -173,6 +205,24 @@ function SessionsList({
         <span className="text-[12px] text-gray-400">
           Stored preflights, still read-only.
         </span>
+        {sessions.length > 0 && (
+          <div className="ml-auto flex gap-2">
+            <button
+              type="button"
+              onClick={() => onClear("terminal")}
+              className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-600 hover:bg-gray-50"
+            >
+              Clear failed
+            </button>
+            <button
+              type="button"
+              onClick={() => onClear("all")}
+              className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-[12px] text-red-700 hover:bg-red-100"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
       </div>
       {sessions.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-white px-5 py-4 text-[13px] text-gray-500">
@@ -181,28 +231,39 @@ function SessionsList({
       ) : (
         <div className="flex flex-col gap-2">
           {sessions.map((s) => (
-            <button
+            <div
               key={s.id}
-              type="button"
-              onClick={() => onSelect(s)}
-              className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white px-5 py-4 text-left hover:bg-gray-50"
+              className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white px-5 py-4"
             >
-              <StatusBadge
-                label={s.status}
-                tone={s.status === "blocked" ? "red" : "green"}
-              />
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <button
+                type="button"
+                onClick={() => onSelect(s)}
+                className="flex min-w-0 flex-1 items-center gap-4 text-left"
+              >
+                <StatusBadge
+                  label={s.status}
+                  tone={s.status === "blocked" ? "red" : "green"}
+                />
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
                 <span className="truncate text-[14px] font-medium text-ink">
                   {s.task}
                 </span>
-                <span className="truncate font-mono text-[11px] text-gray-400">
-                  {s.repoName} · {s.repoPath}
-                </span>
-              </div>
+                  <span className="truncate font-mono text-[11px] text-gray-400">
+                    {s.repoName} · {s.repoPath}
+                  </span>
+                </div>
+              </button>
               <span className="font-mono text-[11px] text-gray-400">
                 {new Date(s.createdAt).toLocaleString()}
               </span>
-            </button>
+              <button
+                type="button"
+                onClick={() => onDelete(s.id)}
+                className="rounded-md px-2 py-1 text-[12px] text-gray-400 hover:bg-red-50 hover:text-red-700"
+              >
+                Delete
+              </button>
+            </div>
           ))}
         </div>
       )}

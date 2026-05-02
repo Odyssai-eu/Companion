@@ -462,6 +462,12 @@ export const api = {
     request<{ sessions: ApiCodeSession[] }>(`/api/code?limit=${limit}`),
   getCodeSession: (id: string) =>
     request<{ session: ApiCodeSession }>(`/api/code/${id}`),
+  deleteCodeSession: (id: string) =>
+    request<void>(`/api/code/${id}`, { method: "DELETE" }),
+  clearCodeSessions: (scope: "terminal" | "all" = "terminal") =>
+    request<{ deleted: number }>(`/api/code?scope=${scope}`, {
+      method: "DELETE",
+    }),
   codeHermesPreflight: (
     id: string,
     body?: { model?: string; skills?: string[] },

@@ -1,5 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
@@ -26,6 +26,10 @@ const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
+const clearQuerySchema = z.object({
+  scope: z.enum(["terminal", "all"]).optional(),
+});
+
 codeRoute.get("/", zValidator("query", listQuerySchema), async (c) => {
   const userId = c.get("userId");
   const { limit = 30 } = c.req.valid("query");
@@ -50,6 +54,43 @@ codeRoute.get("/:id", async (c) => {
     return c.json({ error: "not_found" }, 404);
   }
   return c.json({ session: row });
+});
+
+codeRoute.delete("/", zValidator("query", clearQuerySchema), async (c) => {
+  const userId = c.get("userId");
+  const { scope = "terminal" } = c.req.valid("query");
+  const where =
+    scope === "all"
+      ? eq(codeSessions.userId, userId)
+      : and(
+          eq(codeSessions.userId, userId),
+          inArray(codeSessions.status, [
+            "blocked",
+            "failed",
+            "cancelled",
+            "canceled",
+            "hermes_failed",
+          ]),
+        );
+  const deleted = await db.delete(codeSessions).where(where).returning({
+    id: codeSessions.id,
+  });
+  return c.json({ deleted: deleted.length });
+});
+
+codeRoute.delete("/:id", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const [existing] = await db
+    .select({ userId: codeSessions.userId })
+    .from(codeSessions)
+    .where(eq(codeSessions.id, id))
+    .limit(1);
+  if (!existing || existing.userId !== userId) {
+    return c.json({ error: "not_found" }, 404);
+  }
+  await db.delete(codeSessions).where(eq(codeSessions.id, id));
+  return c.body(null, 204);
 });
 
 codeRoute.post("/preflight", zValidator("json", preflightSchema), async (c) => {

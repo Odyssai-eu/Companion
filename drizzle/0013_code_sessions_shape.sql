@@ -32,6 +32,10 @@ ALTER TABLE "code_sessions" ADD COLUMN IF NOT EXISTS "created_at" timestamp with
 --> statement-breakpoint
 ALTER TABLE "code_sessions" ADD COLUMN IF NOT EXISTS "updated_at" timestamp with time zone DEFAULT now() NOT NULL;
 --> statement-breakpoint
+ALTER TABLE "code_sessions" ALTER COLUMN "repo" DROP NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "code_sessions" ALTER COLUMN "autonomous" DROP NOT NULL;
+--> statement-breakpoint
 DO $$
 BEGIN
 	IF EXISTS (
