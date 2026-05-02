@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { access, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -76,6 +76,37 @@ createServer(async (req, res) => {
         command: String(body.command ?? ""),
       });
       return json(res, 200, { test: result });
+    }
+
+    if (req.method === "POST" && req.url === "/status") {
+      const body = await readJson(req);
+      const result = await repoStatus({
+        repoPath: String(body.repoPath ?? ""),
+        task: String(body.task ?? ""),
+        files: Array.isArray(body.files) ? body.files.map(String) : [],
+      });
+      return json(res, 200, { status: result });
+    }
+
+    if (req.method === "POST" && req.url === "/discard") {
+      const body = await readJson(req);
+      const result = await discardChanges({
+        repoPath: String(body.repoPath ?? ""),
+        task: String(body.task ?? ""),
+        files: Array.isArray(body.files) ? body.files.map(String) : [],
+      });
+      return json(res, 200, { discard: result });
+    }
+
+    if (req.method === "POST" && req.url === "/commit") {
+      const body = await readJson(req);
+      const result = await commitChanges({
+        repoPath: String(body.repoPath ?? ""),
+        task: String(body.task ?? ""),
+        files: Array.isArray(body.files) ? body.files.map(String) : [],
+        message: String(body.message ?? ""),
+      });
+      return json(res, 200, { commit: result });
     }
 
     return json(res, 404, { error: "not_found" });
@@ -277,6 +308,111 @@ async function runTests({ repoPath, task, command }) {
   }
 }
 
+async function repoStatus({ repoPath, task, files }) {
+  const preflight = await runPreflight({ repoPath, task });
+  if (preflight.blockers.length > 0) {
+    return { ok: false, repoPath: preflight.repoPath, blockers: preflight.blockers };
+  }
+  if (!preflight.gitRepo) {
+    return {
+      ok: true,
+      repoPath: preflight.repoPath,
+      gitRepo: false,
+      dirtyFiles: [],
+      diffStat: "",
+      diff: "",
+      blockers: [],
+    };
+  }
+  const scoped = normalizeScopedTestFiles(preflight.repoPath, files);
+  if (scoped.blockers.length > 0) {
+    return { ok: false, repoPath: preflight.repoPath, blockers: scoped.blockers };
+  }
+  const args = scoped.files.length > 0 ? ["--", ...scoped.files] : [];
+  const porcelain = await gitOutput(preflight.repoPath, ["status", "--porcelain", ...args]);
+  return {
+    ok: true,
+    repoPath: preflight.repoPath,
+    gitRepo: true,
+    dirtyFiles: porcelain
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+    diffStat: await gitOutput(preflight.repoPath, ["diff", "--stat", ...args]),
+    diff: await gitOutput(preflight.repoPath, ["diff", ...args]),
+    blockers: [],
+  };
+}
+
+async function discardChanges({ repoPath, task, files }) {
+  const preflight = await runPreflight({ repoPath, task });
+  if (preflight.blockers.length > 0) {
+    return { ok: false, repoPath: preflight.repoPath, filesDiscarded: [], blockers: preflight.blockers };
+  }
+  if (!preflight.gitRepo) {
+    return { ok: false, repoPath: preflight.repoPath, filesDiscarded: [], blockers: ["discard_requires_git_repo"] };
+  }
+  const scoped = normalizeScopedTestFiles(preflight.repoPath, files);
+  if (scoped.blockers.length > 0) {
+    return { ok: false, repoPath: preflight.repoPath, filesDiscarded: [], blockers: scoped.blockers };
+  }
+  if (scoped.files.length === 0) {
+    return { ok: false, repoPath: preflight.repoPath, filesDiscarded: [], blockers: ["missing_files"] };
+  }
+  const porcelain = await gitOutput(preflight.repoPath, ["status", "--porcelain", "--", ...scoped.files]);
+  await execFileAsync("git", ["-C", preflight.repoPath, "checkout", "--", ...scoped.files], {
+    timeout: 5000,
+  }).catch(() => undefined);
+  for (const line of porcelain.split("\n")) {
+    if (!line.startsWith("?? ")) continue;
+    const path = line.slice(3).trim();
+    if (scoped.files.includes(path)) {
+      await rm(resolve(preflight.repoPath, path), { force: true, recursive: true });
+    }
+  }
+  return {
+    ok: true,
+    repoPath: preflight.repoPath,
+    filesDiscarded: scoped.files,
+    blockers: [],
+    status: await repoStatus({ repoPath: preflight.repoPath, task, files: scoped.files }),
+  };
+}
+
+async function commitChanges({ repoPath, task, files, message }) {
+  const preflight = await runPreflight({ repoPath, task });
+  if (preflight.blockers.length > 0) {
+    return { ok: false, repoPath: preflight.repoPath, sha: "", blockers: preflight.blockers };
+  }
+  if (!preflight.gitRepo) {
+    return { ok: false, repoPath: preflight.repoPath, sha: "", blockers: ["commit_requires_git_repo"] };
+  }
+  const scoped = normalizeScopedTestFiles(preflight.repoPath, files);
+  if (scoped.blockers.length > 0) {
+    return { ok: false, repoPath: preflight.repoPath, sha: "", blockers: scoped.blockers };
+  }
+  if (scoped.files.length === 0) {
+    return { ok: false, repoPath: preflight.repoPath, sha: "", blockers: ["missing_files"] };
+  }
+  const msg = message.trim() || "test: add Hermes generated test coverage";
+  await execFileAsync("git", ["-C", preflight.repoPath, "add", "--", ...scoped.files], { timeout: 5000 });
+  const porcelain = await gitOutput(preflight.repoPath, ["diff", "--cached", "--name-only", "--", ...scoped.files]);
+  if (!porcelain.trim()) {
+    return { ok: false, repoPath: preflight.repoPath, sha: "", blockers: ["nothing_to_commit"] };
+  }
+  await execFileAsync("git", ["-C", preflight.repoPath, "commit", "-m", msg], { timeout: 10000 });
+  const sha = (await gitOutput(preflight.repoPath, ["rev-parse", "HEAD"])).trim();
+  return {
+    ok: true,
+    repoPath: preflight.repoPath,
+    sha,
+    message: msg,
+    filesCommitted: scoped.files,
+    blockers: [],
+    status: await repoStatus({ repoPath: preflight.repoPath, task, files: scoped.files }),
+  };
+}
+
 async function readDocs(repo) {
   const out = [];
   for (const inherited of await findInheritedInstructionDocs(repo)) {
@@ -359,6 +495,26 @@ function isAllowedTestPath(path) {
     path.startsWith("__tests__/") ||
     /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
   );
+}
+
+function normalizeScopedTestFiles(repo, files) {
+  const blockers = [];
+  const normalized = [];
+  for (const raw of files) {
+    const path = String(raw ?? "").trim();
+    if (!path) continue;
+    if (!isAllowedTestPath(path)) {
+      blockers.push(`path_outside_test_scope:${path}`);
+      continue;
+    }
+    const full = resolve(repo, path);
+    if (!isInside(full, repo)) {
+      blockers.push(`path_escape:${path}`);
+      continue;
+    }
+    normalized.push(path);
+  }
+  return { files: [...new Set(normalized)], blockers };
 }
 
 function defaultTestCommand(preflight) {

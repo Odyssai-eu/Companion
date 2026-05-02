@@ -25,6 +25,13 @@ export type CodeRunTestsResult = {
   elapsedMs: number;
 };
 
+type CodeReviewActionResult = {
+  ok: boolean;
+  repoPath: string;
+  blockers: string[];
+  [key: string]: unknown;
+};
+
 export async function runConfiguredCodePreflight(input: CodePreflightInput) {
   const url = (process.env.CODE_RUNNER_URL ?? "").replace(/\/+$/, "");
   const token = process.env.CODE_RUNNER_TOKEN ?? "";
@@ -121,6 +128,37 @@ export async function runConfiguredTests(input: {
     blockers: data.test.blockers ?? [],
     elapsedMs: data.test.elapsedMs ?? 0,
   };
+}
+
+export async function runCodeReviewAction<T extends CodeReviewActionResult>(
+  action: "status" | "discard" | "commit",
+  input: {
+    repoPath: string;
+    task: string;
+    files: string[];
+    message?: string;
+  },
+): Promise<T> {
+  const url = (process.env.CODE_RUNNER_URL ?? "").replace(/\/+$/, "");
+  const token = process.env.CODE_RUNNER_TOKEN ?? "";
+  if (!url) {
+    throw new Error("code_runner_required_for_review_action");
+  }
+  const r = await fetch(`${url}/${action}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`code_runner_${r.status}: ${text.slice(0, 500)}`);
+  }
+  const data = (await r.json()) as Record<string, T>;
+  return data[action] as T;
 }
 
 function normalizePreflight(

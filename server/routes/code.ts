@@ -6,6 +6,7 @@ import { db } from "../db/index";
 import { codeSessions } from "../db/schema";
 import {
   runConfiguredCodePreflight,
+  runCodeReviewAction,
   runConfiguredTests,
   writeConfiguredTests,
   type CodeWriteFile,
@@ -34,6 +35,10 @@ const hermesWriteSchema = z.object({
 
 const runTestsSchema = z.object({
   command: z.string().max(240).optional(),
+});
+
+const reviewActionSchema = z.object({
+  message: z.string().max(240).optional(),
 });
 
 const listQuerySchema = z.object({
@@ -399,6 +404,64 @@ codeRoute.post(
   },
 );
 
+codeRoute.post(
+  "/:id/review/:action",
+  zValidator("json", reviewActionSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const id = c.req.param("id");
+    const action = c.req.param("action");
+    const body = c.req.valid("json");
+    if (!["status", "discard", "commit"].includes(action)) {
+      return c.json({ error: "invalid_review_action" }, 400);
+    }
+    const [session] = await db
+      .select()
+      .from(codeSessions)
+      .where(eq(codeSessions.id, id))
+      .limit(1);
+    if (!session || session.userId !== userId) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    if (action === "commit" && session.status !== "tests_passed") {
+      return c.json({ error: "commit_requires_tests_passed" }, 400);
+    }
+    const files = extractFilesWritten(session.hermesOutput ?? "");
+    if (files.length === 0) {
+      return c.json({ error: "missing_written_files" }, 400);
+    }
+    const result = await runCodeReviewAction(action as "status" | "discard" | "commit", {
+      repoPath: session.repoPath,
+      task: session.task,
+      files,
+      message: body.message,
+    });
+    const output = [
+      session.hermesOutput ?? "",
+      "",
+      `TheCompAI runner ${action} result:`,
+      JSON.stringify(result, null, 2),
+    ].join("\n");
+    const nextStatus =
+      action === "commit" && result.ok
+        ? "committed"
+        : action === "discard" && result.ok
+          ? "discarded"
+          : session.status;
+    const [updated] = await db
+      .update(codeSessions)
+      .set({
+        status: nextStatus,
+        hermesOutput: output,
+        hermesError: result.ok ? session.hermesError : result.blockers?.join("\n"),
+        updatedAt: new Date(),
+      })
+      .where(eq(codeSessions.id, id))
+      .returning();
+    return c.json({ session: updated, [action]: result });
+  },
+);
+
 function buildHermesReadOnlyPrompt({
   task,
   repoPath,
@@ -501,6 +564,59 @@ function parseHermesTestProposal(output: string): {
     blockers,
     summary: typeof parsed.summary === "string" ? parsed.summary : undefined,
   };
+}
+
+function extractFilesWritten(output: string): string[] {
+  const write = parseJsonAfter<{ filesWritten?: unknown }>(
+    output,
+    "TheCompAI runner write result:",
+  );
+  return Array.isArray(write?.filesWritten)
+    ? write.filesWritten.map((f) => String(f)).filter(Boolean)
+    : [];
+}
+
+function parseJsonAfter<T>(output: string, marker: string): T | null {
+  const idx = output.indexOf(marker);
+  if (idx < 0) return null;
+  const rest = output.slice(idx + marker.length).trim();
+  const start = rest.indexOf("{");
+  if (start < 0) return null;
+  const json = extractBalancedJson(rest.slice(start));
+  if (!json) return null;
+  try {
+    return JSON.parse(json) as T;
+  } catch {
+    return null;
+  }
+}
+
+function extractBalancedJson(text: string) {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") depth += 1;
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(0, i + 1);
+    }
+  }
+  return null;
 }
 
 export default codeRoute;

@@ -15,6 +15,7 @@ export default function CodePage() {
   const [writeBusy, setWriteBusy] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
   const [fullFlowBusy, setFullFlowBusy] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApiCodePreflight | null>(null);
   const [selectedSession, setSelectedSession] = useState<ApiCodeSession | null>(null);
@@ -140,6 +141,26 @@ export default function CodePage() {
       setError((e as Error).message);
     } finally {
       setFullFlowBusy(false);
+    }
+  }
+
+  async function runReviewAction(action: "status" | "discard" | "commit") {
+    if (!selectedSession) return;
+    setReviewBusy(action);
+    setError(null);
+    try {
+      const message =
+        action === "commit"
+          ? `test: add Hermes coverage for ${selectedSession.repoName}`
+          : undefined;
+      const r = await api.codeReviewAction(selectedSession.id, action, { message });
+      setSelectedSession(r.session);
+      if (r.session.preflight) setResult(r.session.preflight);
+      await refreshSessions();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setReviewBusy(null);
     }
   }
 
@@ -289,6 +310,34 @@ export default function CodePage() {
             className="rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-ink hover:bg-gray-50 disabled:opacity-50"
           >
             {testBusy ? "Testing…" : "Run tests"}
+          </button>
+          <button
+            type="button"
+            onClick={() => runReviewAction("status")}
+            disabled={reviewBusy !== null || !selectedSession}
+            className="rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-ink hover:bg-gray-50 disabled:opacity-50"
+          >
+            {reviewBusy === "status" ? "Refreshing…" : "Repo status"}
+          </button>
+          <button
+            type="button"
+            onClick={() => runReviewAction("discard")}
+            disabled={reviewBusy !== null || !selectedSession}
+            className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-[13px] font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+          >
+            {reviewBusy === "discard" ? "Discarding…" : "Discard changes"}
+          </button>
+          <button
+            type="button"
+            onClick={() => runReviewAction("commit")}
+            disabled={
+              reviewBusy !== null ||
+              !selectedSession ||
+              selectedSession.status !== "tests_passed"
+            }
+            className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
+          >
+            {reviewBusy === "commit" ? "Committing…" : "Commit changes"}
           </button>
         </div>
         {error && (
@@ -594,6 +643,57 @@ function PreflightReport({
         </Panel>
       )}
 
+      {parsed.status && (
+        <Panel title="Repo status">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge
+              label={parsed.status.ok ? "status ok" : "status blocked"}
+              tone={parsed.status.ok ? "green" : "red"}
+            />
+            {parsed.status.gitRepo !== undefined && (
+              <StatusBadge label={parsed.status.gitRepo ? "Git repo" : "Plain folder"} />
+            )}
+          </div>
+          <List items={parsed.status.dirtyFiles ?? []} empty="No dirty files." />
+          {parsed.status.blockers.length > 0 && (
+            <List items={parsed.status.blockers} tone="red" />
+          )}
+          {parsed.status.diffStat && (
+            <pre className="overflow-auto rounded-lg bg-gray-50 px-4 py-3 font-mono text-[12px] leading-[18px] text-gray-700">
+              {parsed.status.diffStat}
+            </pre>
+          )}
+        </Panel>
+      )}
+
+      {parsed.discard && (
+        <Panel title="Discard result">
+          <StatusBadge
+            label={parsed.discard.ok ? "discarded" : "discard blocked"}
+            tone={parsed.discard.ok ? "green" : "red"}
+          />
+          <List items={parsed.discard.filesDiscarded ?? []} empty="No files discarded." />
+          {parsed.discard.blockers.length > 0 && (
+            <List items={parsed.discard.blockers} tone="red" />
+          )}
+        </Panel>
+      )}
+
+      {parsed.commit && (
+        <Panel title="Commit result">
+          <StatusBadge
+            label={parsed.commit.ok ? "committed" : "commit blocked"}
+            tone={parsed.commit.ok ? "green" : "red"}
+          />
+          {parsed.commit.sha && <KeyValue label="SHA" value={parsed.commit.sha} mono />}
+          {parsed.commit.message && <KeyValue label="Message" value={parsed.commit.message} />}
+          <List items={parsed.commit.filesCommitted ?? []} empty="No files committed." />
+          {parsed.commit.blockers.length > 0 && (
+            <List items={parsed.commit.blockers} tone="red" />
+          )}
+        </Panel>
+      )}
+
       {session && (
         <Panel title="Next action">
           <span className="text-[13px] leading-[20px] text-gray-700">
@@ -740,6 +840,8 @@ function nextAction(status: string) {
   if (status === "write_done") return "Run tests with the selected allowlisted command.";
   if (status === "tests_passed") return "Review files and diff. For a git repo, the next step is commit/review.";
   if (status === "tests_failed") return "Inspect logs, adjust the task or test command, then rerun.";
+  if (status === "committed") return "Changes are committed. The session is ready for higher-level review.";
+  if (status === "discarded") return "Generated changes were discarded. You can rerun the flow with a clearer task.";
   if (status === "blocked" || status === "write_blocked") return "Resolve blockers before continuing.";
   if (status === "hermes_failed") return "Inspect Hermes error and rerun with a better model if needed.";
   return "Continue with the next available action.";
@@ -770,15 +872,44 @@ type ParsedTest = {
   elapsedMs: number;
 };
 
+type ParsedRepoStatus = {
+  ok: boolean;
+  gitRepo?: boolean;
+  dirtyFiles?: string[];
+  diffStat?: string;
+  diff?: string;
+  blockers: string[];
+};
+
+type ParsedDiscard = {
+  ok: boolean;
+  filesDiscarded?: string[];
+  blockers: string[];
+};
+
+type ParsedCommit = {
+  ok: boolean;
+  sha?: string;
+  message?: string;
+  filesCommitted?: string[];
+  blockers: string[];
+};
+
 function parseCodeSessionOutput(output: string): {
   proposal: ParsedProposal | null;
   write: ParsedWrite | null;
   test: ParsedTest | null;
+  status: ParsedRepoStatus | null;
+  discard: ParsedDiscard | null;
+  commit: ParsedCommit | null;
 } {
   return {
     proposal: parseProposal(output),
     write: parseJsonAfter<ParsedWrite>(output, "TheCompAI runner write result:"),
     test: parseJsonAfter<ParsedTest>(output, "TheCompAI runner test result:"),
+    status: parseLastJsonAfter<ParsedRepoStatus>(output, "TheCompAI runner status result:"),
+    discard: parseLastJsonAfter<ParsedDiscard>(output, "TheCompAI runner discard result:"),
+    commit: parseLastJsonAfter<ParsedCommit>(output, "TheCompAI runner commit result:"),
   };
 }
 
@@ -818,6 +949,12 @@ function parseJsonAfter<T>(output: string, marker: string): T | null {
   } catch {
     return null;
   }
+}
+
+function parseLastJsonAfter<T>(output: string, marker: string): T | null {
+  const idx = output.lastIndexOf(marker);
+  if (idx < 0) return null;
+  return parseJsonAfter<T>(output.slice(idx), marker);
 }
 
 function extractBalancedJson(text: string) {

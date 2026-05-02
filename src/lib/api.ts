@@ -513,6 +513,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body ?? {}),
     }),
+  codeReviewAction: (
+    id: string,
+    action: "status" | "discard" | "commit",
+    body?: { message?: string },
+  ) =>
+    request<{ session: ApiCodeSession; [key: string]: unknown }>(
+      `/api/code/${id}/review/${action}`,
+      {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      },
+    ),
 
   // Projects
   listProjects: () =>
