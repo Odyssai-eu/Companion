@@ -13,11 +13,13 @@ export default function CodePage() {
   const [busy, setBusy] = useState(false);
   const [hermesBusy, setHermesBusy] = useState(false);
   const [writeBusy, setWriteBusy] = useState(false);
+  const [testBusy, setTestBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApiCodePreflight | null>(null);
   const [selectedSession, setSelectedSession] = useState<ApiCodeSession | null>(null);
   const [sessions, setSessions] = useState<ApiCodeSession[]>([]);
   const [model, setModel] = useState(DEFAULT_MODEL);
+  const [testCommand, setTestCommand] = useState("node --test");
   const [searchParams] = useSearchParams();
 
   async function refreshSessions() {
@@ -90,12 +92,31 @@ export default function CodePage() {
     }
   }
 
+  async function runTests() {
+    if (!selectedSession) return;
+    setTestBusy(true);
+    setError(null);
+    try {
+      const r = await api.codeRunTests(selectedSession.id, {
+        command: testCommand.trim() || undefined,
+      });
+      setSelectedSession(r.session);
+      if (r.session.preflight) setResult(r.session.preflight);
+      await refreshSessions();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setTestBusy(false);
+    }
+  }
+
   function selectSession(session: ApiCodeSession) {
     if (session.preflight) setResult(session.preflight);
     setSelectedSession(session);
     setRepoPath(session.repoPath);
     setTask(session.task);
     setModel(session.model ?? DEFAULT_MODEL);
+    setTestCommand(defaultTestCommand(session));
   }
 
   async function deleteSession(id: string) {
@@ -164,6 +185,14 @@ export default function CodePage() {
             className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
           />
         </Field>
+        <Field label="Test command">
+          <input
+            value={testCommand}
+            onChange={(e) => setTestCommand(e.target.value)}
+            placeholder="node --test"
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+        </Field>
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -175,6 +204,19 @@ export default function CodePage() {
           </button>
           <span className="font-mono text-[11px] text-gray-400">
             No files are written.
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={runTests}
+            disabled={testBusy || !selectedSession}
+            className="rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-ink hover:bg-gray-50 disabled:opacity-50"
+          >
+            {testBusy ? "Testing…" : "Run tests"}
+          </button>
+          <span className="font-mono text-[11px] text-gray-400">
+            Allowlisted commands only. Timeout 120s.
           </span>
         </div>
         <div className="flex items-center gap-3 border-t border-gray-100 pt-3">
@@ -529,4 +571,16 @@ function riskTone(risk: ApiCodePreflight["risk"]) {
   if (risk === "low") return "green";
   if (risk === "medium") return "amber";
   return "red";
+}
+
+function defaultTestCommand(session: ApiCodeSession) {
+  const manifests = session.preflight?.manifests ?? [];
+  if (manifests.includes("package.json")) return "npm test";
+  if (manifests.includes("pnpm-lock.yaml")) return "pnpm test";
+  if (manifests.includes("bun.lock")) return "bun test";
+  if (manifests.includes("deno.json")) return "deno test";
+  if (manifests.includes("Cargo.toml")) return "cargo test";
+  if (manifests.includes("go.mod")) return "go test ./...";
+  if (manifests.includes("pyproject.toml")) return "python -m pytest";
+  return "node --test";
 }

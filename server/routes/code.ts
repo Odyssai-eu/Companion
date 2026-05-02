@@ -6,6 +6,7 @@ import { db } from "../db/index";
 import { codeSessions } from "../db/schema";
 import {
   runConfiguredCodePreflight,
+  runConfiguredTests,
   writeConfiguredTests,
   type CodeWriteFile,
 } from "../lib/code-runner-client";
@@ -29,6 +30,10 @@ const hermesPreflightSchema = z.object({
 const hermesWriteSchema = z.object({
   model: z.string().min(1).max(160).optional(),
   skills: z.array(z.string().min(1).max(120)).optional(),
+});
+
+const runTestsSchema = z.object({
+  command: z.string().max(240).optional(),
 });
 
 const listQuerySchema = z.object({
@@ -318,6 +323,72 @@ codeRoute.post(
           model,
           status: "hermes_failed",
           hermesStatus: "failed",
+          hermesError: (e as Error).message,
+          updatedAt: new Date(),
+        })
+        .where(eq(codeSessions.id, id))
+        .returning();
+      return c.json({ session: updated, error: (e as Error).message }, 502);
+    }
+  },
+);
+
+codeRoute.post(
+  "/:id/run-tests",
+  zValidator("json", runTestsSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const id = c.req.param("id");
+    const body = c.req.valid("json");
+    const [session] = await db
+      .select()
+      .from(codeSessions)
+      .where(eq(codeSessions.id, id))
+      .limit(1);
+    if (!session || session.userId !== userId) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    if (!session.preflight) {
+      return c.json({ error: "missing_preflight" }, 400);
+    }
+
+    await db
+      .update(codeSessions)
+      .set({
+        status: "testing",
+        updatedAt: new Date(),
+      })
+      .where(eq(codeSessions.id, id));
+
+    try {
+      const test = await runConfiguredTests({
+        repoPath: session.repoPath,
+        task: session.task,
+        command: body.command,
+      });
+      const status = test.ok ? "tests_passed" : "tests_failed";
+      const output = [
+        session.hermesOutput ?? "",
+        "",
+        "TheCompAI runner test result:",
+        JSON.stringify(test, null, 2),
+      ].join("\n");
+      const [updated] = await db
+        .update(codeSessions)
+        .set({
+          status,
+          hermesOutput: output,
+          hermesError: test.ok ? session.hermesError : test.stderr || test.blockers.join("\n"),
+          updatedAt: new Date(),
+        })
+        .where(eq(codeSessions.id, id))
+        .returning();
+      return c.json({ session: updated, test });
+    } catch (e) {
+      const [updated] = await db
+        .update(codeSessions)
+        .set({
+          status: "tests_failed",
           hermesError: (e as Error).message,
           updatedAt: new Date(),
         })

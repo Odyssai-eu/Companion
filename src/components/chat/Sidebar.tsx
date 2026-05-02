@@ -88,6 +88,8 @@ export default function Sidebar({
       })
     : projectFiltered;
   const groups = groupByBucket(filtered);
+  const projectConversationGroups =
+    activeProjectId && mode === "projects" ? groupByBucket(filtered) : [];
   const filteredProjects = search.trim()
     ? projectsList.filter((p) =>
         p.name.toLowerCase().includes(search.trim().toLowerCase()),
@@ -233,25 +235,58 @@ export default function Sidebar({
         )}
 
         {mode === "projects" && (
-          <Section title="Projects">
-            {filteredProjects.map((p) => (
-              <ProjectRow
-                key={p.id}
-                project={p}
-                conversationCount={
-                  conversations.filter((c) => c.projectId === p.id).length
-                }
-                active={p.id === activeProjectId}
-              />
-            ))}
-            {filteredProjects.length === 0 && <EmptyState label="No projects yet." />}
-          </Section>
+          <>
+            <Section title="Projects">
+              {filteredProjects.map((p) => (
+                <ProjectRow
+                  key={p.id}
+                  project={p}
+                  conversationCount={
+                    conversations.filter((c) => c.projectId === p.id).length
+                  }
+                  active={p.id === activeProjectId}
+                />
+              ))}
+              {filteredProjects.length === 0 && <EmptyState label="No projects yet." />}
+            </Section>
+            {activeProjectId && (
+              <>
+                {projectConversationGroups.map((g) => (
+                  <Section key={g.title} title={g.title}>
+                    {g.items.map((c) => (
+                      <ConversationRow
+                        key={c.id}
+                        conversation={c}
+                        active={c.id === activeConversationId}
+                        streaming={c.id === streamingConversationId}
+                        projects={projectsList}
+                        onRemove={(id) =>
+                          setConversations((prev) => prev.filter((x) => x.id !== id))
+                        }
+                        onChange={refresh}
+                      />
+                    ))}
+                  </Section>
+                ))}
+                {filtered.length === 0 && (
+                  <EmptyState label="No conversations in this project." />
+                )}
+              </>
+            )}
+          </>
         )}
 
         {mode === "code" && (
           <Section title="Code sessions">
             {filteredCodeSessions.map((s) => (
-              <CodeSessionRow key={s.id} session={s} />
+              <CodeSessionRow
+                key={s.id}
+                session={s}
+                onDelete={async (id) => {
+                  await api.deleteCodeSession(id);
+                  setCodeSessions((prev) => prev.filter((x) => x.id !== id));
+                }}
+              />
             ))}
             {filteredCodeSessions.length === 0 && (
               <EmptyState label="No code sessions yet." />
@@ -385,24 +420,47 @@ function ProjectRow({
   );
 }
 
-function CodeSessionRow({ session }: { session: ApiCodeSession }) {
+function CodeSessionRow({
+  session,
+  onDelete,
+}: {
+  session: ApiCodeSession;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  async function deleteSession(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm("Delete this code session?")) return;
+    await onDelete(session.id);
+  }
+
   return (
-    <Link
-      to={`/code?session=${session.id}`}
-      className="flex flex-col gap-1 rounded-lg px-3 py-2 text-ink transition-colors hover:bg-gray-50"
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-[13px] font-medium">
-          {session.task || "Code session"}
+    <div className="group relative rounded-lg text-ink transition-colors hover:bg-gray-50">
+      <Link
+        to={`/code?session=${session.id}`}
+        className="flex flex-col gap-1 px-3 py-2 pr-8"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate text-[13px] font-medium">
+            {session.task || "Code session"}
+          </span>
+          <span className="flex-shrink-0 rounded-full border border-gray-200 px-1.5 py-0.5 font-mono text-[9px] text-gray-500">
+            {session.status}
+          </span>
+        </div>
+        <span className="truncate font-mono text-[11px] text-gray-400">
+          {session.repoName} · {relativeTime(session.createdAt)}
         </span>
-        <span className="flex-shrink-0 rounded-full border border-gray-200 px-1.5 py-0.5 font-mono text-[9px] text-gray-500">
-          {session.status}
-        </span>
-      </div>
-      <span className="truncate font-mono text-[11px] text-gray-400">
-        {session.repoName} · {relativeTime(session.createdAt)}
-      </span>
-    </Link>
+      </Link>
+      <button
+        type="button"
+        onClick={deleteSession}
+        aria-label="Delete code session"
+        className="absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded text-gray-300 opacity-0 hover:bg-red-50 hover:text-red-700 group-hover:opacity-100"
+      >
+        ×
+      </button>
+    </div>
   );
 }
 

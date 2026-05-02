@@ -497,6 +497,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body ?? {}),
     }),
+  codeRunTests: (id: string, body?: { command?: string }) =>
+    request<{
+      session: ApiCodeSession;
+      test?: {
+        ok: boolean;
+        command: string;
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        blockers: string[];
+        elapsedMs: number;
+      };
+    }>(`/api/code/${id}/run-tests`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
 
   // Projects
   listProjects: () =>

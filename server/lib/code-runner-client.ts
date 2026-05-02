@@ -14,6 +14,17 @@ export type CodeWriteTestsResult = {
   forbiddenMoves?: string[];
 };
 
+export type CodeRunTestsResult = {
+  ok: boolean;
+  repoPath: string;
+  command: string;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  blockers: string[];
+  elapsedMs: number;
+};
+
 export async function runConfiguredCodePreflight(input: CodePreflightInput) {
   const url = (process.env.CODE_RUNNER_URL ?? "").replace(/\/+$/, "");
   const token = process.env.CODE_RUNNER_TOKEN ?? "";
@@ -73,6 +84,42 @@ export async function writeConfiguredTests(input: {
     diffStat: data.write.diffStat ?? "",
     diff: data.write.diff ?? "",
     forbiddenMoves: data.write.forbiddenMoves ?? [],
+  };
+}
+
+export async function runConfiguredTests(input: {
+  repoPath: string;
+  task: string;
+  command?: string;
+}): Promise<CodeRunTestsResult> {
+  const url = (process.env.CODE_RUNNER_URL ?? "").replace(/\/+$/, "");
+  const token = process.env.CODE_RUNNER_TOKEN ?? "";
+  if (!url) {
+    throw new Error("code_runner_required_for_test_execution");
+  }
+  const r = await fetch(`${url}/run-tests`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(130_000),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`code_runner_${r.status}: ${text.slice(0, 500)}`);
+  }
+  const data = (await r.json()) as { test: CodeRunTestsResult };
+  return {
+    ok: data.test.ok ?? false,
+    repoPath: data.test.repoPath ?? input.repoPath,
+    command: data.test.command ?? input.command ?? "",
+    exitCode: data.test.exitCode ?? null,
+    stdout: data.test.stdout ?? "",
+    stderr: data.test.stderr ?? "",
+    blockers: data.test.blockers ?? [],
+    elapsedMs: data.test.elapsedMs ?? 0,
   };
 }
 

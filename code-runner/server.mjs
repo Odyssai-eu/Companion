@@ -68,6 +68,16 @@ createServer(async (req, res) => {
       return json(res, 200, { write: result });
     }
 
+    if (req.method === "POST" && req.url === "/run-tests") {
+      const body = await readJson(req);
+      const result = await runTests({
+        repoPath: String(body.repoPath ?? ""),
+        task: String(body.task ?? ""),
+        command: String(body.command ?? ""),
+      });
+      return json(res, 200, { test: result });
+    }
+
     return json(res, 404, { error: "not_found" });
   } catch (e) {
     return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
@@ -201,6 +211,72 @@ async function writeTests({ repoPath, task, files }) {
   };
 }
 
+async function runTests({ repoPath, task, command }) {
+  const preflight = await runPreflight({ repoPath, task });
+  if (preflight.blockers.length > 0) {
+    return {
+      ok: false,
+      repoPath: preflight.repoPath,
+      command: "",
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      blockers: preflight.blockers,
+      elapsedMs: 0,
+    };
+  }
+
+  const selected = command.trim() || defaultTestCommand(preflight);
+  const parsed = parseAllowedTestCommand(selected);
+  if (!parsed) {
+    return {
+      ok: false,
+      repoPath: preflight.repoPath,
+      command: selected,
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      blockers: [`test_command_not_allowed:${selected}`],
+      elapsedMs: 0,
+    };
+  }
+
+  const started = Date.now();
+  try {
+    const { stdout, stderr } = await execFileAsync(parsed.bin, parsed.args, {
+      cwd: preflight.repoPath,
+      timeout: 120_000,
+      maxBuffer: 1024 * 1024,
+      env: {
+        ...process.env,
+        CI: "1",
+        NO_COLOR: "1",
+      },
+    });
+    return {
+      ok: true,
+      repoPath: preflight.repoPath,
+      command: selected,
+      exitCode: 0,
+      stdout,
+      stderr,
+      blockers: [],
+      elapsedMs: Date.now() - started,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      repoPath: preflight.repoPath,
+      command: selected,
+      exitCode: typeof e?.code === "number" ? e.code : 1,
+      stdout: String(e?.stdout ?? ""),
+      stderr: String(e?.stderr ?? e?.message ?? e),
+      blockers: [],
+      elapsedMs: Date.now() - started,
+    };
+  }
+}
+
 async function readDocs(repo) {
   const out = [];
   for (const inherited of await findInheritedInstructionDocs(repo)) {
@@ -283,6 +359,43 @@ function isAllowedTestPath(path) {
     path.startsWith("__tests__/") ||
     /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
   );
+}
+
+function defaultTestCommand(preflight) {
+  if (preflight.manifests.includes("package.json")) return "npm test";
+  if (preflight.manifests.includes("pnpm-lock.yaml")) return "pnpm test";
+  if (preflight.manifests.includes("bun.lock")) return "bun test";
+  if (preflight.manifests.includes("deno.json")) return "deno test";
+  if (preflight.manifests.includes("Cargo.toml")) return "cargo test";
+  if (preflight.manifests.includes("go.mod")) return "go test ./...";
+  if (preflight.manifests.includes("pyproject.toml")) return "python -m pytest";
+  return "node --test";
+}
+
+function parseAllowedTestCommand(command) {
+  const parts = command.trim().split(/\s+/).filter(Boolean);
+  const exact = command.trim();
+  const allowedExact = new Map([
+    ["npm test", ["npm", ["test"]]],
+    ["pnpm test", ["pnpm", ["test"]]],
+    ["yarn test", ["yarn", ["test"]]],
+    ["bun test", ["bun", ["test"]]],
+    ["deno test", ["deno", ["test"]]],
+    ["cargo test", ["cargo", ["test"]]],
+    ["go test ./...", ["go", ["test", "./..."]]],
+    ["python -m pytest", ["python", ["-m", "pytest"]]],
+    ["python3 -m pytest", ["python3", ["-m", "pytest"]]],
+    ["node --test", ["node", ["--test"]]],
+  ]);
+  const match = allowedExact.get(exact);
+  if (match) return { bin: match[0], args: match[1] };
+  if (parts[0] === "node" && parts[1] === "--test") {
+    const testPaths = parts.slice(2);
+    if (testPaths.length === 0 || testPaths.every(isAllowedTestPath)) {
+      return { bin: "node", args: ["--test", ...testPaths] };
+    }
+  }
+  return null;
 }
 
 async function hostname() {
