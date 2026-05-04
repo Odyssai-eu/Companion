@@ -312,6 +312,9 @@ chatRoute.post("/completions", async (c) => {
   console.log(
     `[chat] model=${body.model} websearch=${websearchOn} hermes=${hermesOn} supportsTools=${supportsTools} → tools.length=${tools.length}`,
   );
+  console.log(
+    `[chat] system_prompt.len=${body.system_prompt?.length ?? 0} messages=${body.messages?.length ?? 0} memoryBlock.len=${memoryBlock.length}`,
+  );
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
