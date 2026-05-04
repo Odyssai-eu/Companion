@@ -303,18 +303,11 @@ chatRoute.post("/completions", async (c) => {
   //
   // exo's MLX runner currently aborts (SIGABRT) when handed a `tools:`
   // param even for tool-trained models, so we whitelist by model name.
-  const websearchOn = await isWebSearchEnabled(userId);
-  const hermesOn = await isHermesEnabled(userId);
-  const supportsTools = modelSupportsTools(body.model);
-  const anyToolEnabled = (websearchOn || hermesOn) && supportsTools;
+  const anyToolEnabled =
+    ((await isWebSearchEnabled(userId)) || (await isHermesEnabled(userId))) &&
+    modelSupportsTools(body.model);
   const tools = anyToolEnabled ? await toolsForUser(userId) : [];
   const toolsEnabled = tools.length > 0;
-  console.log(
-    `[chat] model=${body.model} websearch=${websearchOn} hermes=${hermesOn} supportsTools=${supportsTools} → tools.length=${tools.length}`,
-  );
-  console.log(
-    `[chat] system_prompt.len=${body.system_prompt?.length ?? 0} messages=${body.messages?.length ?? 0} memoryBlock.len=${memoryBlock.length}`,
-  );
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -356,10 +349,36 @@ chatRoute.post("/completions", async (c) => {
     let totalChunkCount = 0;
     let sawUpstreamUsage = false;
 
+    // Stream/non-stream upstream policy:
+    //
+    // Most models route through this code path with `stream:true` so the
+    // user gets typewriter UX on every token. But local backends (mlx-vlm,
+    // Ollama, vLLM, llama.cpp) emit tool_calls correctly only in
+    // non-stream mode — in stream they leak the model's native tool-call
+    // syntax (e.g. Qwen-XML `<tool_call>...</tool_call>`) into the content
+    // delta, and LiteLLM doesn't normalise that. Anthropic and OpenAI
+    // handle stream + tools natively.
+    //
+    // Decision: if tools are enabled AND the model is not Anthropic/OpenAI,
+    // we fetch this iteration in non-stream mode and synthesise a single
+    // SSE chunk for the client. Subsequent iterations re-evaluate (e.g.
+    // the post-tool reply doesn't always need tools).
+    const modelLower = (body.model ?? "").toLowerCase();
+    function shouldUseNonStream(): boolean {
+      if (!toolsEnabled) return false;
+      // Cloud providers stream tools fine — keep typewriter UX there.
+      if (modelLower.includes("claude") || modelLower.startsWith("anthropic/")) return false;
+      if (modelLower.startsWith("gpt-") || modelLower.startsWith("openai/")) return false;
+      // Local backend → non-stream so LiteLLM normalises tool_calls JSON.
+      return true;
+    }
+
     try {
       for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+        const useNonStream = shouldUseNonStream();
         const requestBody = {
           ...baseBody,
+          stream: !useNonStream,
           messages: conversation,
           ...(toolsEnabled ? { tools, tool_choice: "auto" } : {}),
         };
@@ -420,7 +439,9 @@ chatRoute.post("/completions", async (c) => {
         }
 
         const { toolCalls, finishReason, assistantContent, usage, chunkCount } =
-          await pipeAndCollect(upstream, writer, encoder);
+          useNonStream
+            ? await collectNonStream(upstream, writer, encoder)
+            : await pipeAndCollect(upstream, writer, encoder);
         totalChunkCount += chunkCount;
         if (usage) {
           sawUpstreamUsage = true;
@@ -718,6 +739,116 @@ async function pipeAndCollect(
     assistantContent,
     usage,
     chunkCount,
+  };
+}
+
+/**
+ * Non-stream variant: read the upstream response as a single JSON object
+ * (returned when we send `stream: false`), then synthesise SSE chunks for
+ * the client so it doesn't need to know whether upstream streamed or not.
+ *
+ * Used for local model + tools: mlx-vlm/Ollama/vLLM emit native-syntax
+ * tool calls (Qwen-XML, etc.) inside content during streaming. LiteLLM
+ * only converts those into proper tool_calls JSON when stream is off.
+ */
+async function collectNonStream(
+  upstream: Response,
+  writer: WritableStreamDefaultWriter<Uint8Array>,
+  encoder: TextEncoder,
+): Promise<{
+  toolCalls: AccumulatedToolCall[];
+  finishReason: string | null;
+  assistantContent: string;
+  usage: { promptTokens: number; completionTokens: number } | null;
+  chunkCount: number;
+}> {
+  const text = await upstream.text();
+  let parsed: {
+    choices?: Array<{
+      message?: {
+        content?: string | null;
+        tool_calls?: Array<{
+          id?: string;
+          function?: { name?: string; arguments?: string };
+        }>;
+      };
+      finish_reason?: string | null;
+    }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Surface to the client as an error chunk; let the upstream-not-ok
+    // path catch the rest of the contract.
+    await writer.write(
+      encoder.encode(`data: ${JSON.stringify({ error: "invalid_json_from_upstream" })}\n\n`),
+    );
+    return { toolCalls: [], finishReason: null, assistantContent: "", usage: null, chunkCount: 0 };
+  }
+
+  const choice = parsed.choices?.[0];
+  const assistantContent = choice?.message?.content ?? "";
+  const finishReason = choice?.finish_reason ?? null;
+  const rawCalls = choice?.message?.tool_calls ?? [];
+  const toolCalls: AccumulatedToolCall[] = rawCalls.map((tc, i) => ({
+    id: tc.id ?? `call_${i}`,
+    name: tc.function?.name ?? "",
+    argumentsRaw: tc.function?.arguments ?? "",
+  })).filter((tc) => tc.name);
+
+  const usage = parsed.usage
+    ? {
+        promptTokens: parsed.usage.prompt_tokens ?? 0,
+        completionTokens: parsed.usage.completion_tokens ?? 0,
+      }
+    : null;
+
+  // Synthesise an SSE chunk shaped like a streaming delta + finish.
+  // Only emit content if there's actual text — when the model invokes a
+  // tool, upstream content is "" and we don't want to pollute the UI.
+  if (assistantContent) {
+    const synthChunk = {
+      choices: [
+        {
+          index: 0,
+          delta: { content: assistantContent },
+          finish_reason: null,
+        },
+      ],
+    };
+    await writer.write(
+      encoder.encode(`data: ${JSON.stringify(synthChunk)}\n\n`),
+    );
+  }
+  // Emit a finish chunk so the client parser sees the turn close cleanly.
+  const finishChunk = {
+    choices: [
+      {
+        index: 0,
+        delta: {},
+        finish_reason: finishReason ?? "stop",
+      },
+    ],
+    ...(usage
+      ? {
+          usage: {
+            prompt_tokens: usage.promptTokens,
+            completion_tokens: usage.completionTokens,
+          },
+        }
+      : {}),
+  };
+  await writer.write(
+    encoder.encode(`data: ${JSON.stringify(finishChunk)}\n\n`),
+  );
+
+  return {
+    toolCalls,
+    finishReason,
+    assistantContent,
+    usage,
+    chunkCount: assistantContent ? 1 : 0,
   };
 }
 
