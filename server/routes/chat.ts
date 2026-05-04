@@ -303,11 +303,15 @@ chatRoute.post("/completions", async (c) => {
   //
   // exo's MLX runner currently aborts (SIGABRT) when handed a `tools:`
   // param even for tool-trained models, so we whitelist by model name.
-  const anyToolEnabled =
-    ((await isWebSearchEnabled(userId)) || (await isHermesEnabled(userId))) &&
-    modelSupportsTools(body.model);
+  const websearchOn = await isWebSearchEnabled(userId);
+  const hermesOn = await isHermesEnabled(userId);
+  const supportsTools = modelSupportsTools(body.model);
+  const anyToolEnabled = (websearchOn || hermesOn) && supportsTools;
   const tools = anyToolEnabled ? await toolsForUser(userId) : [];
   const toolsEnabled = tools.length > 0;
+  console.log(
+    `[chat] model=${body.model} websearch=${websearchOn} hermes=${hermesOn} supportsTools=${supportsTools} → tools.length=${tools.length}`,
+  );
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
