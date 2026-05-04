@@ -732,6 +732,13 @@ function modelSupportsTools(model: string): boolean {
   const m = model.toLowerCase();
   if (m.includes("claude") || m.startsWith("anthropic/")) return true;
   if (m.startsWith("gpt-") || m.startsWith("openai/")) return true;
+  // Local agent-* aliases (LiteLLM convention: agent-fast / agent-mid /
+  // agent-vision / "Agent-Fast MoE" …) all route to mlx-vlm servers, which
+  // do accept the OpenAI tools param and emit tool_calls correctly. Verified
+  // 2026-05-04 with agent-fast on max-64 (Qwen3.6-35B-A3B). Distinct from
+  // EXO's MLX runner which crashes on tools — that path doesn't go through
+  // here (EXO Direct uses its own dispatch).
+  if (m.startsWith("agent-")) return true;
   return false;
 }
 
