@@ -1,10 +1,15 @@
 /**
- * Hermes Agent add-on settings.
+ * Hermes Agent add-on settings — adapted to the native Hermes Gateway
+ * (NousResearch hermes-agent v0.12+) which exposes an OpenAI-compatible
+ * API on `:8642` with mandatory Bearer auth.
  *
- *   GET  /api/addons/hermes/info     → enabled, configured URL, available skills
- *   PATCH /api/addons/hermes/config  → set apiUrl, selected skills, model, autonomous
- *   GET  /api/addons/hermes/sessions → recent sessions (read-through to bridge)
- *   GET  /api/addons/hermes/sessions/:id → one session detail
+ *   GET   /api/addons/hermes/info     → enabled, gateway URL, available models, hasApiKey
+ *   PATCH /api/addons/hermes/config   → set apiUrl, apiKey (Bearer), defaultModel
+ *
+ * The previous bridge (thecompai-hermes-bridge FastAPI on :8002) is gone.
+ * No more /skills, /sessions, mode quick/deep, or yolo flag — those don't
+ * exist in the native gateway. The agent is queried as a regular OpenAI
+ * chat completion; Hermes injects its own tools/skills server-side.
  */
 
 import { and, eq } from "drizzle-orm";
@@ -21,10 +26,8 @@ const ADDON_NAME = "Hermes Agent";
 
 type Config = {
   apiUrl?: string;
-  selectedSkills?: string[];
+  apiKey?: string;
   defaultModel?: string;
-  /** When true, hermes_deep runs with --yolo (bypass approvals). Off by default. */
-  autonomous?: boolean;
 };
 
 async function findOrInit(userId: string) {
@@ -41,18 +44,19 @@ async function findOrInit(userId: string) {
       name: ADDON_NAME,
       kind: "plugin",
       description:
-        "Delegate multi-step autonomous tasks to Hermes Agent. Quick mode for short tool-using requests, Deep mode for long-running background work.",
-      version: "0.1.0",
+        "Delegate tasks to the Hermes Agent gateway (NousResearch hermes-agent). " +
+        "OpenAI-compatible chat completions; tools/skills are managed inside Hermes itself.",
+      version: "0.2.0",
       enabled: false,
     })
     .returning();
   return created;
 }
 
-const DEFAULT_BRIDGE = "http://192.168.86.44:8002";
+const DEFAULT_GATEWAY = "http://192.168.86.50:8642";
 
-function bridgeUrl(cfg: Config): string {
-  return (cfg.apiUrl ?? process.env.HERMES_BRIDGE_URL ?? DEFAULT_BRIDGE).replace(
+function gatewayUrl(cfg: Config): string {
+  return (cfg.apiUrl ?? process.env.HERMES_GATEWAY_URL ?? DEFAULT_GATEWAY).replace(
     /\/+$/,
     "",
   );
@@ -64,34 +68,44 @@ hermesRoute.get("/info", async (c) => {
   const userId = c.get("userId");
   const addon = await findOrInit(userId);
   const cfg = (addon.config ?? {}) as Config;
-  const url = bridgeUrl(cfg);
+  const url = gatewayUrl(cfg);
 
-  // Try to fetch skills from the bridge — best-effort
-  let skills: Array<{ name: string; description: string; kind: string }> = [];
-  let bridgeOk = false;
-  try {
-    const r = await fetch(`${url}/skills`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (r.ok) {
-      const data = (await r.json()) as { skills?: typeof skills };
-      skills = data.skills ?? [];
-      bridgeOk = true;
+  // Probe /v1/models to confirm reachability + auth. Bearer is mandatory
+  // on the native gateway; without a key we still return reachable=false
+  // so the UI shows the user they need to configure.
+  let availableModels: Array<{ id: string }> = [];
+  let gatewayOk = false;
+  let lastError: string | null = null;
+  if (cfg.apiKey) {
+    try {
+      const r = await fetch(`${url}/v1/models`, {
+        headers: { Authorization: `Bearer ${cfg.apiKey}` },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (r.ok) {
+        const data = (await r.json()) as { data?: Array<{ id: string }> };
+        availableModels = data.data ?? [];
+        gatewayOk = true;
+      } else {
+        lastError = `gateway ${r.status}`;
+      }
+    } catch (e) {
+      lastError = (e as Error).message;
     }
-  } catch {
-    // bridge down — surface in UI
+  } else {
+    lastError = "missing api key";
   }
 
   return c.json({
     addonId: addon.id,
     enabled: addon.enabled,
     apiUrl: cfg.apiUrl ?? null,
-    bridgeUrl: url,
-    bridgeOk,
-    selectedSkills: cfg.selectedSkills ?? [],
-    defaultModel: cfg.defaultModel ?? "claude-haiku",
-    autonomous: cfg.autonomous ?? false,
-    availableSkills: skills,
+    gatewayUrl: url,
+    gatewayOk,
+    hasApiKey: Boolean(cfg.apiKey),
+    defaultModel: cfg.defaultModel ?? "hermes-agent",
+    availableModels,
+    lastError,
   });
 });
 
@@ -99,9 +113,8 @@ hermesRoute.get("/info", async (c) => {
 
 const configSchema = z.object({
   apiUrl: z.string().url().nullish(),
-  selectedSkills: z.array(z.string()).optional(),
+  apiKey: z.string().min(1).max(256).nullish(),
   defaultModel: z.string().max(120).optional(),
-  autonomous: z.boolean().optional(),
 });
 
 hermesRoute.patch("/config", zValidator("json", configSchema), async (c) => {
@@ -110,47 +123,13 @@ hermesRoute.patch("/config", zValidator("json", configSchema), async (c) => {
   const cfg = (addon.config ?? {}) as Config;
   const data = c.req.valid("json");
   if (data.apiUrl !== undefined) cfg.apiUrl = data.apiUrl ?? undefined;
-  if (data.selectedSkills !== undefined) cfg.selectedSkills = data.selectedSkills;
+  if (data.apiKey !== undefined) cfg.apiKey = data.apiKey ?? undefined;
   if (data.defaultModel !== undefined) cfg.defaultModel = data.defaultModel;
-  if (data.autonomous !== undefined) cfg.autonomous = data.autonomous;
   await db
     .update(addons)
     .set({ config: cfg, updatedAt: new Date() })
     .where(eq(addons.id, addon.id));
   return c.json({ ok: true });
-});
-
-// ── /sessions (read-through proxy) ─────────────────────────────────────────
-
-hermesRoute.get("/sessions", async (c) => {
-  const userId = c.get("userId");
-  const addon = await findOrInit(userId);
-  const cfg = (addon.config ?? {}) as Config;
-  try {
-    const r = await fetch(`${bridgeUrl(cfg)}/sessions`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!r.ok) return c.json({ sessions: [] });
-    return c.json(await r.json());
-  } catch (e) {
-    return c.json({ sessions: [], error: String(e) });
-  }
-});
-
-hermesRoute.get("/sessions/:id", async (c) => {
-  const userId = c.get("userId");
-  const addon = await findOrInit(userId);
-  const cfg = (addon.config ?? {}) as Config;
-  const id = c.req.param("id");
-  try {
-    const r = await fetch(`${bridgeUrl(cfg)}/sessions/${id}`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!r.ok) return c.json({ error: "not_found" }, 404);
-    return c.json(await r.json());
-  } catch (e) {
-    return c.json({ error: String(e) }, 502);
-  }
 });
 
 export default hermesRoute;

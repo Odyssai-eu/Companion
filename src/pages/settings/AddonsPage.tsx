@@ -666,9 +666,9 @@ function HermesPanel() {
 
   // Local edits
   const [apiUrl, setApiUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
-  const [autonomous, setAutonomous] = useState(false);
-  const [skills, setSkills] = useState<Set<string>>(new Set());
+  const [showKey, setShowKey] = useState(false);
 
   async function refresh() {
     try {
@@ -676,8 +676,7 @@ function HermesPanel() {
       setInfo(r);
       setApiUrl(r.apiUrl ?? "");
       setDefaultModel(r.defaultModel);
-      setAutonomous(r.autonomous);
-      setSkills(new Set(r.selectedSkills));
+      setApiKey("");
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -687,15 +686,6 @@ function HermesPanel() {
     refresh();
   }, []);
 
-  function toggleSkill(name: string) {
-    setSkills((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  }
-
   async function save() {
     setBusy(true);
     setErr(null);
@@ -703,8 +693,8 @@ function HermesPanel() {
       await api.hermesUpdateConfig({
         apiUrl: apiUrl.trim() || null,
         defaultModel: defaultModel.trim(),
-        autonomous,
-        selectedSkills: Array.from(skills),
+        // Send apiKey only when the user typed a new value (empty = keep current).
+        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       });
       setSaved(true);
       await refresh();
@@ -716,15 +706,23 @@ function HermesPanel() {
     }
   }
 
+  async function clearKey() {
+    if (!confirm("Remove the Hermes API key? The agent will stop working until you set a new one.")) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.hermesUpdateConfig({ apiKey: null });
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!info) {
     return <span className="font-mono text-[11px] text-gray-400">Loading…</span>;
   }
-
-  // Only surface skills the user can sensibly enable (file-based custom or
-  // single-bundle skills). Collections are excluded — they're meta-folders.
-  const enableable = info.availableSkills.filter(
-    (s) => s.kind === "file" || s.kind === "bundle",
-  );
 
   return (
     <div className="flex flex-col gap-5">
@@ -732,94 +730,83 @@ function HermesPanel() {
         <span className="flex items-center gap-1.5">
           <span
             className={`h-1.5 w-1.5 rounded-full ${
-              info.bridgeOk ? "bg-emerald-500" : "bg-rose-500"
+              info.gatewayOk ? "bg-emerald-500" : "bg-rose-500"
             }`}
           />
           <span className="font-mono text-ink">
-            {info.bridgeOk ? "bridge online" : "bridge offline"}
+            {info.gatewayOk ? "gateway online" : "gateway unreachable"}
           </span>
         </span>
         <span>
-          <span className="text-gray-400">Bridge URL</span>{" "}
-          <code className="font-mono text-ink">{info.bridgeUrl}</code>
+          <span className="text-gray-400">Gateway</span>{" "}
+          <code className="font-mono text-ink">{info.gatewayUrl}</code>
         </span>
         <span>
-          <span className="text-gray-400">Skills</span>{" "}
-          <span className="font-mono text-ink">{info.availableSkills.length}</span>
+          <span className="text-gray-400">Models</span>{" "}
+          <span className="font-mono text-ink">{info.availableModels.length}</span>
         </span>
+        {info.lastError && !info.gatewayOk && (
+          <span className="text-rose-600">⚠ {info.lastError}</span>
+        )}
       </div>
 
       <Field
-        label="Bridge URL (override)"
-        hint="Where the hermes-bridge service runs. Leave empty for the env default."
+        label="Gateway URL (override)"
+        hint="Where the Hermes Agent gateway runs. Leave empty for the default."
       >
         <input
           type="url"
           value={apiUrl}
           onChange={(e) => setApiUrl(e.target.value)}
-          placeholder={info.bridgeUrl}
+          placeholder={info.gatewayUrl}
           className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
         />
       </Field>
 
       <Field
+        label="API key (Bearer)"
+        hint="API_SERVER_KEY from ~/.hermes/.env on the gateway host. Required — the gateway rejects unauth requests."
+      >
+        <div className="flex items-center gap-2">
+          <input
+            type={showKey ? "text" : "password"}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={info.hasApiKey ? "•••• (set — paste a new one to replace)" : "paste API key…"}
+            className="flex-1 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+          <button
+            type="button"
+            onClick={() => setShowKey((v) => !v)}
+            className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-600 hover:text-ink"
+          >
+            {showKey ? "Hide" : "Show"}
+          </button>
+          {info.hasApiKey && (
+            <button
+              type="button"
+              onClick={clearKey}
+              disabled={busy}
+              className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-600 hover:text-ink"
+            >
+              Revoke
+            </button>
+          )}
+        </div>
+      </Field>
+
+      <Field
         label="Default model"
-        hint="LiteLLM alias used by Hermes inside its sessions (anthropic/claude-haiku-4-5, claude-haiku, …)."
+        hint="The Hermes gateway exposes a single virtual model named hermes-agent. Leave default unless your gateway is configured otherwise."
       >
         <input
           type="text"
           value={defaultModel}
           onChange={(e) => setDefaultModel(e.target.value)}
-          placeholder="claude-haiku"
+          placeholder="hermes-agent"
           className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
         />
       </Field>
-
-      <Field label="Selected skills" hint="The model will only see the ones you tick.">
-        <div className="flex flex-col gap-1.5">
-          {enableable.length === 0 && (
-            <span className="font-mono text-[11px] text-gray-400">
-              No skills exposed by the bridge yet.
-            </span>
-          )}
-          {enableable.map((s) => (
-            <label
-              key={s.name}
-              className="flex items-start gap-2.5 rounded-md border border-gray-200 bg-white px-3 py-2 text-[13px] text-ink hover:bg-gray-50"
-            >
-              <input
-                type="checkbox"
-                checked={skills.has(s.name)}
-                onChange={() => toggleSkill(s.name)}
-                className="mt-0.5"
-              />
-              <div className="flex flex-col">
-                <span className="font-mono">{s.name}</span>
-                {s.description && (
-                  <span className="text-[12px] text-gray-500">{s.description}</span>
-                )}
-              </div>
-            </label>
-          ))}
-        </div>
-      </Field>
-
-      <label className="flex items-start gap-2.5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-        <input
-          type="checkbox"
-          checked={autonomous}
-          onChange={(e) => setAutonomous(e.target.checked)}
-          className="mt-0.5"
-        />
-        <div className="flex flex-col">
-          <span className="font-medium">Autonomous mode (Deep tasks)</span>
-          <span>
-            When ON, deep sessions run with <code>--yolo</code> — Hermes bypasses
-            all approval prompts. Use only for trusted background runs on the
-            cluster.
-          </span>
-        </div>
-      </label>
 
       <div className="flex items-center gap-3">
         <button
@@ -837,21 +824,21 @@ function HermesPanel() {
           How Hermes integration works
         </summary>
         <p className="mt-3 leading-relaxed">
-          When this add-on is enabled, two tools appear in tool-capable chats:
+          When this add-on is enabled and configured with an API key, one tool
+          appears in tool-capable chats:
         </p>
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li>
-            <code className="rounded bg-gray-100 px-1 font-mono">hermes_quick(task)</code>{" "}
-            — short tool-using requests (terminal, file ops, RAG). Returns the result.
-          </li>
-          <li>
-            <code className="rounded bg-gray-100 px-1 font-mono">hermes_deep(task)</code>{" "}
-            — long-running multi-step jobs. Returns a session_id immediately.
+            <code className="rounded bg-gray-100 px-1 font-mono">hermes_agent(task)</code>{" "}
+            — delegate any operational task to the Hermes Agent on the cluster.
+            Hermes picks its internal tool (terminal, file ops, RAG search,
+            ComfyUI, Obsidian, etc.) and returns the final result.
           </li>
         </ul>
         <p className="mt-3">
-          The model decides when to delegate. You'll see the Hermes card inline
-          showing the task and final result.
+          Tools and skills are managed inside Hermes itself (see the dashboard
+          on port 9119 of the gateway host). We just talk to the OpenAI-compat
+          chat completions endpoint.
         </p>
       </details>
 

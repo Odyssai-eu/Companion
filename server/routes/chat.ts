@@ -773,26 +773,21 @@ function summarizeResult(
     | { results?: Array<{ title: string; url: string }>; query?: string }
     | { url?: string; content?: string }
     | {
-        id?: string;
-        mode?: string;
-        status?: string;
-        output?: string;
-        elapsed_ms?: number;
+        content?: string;
+        usage?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+        };
       };
-  // Hermes session
-  if ("id" in data && "status" in data && data.id && data.status) {
-    const ms = (data as { elapsed_ms?: number }).elapsed_ms ?? 0;
-    const sec = ms > 0 ? `${(ms / 1000).toFixed(1)}s` : "";
-    if (data.status === "done") {
-      return { ok: true, summary: `done in ${sec}` };
-    }
-    if (data.status === "failed") {
-      return { ok: false, summary: `failed after ${sec}` };
-    }
-    if (data.status === "running" || data.status === "pending") {
-      return { ok: true, summary: `running (session ${data.id.slice(0, 8)}…)` };
-    }
-    return { ok: true, summary: `${data.status} ${sec}` };
+  // Hermes Agent (native gateway) — chat completion-style result.
+  if ("content" in data && typeof data.content === "string" && "usage" in data) {
+    const u = data.usage ?? {};
+    const tot = (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0);
+    const len = data.content.length;
+    return {
+      ok: true,
+      summary: `${len.toLocaleString()} chars · ${tot.toLocaleString()} tok`,
+    };
   }
   // Tavily search
   if ("results" in data && Array.isArray(data.results)) {

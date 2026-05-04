@@ -3,12 +3,17 @@
  *
  * Two add-ons feed tools into the chat route:
  *   - "Web Search" (Tavily) → web_search, web_fetch
- *   - "Hermes Agent"        → hermes_quick, hermes_deep
+ *   - "Hermes Agent"        → hermes_agent
  *
  * Each add-on lives in `addons` (kind=plugin) with its config stored in
  * `addons.config`. When enabled and the model is tool-capable, the chat
  * route exposes the matching tool schemas; when the LLM emits tool_calls,
  * `executeTool` dispatches by name.
+ *
+ * Hermes Agent talks to the native Hermes Gateway (NousResearch hermes-agent
+ * v0.12+) on `:8642` — OpenAI-compatible chat completions with mandatory
+ * Bearer auth. Tools/skills are owned by Hermes itself, not selectable
+ * from our side.
  */
 
 import { and, eq } from "drizzle-orm";
@@ -73,14 +78,16 @@ const HERMES_TOOLS = [
   {
     type: "function" as const,
     function: {
-      name: "hermes_quick",
+      name: "hermes_agent",
       description:
-        "Delegate a SHORT operational task to Hermes Agent. Use for things " +
-        "like running a shell command on the cluster, reading a file from " +
-        "the Obsidian vault, generating an image via ComfyUI, searching the " +
-        "RAG, or any one-off action that should complete in under 2 minutes. " +
-        "Returns the final result. Don't use for casual questions — use your " +
-        "own knowledge or web_search for those.",
+        "Delegate an operational task to the Hermes Agent. Hermes runs on " +
+        "the user's cluster with its own toolset (terminal, file ops, RAG " +
+        "search, ComfyUI, Obsidian, etc.). Use this when the task requires " +
+        "real action on the cluster, not just reasoning — e.g. 'run this " +
+        "command', 'read this file from the vault', 'generate an image', " +
+        "'search the personal knowledge base'. Hermes will pick the right " +
+        "internal tool and return the final result. For pure reasoning or " +
+        "casual chat, use your own knowledge or web_search instead.",
       parameters: {
         type: "object",
         properties: {
@@ -88,30 +95,7 @@ const HERMES_TOOLS = [
             type: "string",
             description:
               "The task in natural language. Be specific about what to do " +
-              "and what to return. Hermes will pick the right tool.",
-          },
-        },
-        required: ["task"],
-      },
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
-      name: "hermes_deep",
-      description:
-        "Delegate a LONG-RUNNING multi-step task to Hermes Agent. Use for " +
-        "things that need 5+ minutes: code generation across multiple files, " +
-        "iterative refinement, deep research with many tool calls, scheduled " +
-        "background jobs. Returns a session_id immediately; the result lands " +
-        "later. Tell the user explicitly that the task is running in the " +
-        "background and they can come back to check.",
-      parameters: {
-        type: "object",
-        properties: {
-          task: {
-            type: "string",
-            description: "The task description, detailed enough for autonomous execution.",
+              "and what you expect back. Hermes handles tool selection.",
           },
         },
         required: ["task"],
@@ -233,12 +217,11 @@ export async function isWebSearchEnabled(userId: string): Promise<boolean> {
 
 type HermesConfig = {
   apiUrl?: string;
-  selectedSkills?: string[];
+  apiKey?: string;
   defaultModel?: string;
-  autonomous?: boolean;
 };
 
-const HERMES_DEFAULT_BRIDGE = "http://192.168.86.44:8002";
+const HERMES_DEFAULT_GATEWAY = "http://192.168.86.50:8642";
 
 async function getHermesConfig(
   userId: string,
@@ -253,19 +236,32 @@ async function getHermesConfig(
 }
 
 export async function isHermesEnabled(userId: string): Promise<boolean> {
-  return (await getHermesConfig(userId)) !== null;
+  const cfg = await getHermesConfig(userId);
+  // Need both enabled AND an api key — the gateway always rejects unauth.
+  return cfg !== null && Boolean(cfg.apiKey);
 }
 
+/**
+ * Call the Hermes Gateway as an OpenAI-compatible chat completion.
+ * Hermes itself decides which internal tool to use and returns the final
+ * assistant message text. We surface that text as the tool result so the
+ * caller LLM can integrate it into its reply.
+ */
 async function hermesRun(
   userId: string,
   args: ToolArgs,
-  mode: "quick" | "deep",
 ): Promise<ToolResult> {
   const cfg = await getHermesConfig(userId);
   if (!cfg) {
     return { ok: false, error: "Hermes Agent add-on is not enabled." };
   }
-  const url = (cfg.apiUrl ?? process.env.HERMES_BRIDGE_URL ?? HERMES_DEFAULT_BRIDGE).replace(
+  if (!cfg.apiKey) {
+    return {
+      ok: false,
+      error: "Hermes Agent: missing API key. Configure it in Settings → Add-ons → Hermes Agent.",
+    };
+  }
+  const url = (cfg.apiUrl ?? process.env.HERMES_GATEWAY_URL ?? HERMES_DEFAULT_GATEWAY).replace(
     /\/+$/,
     "",
   );
@@ -273,32 +269,41 @@ async function hermesRun(
   if (!task) return { ok: false, error: "missing 'task' argument" };
 
   const body = {
-    prompt: task,
-    mode,
-    model: cfg.defaultModel ?? "claude-haiku",
-    skills: cfg.selectedSkills ?? [],
-    yolo: mode === "deep" ? !!cfg.autonomous : false,
+    model: cfg.defaultModel ?? "hermes-agent",
+    messages: [{ role: "user", content: task }],
+    stream: false,
   };
 
   try {
-    const r = await fetch(`${url}/sessions`, {
+    const r = await fetch(`${url}/v1/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${cfg.apiKey}`,
+      },
       body: JSON.stringify(body),
-      // Quick is awaited end-to-end by the bridge (default 180s) — give the
-      // upstream call generous slack. Deep returns immediately so this is
-      // mostly the network round-trip.
-      signal: AbortSignal.timeout(mode === "quick" ? 200_000 : 10_000),
+      // Hermes can chain many internal tool calls; allow generous slack.
+      signal: AbortSignal.timeout(300_000),
     });
     if (!r.ok) {
       const text = await r.text().catch(() => "");
       return {
         ok: false,
-        error: `bridge ${r.status}: ${text.slice(0, 200)}`,
+        error: `hermes ${r.status}: ${text.slice(0, 200)}`,
       };
     }
-    const data = (await r.json()) as Record<string, unknown>;
-    return { ok: true, data };
+    const data = (await r.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    const content = data.choices?.[0]?.message?.content ?? "";
+    return {
+      ok: true,
+      data: {
+        content,
+        usage: data.usage,
+      },
+    };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
@@ -354,8 +359,7 @@ export async function executeTool(
   if (name === "web_search" || name === "web_fetch") {
     return executeWebTool(name, args, userId);
   }
-  if (name === "hermes_quick") return hermesRun(userId, args, "quick");
-  if (name === "hermes_deep") return hermesRun(userId, args, "deep");
+  if (name === "hermes_agent") return hermesRun(userId, args);
   return { ok: false, error: `unknown tool: ${name}` };
 }
 
