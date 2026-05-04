@@ -283,7 +283,10 @@ async function hermesRun(
       },
       body: JSON.stringify(body),
       // Hermes can chain many internal tool calls; allow generous slack.
-      signal: AbortSignal.timeout(300_000),
+      // Hermes can chain many internal tool calls; 5 min was too tight on
+      // long Qwen 397B loops. 15 min is more realistic for vault reads /
+      // RAG queries / deep agent runs.
+      signal: AbortSignal.timeout(900_000),
     });
     if (!r.ok) {
       const text = await r.text().catch(() => "");
