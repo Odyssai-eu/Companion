@@ -264,6 +264,16 @@ chatRoute.post("/completions", async (c) => {
   if (body.thinking) baseBody.enable_thinking = true;
   if (body.thinking && body.reasoning_effort)
     baseBody.reasoning_effort = body.reasoning_effort;
+
+  // Anthropic API rejects requests that set both `temperature` and `top_p`.
+  // We always honour temperature and drop top_p for any model that LiteLLM
+  // routes to Anthropic (anthropic/* alias or claude-* default name).
+  const looksAnthropic =
+    /^anthropic\//i.test(body.model) || /^claude[-_]/i.test(body.model);
+  if (looksAnthropic && "top_p" in baseBody && "temperature" in baseBody) {
+    delete baseBody.top_p;
+  }
+
   // EXO Direct path bypasses LiteLLM, so it doesn't get LiteLLM's per-model
   // defaults (which is where we baked enable_thinking=false for `big`).
   // Force it off here unless the user explicitly enabled thinking — Qwen
