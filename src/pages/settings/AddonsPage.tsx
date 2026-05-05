@@ -21,13 +21,14 @@ export default function AddonsPage() {
   }
 
   useEffect(() => {
-    // Touch the EXO Direct + Admin Extended /info endpoints first — they
-    // lazy-create the addons rows for users that predate these add-ons.
-    // After this returns, the /api/addons list will include both entries.
-    Promise.all([
-      api.exoInfo().catch(() => undefined),
-      api.adminExtInfo().catch(() => undefined),
-    ]).then(() => refresh());
+    // Touch the EXO Direct /info endpoint first — it lazy-creates the
+    // addon row for users that predate it. The "Admin Extended" plugin
+    // addon is deprecated (replaced by "Admin — Extended" core addon)
+    // so we no longer touch its /info endpoint.
+    api
+      .exoInfo()
+      .catch(() => undefined)
+      .then(() => refresh());
   }, []);
 
   const counts = useMemo(() => {
