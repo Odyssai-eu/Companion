@@ -202,6 +202,13 @@ export class GeminiLiveSession {
   private sendAudioChunk(pcm: ArrayBuffer): void {
     if (!this.session) return;
     if (this.muted) return;
+    // Don't feed the assistant's own voice back to Gemini's VAD. Without
+    // headphones, the mic picks up the speaker output, the server hears it
+    // as user speech, marks the turn as interrupted, and flushes the
+    // remaining audio in the middle of a sentence. We trade barge-in for
+    // a flowing conversation; barge-in can come back later behind a
+    // hold-to-talk gesture if needed.
+    if (this.state === "speaking") return;
     const b64 = arrayBufferToBase64(pcm);
     this.session.sendRealtimeInput({
       audio: {
