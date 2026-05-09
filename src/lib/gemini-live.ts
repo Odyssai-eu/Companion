@@ -252,6 +252,17 @@ export class GeminiLiveSession {
     }
   }
 
+  /**
+   * Headroom added when we (re)start a playback chain. Without it, the
+   * next chunk arriving even 5ms late re-resets to currentTime and
+   * creates an audible gap. With it, network jitter up to PREBUFFER_S
+   * is invisible.
+   *
+   * 120ms is the smallest value that consistently absorbs WS jitter on
+   * residential wifi without adding noticeable latency to the response.
+   */
+  private static readonly PREBUFFER_S = 0.12;
+
   private scheduleAudioChunk(b64: string): void {
     const ctx = this.playbackCtx;
     if (!ctx) return;
@@ -265,7 +276,16 @@ export class GeminiLiveSession {
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.connect(ctx.destination);
-    const startAt = Math.max(this.nextPlaybackTime, ctx.currentTime);
+
+    // If we're still on the existing playback chain, append. Otherwise we
+    // (re)start the chain with a small prebuffer so subsequent chunks
+    // have time to arrive before their slot.
+    let startAt: number;
+    if (this.nextPlaybackTime > ctx.currentTime) {
+      startAt = this.nextPlaybackTime;
+    } else {
+      startAt = ctx.currentTime + GeminiLiveSession.PREBUFFER_S;
+    }
     src.start(startAt);
     this.nextPlaybackTime = startAt + buffer.duration;
     this.playbackQueue.push(src);
