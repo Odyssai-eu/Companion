@@ -74,7 +74,14 @@ export default function SettingsLayout() {
             <CloseIcon />
           </button>
         </header>
-        <main className="flex-1 overflow-y-auto">
+        <main
+          className="flex-1 overflow-y-auto"
+          // Force a GPU compositing layer — works around a Safari bug where
+          // fast scroll on long flex children white-outs the viewport until
+          // the next paint trigger (reload, resize). will-change keeps the
+          // hint persistent across frames.
+          style={{ transform: "translateZ(0)", willChange: "transform" }}
+        >
           <div className="px-5 py-6">
             <Outlet />
           </div>
@@ -114,7 +121,12 @@ export default function SettingsLayout() {
           <CloseIcon />
         </button>
       </div>
-      <main className="flex-1 overflow-y-auto">
+      <main
+        className="flex-1 overflow-y-auto"
+        // See comment on the mobile <main> above — same Safari fast-scroll
+        // white-out fix.
+        style={{ transform: "translateZ(0)", willChange: "transform" }}
+      >
         <div className="mx-auto max-w-[960px] px-16 py-16">
           <Outlet />
         </div>
