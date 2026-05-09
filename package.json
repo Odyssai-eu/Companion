@@ -1,6 +1,6 @@
 {
   "name": "@thecompai/app",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,6 +12,7 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@google/genai": "^2.0.1",
     "@hono/node-server": "^1.13.7",
     "@hono/zod-validator": "^0.4.2",
     "bcryptjs": "^2.4.3",
