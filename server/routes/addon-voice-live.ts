@@ -17,7 +17,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
-import { addons } from "../db/schema";
+import { addons, conversations } from "../db/schema";
+import { getMemoryContext } from "../lib/memory";
 
 type Env = { Variables: { userId: string } };
 const voiceLiveRoute = new Hono<Env>();
@@ -104,20 +105,81 @@ voiceLiveRoute.patch("/config", zValidator("json", configSchema), async (c) => {
  * code. v1: returns the API key directly (browser → Google). v2 will
  * exchange for an ephemeral access_token via Google's AuthTokenService.
  */
-voiceLiveRoute.post("/session", async (c) => {
-  const userId = c.get("userId");
-  const addon = await findOrInit(userId);
-  if (!addon.enabled) return c.json({ error: "addon_disabled" }, 400);
-  const cfg = (addon.config ?? {}) as Config;
-  if (!cfg.apiKey) return c.json({ error: "missing_api_key" }, 400);
-  return c.json({
-    apiKey: cfg.apiKey, // TODO v0.3: replace with ephemeral access_token
-    model: cfg.model ?? DEFAULT_MODEL,
-    voice: cfg.voice ?? DEFAULT_VOICE,
-    systemInstruction: cfg.systemInstruction ?? "",
-    wsUrl:
-      "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent",
-  });
+const sessionSchema = z.object({
+  /** Optional — when present, the conversation's frozen memorySnapshot is
+   *  used (kept stable across turns); otherwise we fetch a fresh one. */
+  conversationId: z.string().uuid().optional(),
 });
+
+voiceLiveRoute.post(
+  "/session",
+  zValidator("json", sessionSchema.optional() as never),
+  async (c) => {
+    const userId = c.get("userId");
+    const addon = await findOrInit(userId);
+    if (!addon.enabled) return c.json({ error: "addon_disabled" }, 400);
+    const cfg = (addon.config ?? {}) as Config;
+    if (!cfg.apiKey) return c.json({ error: "missing_api_key" }, 400);
+
+    // Accept an optional body via either zValidator or raw json (the body
+    // can legitimately be empty for a session without a conversation).
+    let conversationId: string | undefined;
+    try {
+      const raw = await c.req.json().catch(() => null);
+      if (raw && typeof raw.conversationId === "string") {
+        conversationId = raw.conversationId;
+      }
+    } catch {
+      // ignore
+    }
+
+    // Pull memory context — prefer the per-conversation snapshot for
+    // byte-stability across turns, fall back to a live fetch when there
+    // is no conversation yet (e.g. quick voice probe from the chat input).
+    let memory = "";
+    if (conversationId) {
+      const [conv] = await db
+        .select({
+          memorySnapshot: conversations.memorySnapshot,
+          memoryEnabled: conversations.memoryEnabled,
+          projectId: conversations.projectId,
+          userId: conversations.userId,
+        })
+        .from(conversations)
+        .where(eq(conversations.id, conversationId))
+        .limit(1);
+      if (conv && conv.userId === userId && conv.memoryEnabled) {
+        memory = conv.memorySnapshot ?? "";
+        if (!memory) {
+          memory = await getMemoryContext(userId, conv.projectId ?? null);
+        }
+      }
+    } else {
+      memory = await getMemoryContext(userId, null);
+    }
+
+    const userInstr = cfg.systemInstruction ?? "";
+    // Compose the system instruction: memory first (so the model has full
+    // context before any persona override), then the user's saved
+    // instruction. Empty sections are skipped — no awkward dangling headers.
+    const parts: string[] = [];
+    if (memory.trim()) {
+      parts.push(`# Memory about the user\n\n${memory.trim()}`);
+    }
+    if (userInstr.trim()) {
+      parts.push(userInstr.trim());
+    }
+    const systemInstruction = parts.join("\n\n---\n\n");
+
+    return c.json({
+      apiKey: cfg.apiKey, // TODO v0.3: replace with ephemeral access_token
+      model: cfg.model ?? DEFAULT_MODEL,
+      voice: cfg.voice ?? DEFAULT_VOICE,
+      systemInstruction,
+      wsUrl:
+        "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent",
+    });
+  },
+);
 
 export default voiceLiveRoute;

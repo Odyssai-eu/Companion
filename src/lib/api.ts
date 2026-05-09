@@ -578,14 +578,17 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
-  voiceLiveSession: () =>
+  voiceLiveSession: (body?: { conversationId?: string }) =>
     request<{
       apiKey: string;
       model: string;
       voice: string;
       systemInstruction: string;
       wsUrl: string;
-    }>("/api/addons/voice-live/session", { method: "POST" }),
+    }>("/api/addons/voice-live/session", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
 
   // Auth
   me: () => request<{ user: AuthUser | null }>("/api/auth/me"),

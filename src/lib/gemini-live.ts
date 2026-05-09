@@ -84,11 +84,13 @@ export class GeminiLiveSession {
     }
   }
 
-  async start(): Promise<void> {
+  async start(opts?: { conversationId?: string | null }): Promise<void> {
     if (this.state !== "idle" && this.state !== "error") return;
     this.setState("connecting");
     try {
-      const session = await api.voiceLiveSession();
+      const session = await api.voiceLiveSession(
+        opts?.conversationId ? { conversationId: opts.conversationId } : undefined,
+      );
       const sys =
         session.systemInstruction ||
         // Default in French — Sophie's primary language. Native-audio

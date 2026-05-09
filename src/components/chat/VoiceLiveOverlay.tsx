@@ -62,9 +62,10 @@ export default function VoiceLiveOverlay({
     }
   }, [live.transcript.lastOutputFinal, conversationId, onCommit]);
 
-  // Auto-start on mount.
+  // Auto-start on mount. The conversationId is forwarded so the backend
+  // can prepend the right memory snapshot to the system instruction.
   useEffect(() => {
-    live.start();
+    live.start({ conversationId: conversationId ?? null });
     return () => {
       live.stop();
     };

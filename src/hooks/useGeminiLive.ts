@@ -47,7 +47,7 @@ export function useGeminiLive() {
     };
   }, []);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (opts?: { conversationId?: string | null }) => {
     if (sessionRef.current) return;
     const s = new GeminiLiveSession();
     sessionRef.current = s;
@@ -109,7 +109,7 @@ export function useGeminiLive() {
     });
 
     try {
-      await s.start();
+      await s.start(opts);
     } catch (err) {
       setError((err as Error).message);
       sessionRef.current = null;
