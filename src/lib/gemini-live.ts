@@ -125,6 +125,12 @@ export class GeminiLiveSession {
       });
 
       // 3. Send setup message
+      const sys =
+        session.systemInstruction ||
+        // Default in French — Sophie's primary language. The model will
+        // still understand and reply in any language the user uses, but
+        // the bias is set on first turn.
+        "Tu es l'assistant vocal de Sophie. Réponds toujours en français, naturel et concis, sauf si l'utilisateur passe explicitement à une autre langue.";
       const setup = {
         setup: {
           model: session.model,
@@ -134,20 +140,16 @@ export class GeminiLiveSession {
               voiceConfig: {
                 prebuiltVoiceConfig: { voiceName: session.voice },
               },
+              languageCode: "fr-FR",
             },
           },
-          ...(session.systemInstruction
-            ? {
-                systemInstruction: {
-                  parts: [{ text: session.systemInstruction }],
-                },
-              }
-            : {}),
+          systemInstruction: { parts: [{ text: sys }] },
           inputAudioTranscription: {},
           outputAudioTranscription: {},
         },
       };
       ws.send(JSON.stringify(setup));
+      console.log("[gemini-live] setup sent", setup);
 
       // 4. Wire incoming server messages
       ws.addEventListener("message", (ev) => {
@@ -200,8 +202,18 @@ export class GeminiLiveSession {
     };
 
     // Playback context at 24 kHz so we can directly construct AudioBuffers
-    // at the API's output rate without resampling.
+    // at the API's output rate without resampling. Chrome creates this in
+    // a "suspended" state when the page hasn't had a recent user gesture —
+    // resume() explicitly so the buffer sources actually play.
     this.playbackCtx = new AudioContext({ sampleRate: PLAYBACK_RATE });
+    if (this.playbackCtx.state === "suspended") {
+      try {
+        await this.playbackCtx.resume();
+      } catch {
+        // surface as a state error; the rest of the session can still progress
+        console.warn("[gemini-live] playback context could not resume");
+      }
+    }
     this.nextPlaybackTime = this.playbackCtx.currentTime;
   }
 
@@ -238,6 +250,18 @@ export class GeminiLiveSession {
     } catch {
       return;
     }
+    // Diagnostic — small enough to log full first turn. Strip the audio
+    // payload so the console isn't flooded with megabytes of base64.
+    const safe = JSON.parse(JSON.stringify(msg)) as ServerMessage;
+    const parts0 = safe.serverContent?.modelTurn?.parts;
+    if (parts0) {
+      for (const p of parts0) {
+        if (p.inlineData?.data) {
+          p.inlineData.data = `[base64 ${p.inlineData.data.length} chars, mime=${p.inlineData.mimeType}]`;
+        }
+      }
+    }
+    console.log("[gemini-live] msg", safe);
 
     if (msg.serverContent?.interrupted) {
       this.flushPlaybackQueue();
@@ -265,7 +289,12 @@ export class GeminiLiveSession {
     const parts = msg.serverContent?.modelTurn?.parts ?? [];
     for (const p of parts) {
       const data = p.inlineData?.data;
-      if (data && p.inlineData?.mimeType?.startsWith("audio/pcm")) {
+      const mime = p.inlineData?.mimeType ?? "";
+      // Be permissive — Gemini Live can label its PCM as "audio/pcm",
+      // "audio/L16", or other audio/* variants. We only consume PCM 16-bit
+      // mono LE at 24 kHz, but we accept any audio/* mime as that and let
+      // the playback step decode best-effort.
+      if (data && mime.startsWith("audio/")) {
         this.scheduleAudioChunk(data);
       }
     }
