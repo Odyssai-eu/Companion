@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, type ApiGlobalModel, type ApiInferenceSettings } from "~/lib/api";
+import {
+  api,
+  type ApiGlobalModel,
+  type ApiInferenceMode,
+  type ApiInferenceSettings,
+  type ApiNamedModels,
+} from "~/lib/api";
 
 const COMMON_TIMEZONES = [
   "Europe/Brussels",
@@ -26,6 +32,10 @@ export default function InferencePage() {
   const [timezone, setTimezone] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [keyDirty, setKeyDirty] = useState(false);
+  const [inferenceMode, setInferenceMode] =
+    useState<ApiInferenceMode>("expert");
+  const [easyModel, setEasyModel] = useState("");
+  const [namedModels, setNamedModels] = useState<ApiNamedModels>({});
 
   useEffect(() => {
     Promise.all([api.inferenceSettings(), api.listAllModels().catch(() => ({ models: [] }))])
@@ -35,6 +45,9 @@ export default function InferencePage() {
         setLitellmUrl(s.litellmUrl ?? "");
         setDefaultModel(s.defaultModel ?? "");
         setTimezone(s.timezone);
+        setInferenceMode(s.inferenceMode);
+        setEasyModel(s.easyModel ?? "");
+        setNamedModels(s.namedModels ?? {});
       })
       .catch((e) => setError((e as Error).message));
   }, []);
@@ -48,6 +61,11 @@ export default function InferencePage() {
         litellmUrl: litellmUrl.trim() || null,
         defaultModel: defaultModel.trim() || null,
         timezone,
+        inferenceMode,
+        easyModel: easyModel.trim() || null,
+        namedModels: Object.values(namedModels).some((v) => v && v.length > 0)
+          ? namedModels
+          : null,
       };
       if (keyDirty) patch.litellmApiKey = apiKey.trim() || null;
       await api.updateInferenceSettings(patch);
@@ -152,10 +170,113 @@ export default function InferencePage() {
         </div>
       </Section>
 
+      <Section title="Inference mode">
+        <p className="text-[13px] text-gray-600">
+          How models are exposed in the chat picker. Pick what fits the user
+          you're configuring.
+        </p>
+        <div className="flex flex-col gap-2">
+          {(
+            [
+              {
+                v: "easy" as const,
+                title: "Easy — one model, no picker",
+                desc: "User never sees a model picker. The single model below is used everywhere.",
+              },
+              {
+                v: "advanced" as const,
+                title: "Advanced — 4 named slots",
+                desc: "User picks among Conversation / Analyse / Engineer / Expert. Each maps to a LiteLLM alias you set below.",
+              },
+              {
+                v: "expert" as const,
+                title: "Expert — full LiteLLM list",
+                desc: "User picks any model from the LiteLLM catalog. Power-user mode.",
+              },
+            ]
+          ).map((opt) => (
+            <label
+              key={opt.v}
+              className={`flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 text-[13px] transition-colors ${
+                inferenceMode === opt.v
+                  ? "border-cyan bg-[rgba(79,179,217,0.06)]"
+                  : "border-gray-200 bg-white hover:bg-gray-50"
+              }`}
+            >
+              <input
+                type="radio"
+                name="inferenceMode"
+                value={opt.v}
+                checked={inferenceMode === opt.v}
+                onChange={() => setInferenceMode(opt.v)}
+                className="mt-1"
+              />
+              <div className="flex flex-col gap-0.5">
+                <span className="font-medium text-ink">{opt.title}</span>
+                <span className="text-[12px] text-gray-500">{opt.desc}</span>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        {inferenceMode === "easy" && (
+          <Field
+            label="Easy mode model"
+            hint="The single model the user sees as 'the assistant'."
+          >
+            <select
+              value={easyModel}
+              onChange={(e) => setEasyModel(e.target.value)}
+              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
+            >
+              <option value="">(pick a model)</option>
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+
+        {inferenceMode === "advanced" && (
+          <div className="flex flex-col gap-3">
+            {(
+              [
+                ["conversation", "Conversation", "Casual chat, fast turns."],
+                ["analyse", "Analyse", "Reading, summarising, comparing."],
+                ["engineer", "Engineer", "Code, debugging, refactor."],
+                ["expert", "Expert", "Heavy reasoning, deep dives."],
+              ] as const
+            ).map(([key, title, desc]) => (
+              <Field key={key} label={title} hint={desc}>
+                <select
+                  value={namedModels[key] ?? ""}
+                  onChange={(e) =>
+                    setNamedModels((prev) => ({
+                      ...prev,
+                      [key]: e.target.value || undefined,
+                    }))
+                  }
+                  className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
+                >
+                  <option value="">(pick a model)</option>
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ))}
+          </div>
+        )}
+      </Section>
+
       <Section title="Default model">
         <p className="text-[13px] text-gray-600">
-          The model that pre-fills the picker on a fresh chat. You can still
-          switch per conversation from the composer.
+          The model that pre-fills the picker on a fresh chat in Expert mode.
+          Ignored in Easy and Advanced modes (those have their own slots).
         </p>
         <select
           value={defaultModel}

@@ -8,6 +8,7 @@ import {
   type ApiProject,
 } from "~/lib/api";
 import { streamChat, type ChatMessage } from "~/lib/chat-stream";
+import { emitFileChanged } from "~/lib/file-events";
 import { buildUserMessage, type Attachment } from "~/lib/file-attach";
 import { estimateCost as lookupCost } from "~/lib/model-pricing";
 
@@ -100,6 +101,16 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inferenceMode, setInferenceMode] = useState<
+    "easy" | "advanced" | "expert"
+  >("expert");
+  const [easyModel, setEasyModel] = useState<string | null>(null);
+  const [namedModels, setNamedModels] = useState<{
+    conversation?: string;
+    analyse?: string;
+    engineer?: string;
+    expert?: string;
+  }>({});
   const [conversation, setConversation] = useState<ApiConversation | null>(
     null,
   );
@@ -158,9 +169,33 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       .then(([{ models }, settings]) => {
         if (cancelled) return;
         setGlobalModels(models);
-        if (!model) {
-          const fallback = settings.defaultModel ?? models[0]?.id ?? "";
-          if (fallback) setModelAndPersist(fallback);
+        setInferenceMode(settings.inferenceMode);
+        setEasyModel(settings.easyModel);
+        setNamedModels(settings.namedModels ?? {});
+
+        // Choose a default model that respects the active mode.
+        if (settings.inferenceMode === "easy") {
+          // Easy mode forces the admin-set model, ignoring any local override.
+          if (settings.easyModel) setModelAndPersist(settings.easyModel);
+        } else if (settings.inferenceMode === "advanced") {
+          // Advanced: if the persisted model isn't one of the 4 slots, default
+          // to "conversation" (or the first non-empty slot).
+          const slots = [
+            settings.namedModels?.conversation,
+            settings.namedModels?.analyse,
+            settings.namedModels?.engineer,
+            settings.namedModels?.expert,
+          ].filter((v): v is string => Boolean(v && v.length > 0));
+          if (!slots.includes(model)) {
+            const fallback = slots[0] ?? settings.defaultModel ?? "";
+            if (fallback) setModelAndPersist(fallback);
+          }
+        } else {
+          // Expert: behave as before.
+          if (!model) {
+            const fallback = settings.defaultModel ?? models[0]?.id ?? "";
+            if (fallback) setModelAndPersist(fallback);
+          }
         }
       })
       .catch(() => {
@@ -348,6 +383,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
               if (matchIdx < 0 || matchIdx >= delta.calls.length) return tc;
               return { ...tc, result: delta.calls[matchIdx].result };
             });
+          } else if (delta.type === "file_changed") {
+            // Notify any FilesPage / hook subscribed for live refresh.
+            emitFileChanged(delta.path);
           }
           setMessages((prev) =>
             prev.map((m) =>
@@ -514,6 +552,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     model,
     setModel: setModelAndPersist,
     globalModels,
+    inferenceMode,
+    easyModel,
+    namedModels,
     inference,
     setInference: updateInference,
     activeModelCapabilities,

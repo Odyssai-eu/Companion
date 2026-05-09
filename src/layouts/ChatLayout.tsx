@@ -6,6 +6,51 @@ import Messages from "~/components/chat/Messages";
 import Sidebar from "~/components/chat/Sidebar";
 import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
 import { STYLE_PRESETS, useChat } from "~/hooks/useChat";
+import type { ApiGlobalModel } from "~/lib/api";
+
+/**
+ * Filter the model list down to what the user can pick, given their
+ * inference mode (Settings → Inference). Easy mode hides the picker
+ * entirely (TopBar prop), so this returns a single-entry list as a
+ * safety net. Advanced exposes 4 named slots only. Expert lets the
+ * full LiteLLM list through.
+ */
+function visibleModelsForMode(
+  all: ApiGlobalModel[],
+  mode: "easy" | "advanced" | "expert",
+  easyModel: string | null,
+  namedModels: {
+    conversation?: string;
+    analyse?: string;
+    engineer?: string;
+    expert?: string;
+  },
+): ApiGlobalModel[] {
+  if (mode === "expert") return all;
+  if (mode === "easy") {
+    if (!easyModel) return [];
+    const m = all.find((x) => x.id === easyModel);
+    return m ? [m] : [];
+  }
+  // advanced — keep order Conversation / Analyse / Engineer / Expert
+  const order: Array<["conversation" | "analyse" | "engineer" | "expert", string]> = [
+    ["conversation", "Conversation"],
+    ["analyse", "Analyse"],
+    ["engineer", "Engineer"],
+    ["expert", "Expert"],
+  ];
+  const out: ApiGlobalModel[] = [];
+  for (const [slot, label] of order) {
+    const id = namedModels[slot];
+    if (!id) continue;
+    const m = all.find((x) => x.id === id);
+    if (m) {
+      // Override display name with the slot label so the picker reads cleanly.
+      out.push({ ...m, name: label, tags: [...(m.tags ?? [])] });
+    }
+  }
+  return out;
+}
 import { useGlobalShortcuts } from "~/hooks/useGlobalShortcuts";
 import { useIsMobile } from "~/hooks/useIsMobile";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
@@ -145,7 +190,13 @@ export default function ChatLayout() {
           modelHasVision={chat.activeModelCapabilities.vision}
           model={chat.model}
           onModelChange={chat.setModel}
-          models={chat.globalModels}
+          models={visibleModelsForMode(
+            chat.globalModels,
+            chat.inferenceMode,
+            chat.easyModel,
+            chat.namedModels,
+          )}
+          hideModelPicker={chat.inferenceMode === "easy"}
         />
       </main>
     </div>

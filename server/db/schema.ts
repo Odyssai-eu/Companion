@@ -28,6 +28,18 @@ export const users = pgTable("users", {
   // Admin Extended — RBAC. Values: 'admin' | 'organiser' | 'user' | 'guest'.
   role: text("role").notNull().default("user"),
   active: boolean("active").notNull().default(true),
+  // Inference mode: 'easy' | 'advanced' | 'expert' (see migration 0015).
+  inferenceMode: text("inference_mode").notNull().default("expert"),
+  // Easy mode: a single LiteLLM alias the admin curates. UI hides picker.
+  easyModel: text("easy_model"),
+  // Advanced mode: 4 named slots → LiteLLM aliases.
+  // Shape: { conversation: string, analyse: string, engineer: string, expert: string }
+  namedModels: jsonb("named_models").$type<{
+    conversation?: string;
+    analyse?: string;
+    engineer?: string;
+    expert?: string;
+  }>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .default(sql`now()`),
@@ -394,3 +406,42 @@ export type GuestToken = typeof guestTokens.$inferSelect;
 export type NewGuestToken = typeof guestTokens.$inferInsert;
 export type AuthLog = typeof authLog.$inferSelect;
 export type NewAuthLog = typeof authLog.$inferInsert;
+
+
+// ── Workspace files ────────────────────────────────────────────────────────
+// Per-user virtual filesystem exposed to the LLM via the fs_* tools.
+// v1: text content stored directly in Postgres. Binary blobs and FS-backed
+// storage will land in v2 (see docs/migration/13-roadmap-and-gaps.md).
+
+export const workspaceFiles = pgTable(
+  "workspace_files",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    content: text("content").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    mimeType: text("mime_type").notNull().default("text/plain"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userPathUniq: uniqueIndex("workspace_files_user_path_unique").on(
+      t.userId,
+      t.path,
+    ),
+    userUpdatedIdx: index("workspace_files_user_idx").on(
+      t.userId,
+      t.updatedAt,
+    ),
+  }),
+);
+
+export type WorkspaceFileRow = typeof workspaceFiles.$inferSelect;
+export type NewWorkspaceFileRow = typeof workspaceFiles.$inferInsert;

@@ -29,7 +29,6 @@ import { authHeaders } from "../lib/litellm";
 import { getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
 import type { GuestTokenContext } from "../lib/guest-token";
-import { resolveExoEndpoint } from "./addon-exo";
 import {
   executeTool,
   isHermesEnabled,
@@ -115,36 +114,18 @@ chatRoute.post("/completions", async (c) => {
     return row;
   });
 
-  // ── 2. Resolve target — LiteLLM by default, EXO direct when the model
-  //       carries the `exo-direct/<endpointId>/<modelId>` prefix.
-  //       Direct mode skips LiteLLM entirely so we can A/B latency.
-  const isExoDirect = body.model.startsWith("exo-direct/");
-  let exoEndpoint: { baseUrl: string } | null = null;
-  if (isExoDirect) {
-    const rest = body.model.slice("exo-direct/".length);
-    const slash = rest.indexOf("/");
-    if (slash <= 0) {
-      return c.json({ error: "exo_direct_bad_id" }, 400);
-    }
-    const endpointId = rest.slice(0, slash);
-    const ep = await resolveExoEndpoint(userId, endpointId);
-    if (!ep) {
-      return c.json(
-        { error: "exo_direct_unconfigured", detail: "endpoint not found or disabled" },
-        400,
-      );
-    }
-    exoEndpoint = { baseUrl: ep.baseUrl };
-    body.model = rest.slice(slash + 1); // raw EXO model id
-  }
-  const target = isExoDirect && exoEndpoint
-    ? { baseUrl: exoEndpoint.baseUrl, apiKey: null }
-    : {
-        baseUrl: (
-          userRow.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
-        ).replace(/\/+$/, ""),
-        apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-      };
+  // ── 2. Resolve target — LiteLLM is the single inference path.
+  //   Earlier versions had an "EXO Direct" addon that bypassed LiteLLM via
+  //   an `exo-direct/<endpointId>/<modelId>` model prefix. That addon was
+  //   removed in v0.2 — the consolidation of all inference behind LiteLLM
+  //   simplifies routing, observability and tool support. EXO instances are
+  //   still reachable as regular LiteLLM aliases.
+  const target = {
+    baseUrl: (
+      userRow.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
+    ).replace(/\/+$/, ""),
+    apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+  };
 
   // ── 3. Resolve project + memory snapshot (frozen per-conversation) ────
   // The memory wiki is snapshot at conversation creation (or on explicit
@@ -274,12 +255,6 @@ chatRoute.post("/completions", async (c) => {
     delete baseBody.top_p;
   }
 
-  // EXO Direct path bypasses LiteLLM, so it doesn't get LiteLLM's per-model
-  // defaults (which is where we baked enable_thinking=false for `big`).
-  // Force it off here unless the user explicitly enabled thinking — Qwen
-  // and friends default to thinking ON otherwise, which burns 1-3k tokens
-  // of pre-answer reasoning the user doesn't want.
-  if (isExoDirect && !body.thinking) baseBody.enable_thinking = false;
 
   // Clamp max_tokens to the provider's published ceiling so we don't get
   // 400s from the upstream. Local models served by exo/Inferencer don't
@@ -485,6 +460,22 @@ chatRoute.post("/completions", async (c) => {
               })}\n\n`,
             ),
           );
+
+          // For workspace-mutating fs_* tools, push a file_changed event so
+          // the FilesPage hook (useWorkspaceFiles) can refresh in live.
+          for (let i = 0; i < toolCalls.length; i++) {
+            const tc = toolCalls[i];
+            const r = results[i];
+            if (!r.ok) continue;
+            if (tc.name !== "fs_write" && tc.name !== "fs_edit") continue;
+            const path = (r.data as { path?: string } | undefined)?.path;
+            if (!path) continue;
+            await writer.write(
+              encoder.encode(
+                `data: ${JSON.stringify({ _event: "file_changed", path })}\n\n`,
+              ),
+            );
+          }
 
           // Append assistant tool_calls + tool results to history for next iter
           conversation = [

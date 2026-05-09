@@ -24,6 +24,9 @@ inferenceRoute.get("/settings", async (c) => {
       litellmUrl: users.litellmUrl,
       hasApiKey: users.litellmApiKey,
       timezone: users.timezone,
+      inferenceMode: users.inferenceMode,
+      easyModel: users.easyModel,
+      namedModels: users.namedModels,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -35,24 +38,42 @@ inferenceRoute.get("/settings", async (c) => {
     timezone: u.timezone,
     hasApiKey: Boolean(u.hasApiKey),
     envDefaultUrl: process.env.LITELLM_URL ?? "http://192.168.86.44:4000",
+    inferenceMode: u.inferenceMode as "easy" | "advanced" | "expert",
+    easyModel: u.easyModel,
+    namedModels: u.namedModels ?? {},
   });
 });
+
+const namedModelsSchema = z
+  .object({
+    conversation: z.string().max(200).optional(),
+    analyse: z.string().max(200).optional(),
+    engineer: z.string().max(200).optional(),
+    expert: z.string().max(200).optional(),
+  })
+  .optional();
 
 const patchSchema = z.object({
   defaultModel: z.string().max(200).nullish(),
   litellmUrl: z.string().url().max(400).nullish(),
   litellmApiKey: z.string().max(400).nullish(),
   timezone: z.string().min(1).max(80).optional(),
+  inferenceMode: z.enum(["easy", "advanced", "expert"]).optional(),
+  easyModel: z.string().max(200).nullish(),
+  namedModels: namedModelsSchema,
 });
 
 inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => {
   const userId = c.get("userId");
   const data = c.req.valid("json");
-  const patch: Record<string, string | null> = {};
+  const patch: Record<string, unknown> = {};
   if (data.defaultModel !== undefined) patch.defaultModel = data.defaultModel ?? null;
   if (data.litellmUrl !== undefined) patch.litellmUrl = data.litellmUrl ?? null;
   if (data.litellmApiKey !== undefined) patch.litellmApiKey = data.litellmApiKey ?? null;
   if (data.timezone !== undefined) patch.timezone = data.timezone;
+  if (data.inferenceMode !== undefined) patch.inferenceMode = data.inferenceMode;
+  if (data.easyModel !== undefined) patch.easyModel = data.easyModel ?? null;
+  if (data.namedModels !== undefined) patch.namedModels = data.namedModels ?? null;
   if (Object.keys(patch).length === 0) {
     return c.json({ error: "no_fields_to_update" }, 400);
   }

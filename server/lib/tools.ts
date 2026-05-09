@@ -1,24 +1,24 @@
 /**
  * LLM tool registry.
  *
- * Two add-ons feed tools into the chat route:
- *   - "Web Search" (Tavily) → web_search, web_fetch
- *   - "Hermes Agent"        → hermes_agent
+ * Three categories of tools feed into the chat route:
+ *   - Always-on: fs_list / fs_read / fs_write / fs_edit (workspace files)
+ *   - "Web Search" addon (Tavily) → web_search, web_fetch
+ *   - "Hermes Agent" addon (renamed Cluster Operations) → cluster_action
  *
- * Each add-on lives in `addons` (kind=plugin) with its config stored in
- * `addons.config`. When enabled and the model is tool-capable, the chat
- * route exposes the matching tool schemas; when the LLM emits tool_calls,
- * `executeTool` dispatches by name.
+ * Workspace fs tools are not gated by an addon: they're a core capability
+ * of the agentic UX. Tool calls always operate on the user's own scope.
  *
  * Hermes Agent talks to the native Hermes Gateway (NousResearch hermes-agent
  * v0.12+) on `:8642` — OpenAI-compatible chat completions with mandatory
- * Bearer auth. Tools/skills are owned by Hermes itself, not selectable
- * from our side.
+ * Bearer auth. Repositioned in v0.2 from generic agent delegate to
+ * cluster-specific operations (RAG / ComfyUI / Obsidian vault / rsync).
  */
 
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/index";
 import { addons } from "../db/schema";
+import { fsEdit, fsList, fsRead, fsWrite, WorkspaceError } from "./workspace";
 
 const ADDON_NAME = "Web Search";
 const HERMES_ADDON_NAME = "Hermes Agent";
@@ -78,16 +78,14 @@ const HERMES_TOOLS = [
   {
     type: "function" as const,
     function: {
-      name: "hermes_agent",
+      name: "cluster_action",
       description:
-        "Delegate an operational task to the Hermes Agent. Hermes runs on " +
-        "the user's cluster with its own toolset (terminal, file ops, RAG " +
-        "search, ComfyUI, Obsidian, etc.). Use this when the task requires " +
-        "real action on the cluster, not just reasoning — e.g. 'run this " +
-        "command', 'read this file from the vault', 'generate an image', " +
-        "'search the personal knowledge base'. Hermes will pick the right " +
-        "internal tool and return the final result. For pure reasoning or " +
-        "casual chat, use your own knowledge or web_search instead.",
+        "Delegate a cluster-specific operation to the user's home server. " +
+        "Use ONLY for tasks that require the cluster's own toolset: RAG " +
+        "search over personal corpus, image generation via ComfyUI, vault " +
+        "operations on the local Obsidian filesystem, rsync between nodes. " +
+        "Do NOT use for files in the conversation workspace — use fs_* tools " +
+        "instead. Do NOT use for web search — use web_search/web_fetch.",
       parameters: {
         type: "object",
         properties: {
@@ -95,7 +93,7 @@ const HERMES_TOOLS = [
             type: "string",
             description:
               "The task in natural language. Be specific about what to do " +
-              "and what you expect back. Hermes handles tool selection.",
+              "and what you expect back.",
           },
         },
         required: ["task"],
@@ -104,11 +102,137 @@ const HERMES_TOOLS = [
   },
 ];
 
+// ── rag_search (always on when RAG_QDRANT_URL is set) ────────────────────
+
+const RAG_TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "rag_search",
+      description:
+        "Semantic search over the user's personal knowledge base (Qdrant + " +
+        "bge-m3 embeddings). Use this for questions about anything the user " +
+        "has previously written, ingested or curated — papers, notes, project " +
+        "docs, web crawls. Returns top-K passages with their source path and " +
+        "similarity score. Faster than cluster_action for the same job " +
+        "(direct Qdrant query, no Hermes loop).",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Natural language query.",
+          },
+          limit: {
+            type: "integer",
+            description: "Max number of passages (1–10).",
+            default: 5,
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+];
+
+// ── fs tools (always on, no addon gating) ─────────────────────────────────
+
+const FS_TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "fs_list",
+      description:
+        "List files in the user's workspace. Returns an array of " +
+        "{path, sizeBytes, mimeType, updatedAt}. Use this to discover " +
+        "what's available before reading.",
+      parameters: {
+        type: "object",
+        properties: {
+          prefix: {
+            type: "string",
+            description:
+              "Optional path prefix to filter, e.g. 'notes/' to list everything " +
+              "under notes/. Omit for full listing.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "fs_read",
+      description:
+        "Read the full text content of a file from the user's workspace.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Workspace-relative path, e.g. 'notes/meeting.md'.",
+          },
+        },
+        required: ["path"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "fs_write",
+      description:
+        "Create a new file or fully overwrite an existing one in the user's " +
+        "workspace. For modifying parts of an existing file, prefer fs_edit.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          content: { type: "string" },
+        },
+        required: ["path", "content"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "fs_edit",
+      description:
+        "Replace an exact string in an existing file. Fails if old_string " +
+        "is not found or matches multiple locations — in that case, pass more " +
+        "context in old_string to make it unique. Use this for surgical edits " +
+        "instead of rewriting the entire file with fs_write.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          old_string: {
+            type: "string",
+            description: "Exact string to replace. Must be unique in the file.",
+          },
+          new_string: {
+            type: "string",
+            description: "Replacement string.",
+          },
+        },
+        required: ["path", "old_string", "new_string"],
+      },
+    },
+  },
+];
+
 export const TOOL_SCHEMAS = WEB_SEARCH_TOOLS;  // legacy export for places that still reference it
 
-/** All tools exposed to the model, filtered by which add-ons are enabled. */
+/** All tools exposed to the model.
+ *  - fs_* are always on (workspace files, scoped per user).
+ *  - rag_search is always on when RAG_QDRANT_URL is reachable (env-gated).
+ *  - web_* require the Web Search addon (Tavily key).
+ *  - cluster_action requires the Hermes Agent addon (gateway + key).
+ */
 export async function toolsForUser(userId: string): Promise<unknown[]> {
-  const out: unknown[] = [];
+  const out: unknown[] = [...FS_TOOLS];
+  if (isRagConfigured()) out.push(...RAG_TOOLS);
   if (await isWebSearchEnabled(userId)) out.push(...WEB_SEARCH_TOOLS);
   if (await isHermesEnabled(userId)) out.push(...HERMES_TOOLS);
   return out;
@@ -354,15 +478,166 @@ async function executeWebTool(
 }
 
 /** Public dispatcher — routes by tool name to the right backend. */
+// ── RAG (Qdrant + bge-m3) ─────────────────────────────────────────────────
+
+const RAG_QDRANT_URL = process.env.RAG_QDRANT_URL ?? "http://192.168.86.44:6333";
+const RAG_EMBED_URL = process.env.RAG_EMBED_URL ?? "http://192.168.86.44:8082";
+const RAG_COLLECTION = process.env.RAG_COLLECTION ?? "obsidian-context";
+
+function isRagConfigured(): boolean {
+  return Boolean(RAG_QDRANT_URL && RAG_EMBED_URL && RAG_COLLECTION);
+}
+
+async function ragSearch(
+  query: string,
+  limit: number,
+): Promise<ToolResult> {
+  if (!isRagConfigured()) {
+    return { ok: false, error: "rag not configured" };
+  }
+  const k = clamp(limit, 1, 10);
+  try {
+    // 1. Embed the query
+    const embedResp = await fetch(`${RAG_EMBED_URL}/embed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ texts: [query] }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!embedResp.ok) {
+      const t = await embedResp.text().catch(() => "");
+      return {
+        ok: false,
+        error: `embed ${embedResp.status}: ${t.slice(0, 160)}`,
+      };
+    }
+    const embedJson = (await embedResp.json()) as {
+      embeddings?: number[][];
+    };
+    const vector = embedJson.embeddings?.[0];
+    if (!vector || vector.length === 0) {
+      return { ok: false, error: "embed: empty vector" };
+    }
+
+    // 2. Qdrant search
+    const searchResp = await fetch(
+      `${RAG_QDRANT_URL}/collections/${encodeURIComponent(RAG_COLLECTION)}/points/search`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vector,
+          limit: k,
+          with_payload: true,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!searchResp.ok) {
+      const t = await searchResp.text().catch(() => "");
+      return {
+        ok: false,
+        error: `qdrant ${searchResp.status}: ${t.slice(0, 160)}`,
+      };
+    }
+    const searchJson = (await searchResp.json()) as {
+      result?: Array<{
+        score?: number;
+        payload?: Record<string, unknown>;
+        id?: number | string;
+      }>;
+    };
+    const hits = (searchJson.result ?? []).map((r) => {
+      const payload = r.payload ?? {};
+      const text =
+        (payload.text as string | undefined) ??
+        (payload.content as string | undefined) ??
+        "";
+      const path =
+        (payload.path as string | undefined) ??
+        (payload.source as string | undefined) ??
+        (payload.filepath as string | undefined) ??
+        "(unknown)";
+      const title =
+        (payload.title as string | undefined) ??
+        path.split("/").pop() ??
+        "";
+      return {
+        score: r.score ?? 0,
+        path,
+        title,
+        snippet: text.slice(0, 600),
+      };
+    });
+    return { ok: true, data: { query, hits } };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
+async function executeFsTool(
+  name: string,
+  args: ToolArgs,
+  userId: string,
+): Promise<ToolResult> {
+  try {
+    if (name === "fs_list") {
+      const data = await fsList(
+        userId,
+        typeof args.prefix === "string" ? args.prefix : undefined,
+      );
+      return { ok: true, data };
+    }
+    if (name === "fs_read") {
+      const data = await fsRead(userId, String(args.path ?? ""));
+      return { ok: true, data };
+    }
+    if (name === "fs_write") {
+      const data = await fsWrite(
+        userId,
+        String(args.path ?? ""),
+        String(args.content ?? ""),
+      );
+      return { ok: true, data };
+    }
+    if (name === "fs_edit") {
+      const data = await fsEdit(
+        userId,
+        String(args.path ?? ""),
+        String(args.old_string ?? ""),
+        String(args.new_string ?? ""),
+      );
+      return { ok: true, data };
+    }
+    return { ok: false, error: `unknown fs tool: ${name}` };
+  } catch (err) {
+    if (err instanceof WorkspaceError) {
+      return { ok: false, error: `${err.code}: ${err.message}` };
+    }
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
 export async function executeTool(
   name: string,
   args: ToolArgs,
   userId: string,
 ): Promise<ToolResult> {
+  if (name.startsWith("fs_")) return executeFsTool(name, args, userId);
+  if (name === "rag_search") {
+    const q = String(args.query ?? "");
+    const limit = typeof args.limit === "number" ? args.limit : 5;
+    if (!q) return { ok: false, error: "missing 'query' argument" };
+    return ragSearch(q, limit);
+  }
   if (name === "web_search" || name === "web_fetch") {
     return executeWebTool(name, args, userId);
   }
-  if (name === "hermes_agent") return hermesRun(userId, args);
+  // `hermes_agent` kept as alias for in-flight conversations created
+  // before the rename to `cluster_action` (v0.2).
+  if (name === "cluster_action" || name === "hermes_agent") {
+    return hermesRun(userId, args);
+  }
   return { ok: false, error: `unknown tool: ${name}` };
 }
 

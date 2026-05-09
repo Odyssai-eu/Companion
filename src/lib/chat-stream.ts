@@ -27,7 +27,8 @@ export type StreamDelta =
           sources?: Array<{ title: string; url: string }>;
         };
       }>;
-    };
+    }
+  | { type: "file_changed"; path: string };
 
 export type InferencePayload = {
   temperature?: number;
@@ -146,6 +147,7 @@ export async function streamChat(
           error?: string;
           _event?: string;
           calls?: Array<unknown>;
+          path?: string;
           choices?: {
             delta?: { content?: string | null; reasoning_content?: string | null };
           }[];
@@ -184,6 +186,10 @@ export async function streamChat(
               };
             }>,
           });
+          continue;
+        }
+        if (chunk._event === "file_changed" && typeof chunk.path === "string") {
+          opts.onDelta({ type: "file_changed", path: chunk.path });
           continue;
         }
         if (chunk.usage) {

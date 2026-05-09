@@ -5,12 +5,24 @@ export type ApiGlobalModel = {
   capabilities: { vision: boolean; tools: boolean };
 };
 
+export type ApiInferenceMode = "easy" | "advanced" | "expert";
+
+export type ApiNamedModels = {
+  conversation?: string;
+  analyse?: string;
+  engineer?: string;
+  expert?: string;
+};
+
 export type ApiInferenceSettings = {
   defaultModel: string | null;
   litellmUrl: string | null;
   timezone: string;
   hasApiKey: boolean;
   envDefaultUrl: string;
+  inferenceMode: ApiInferenceMode;
+  easyModel: string | null;
+  namedModels: ApiNamedModels;
 };
 
 export type ApiInferenceStatus = {
@@ -66,6 +78,19 @@ export type ApiProjectCategory = {
   name: string;
   icon: string;
   systemPrompt: string;
+};
+
+export type ApiWorkspaceFile = {
+  path: string;
+  sizeBytes: number;
+  mimeType: string;
+  updatedAt: string;
+};
+
+export type ApiWorkspaceStats = {
+  fileCount: number;
+  bytesUsed: number;
+  bytesQuota: number;
 };
 
 export type ApiMessage = {
@@ -232,6 +257,9 @@ export const api = {
       litellmUrl: string | null;
       litellmApiKey: string | null;
       timezone: string;
+      inferenceMode: ApiInferenceMode;
+      easyModel: string | null;
+      namedModels: ApiNamedModels | null;
     }>,
   ) =>
     request<{ ok: true }>("/api/inference/settings", {
@@ -372,42 +400,36 @@ export const api = {
       body: JSON.stringify({ messages, ...(model ? { model } : {}) }),
     }),
 
-  // EXO Direct add-on
-  exoInfo: () =>
-    request<{
-      addonId: string;
-      enabled: boolean;
-      endpoints: Array<{
-        id: string;
-        label: string;
-        baseUrl: string;
-        models: string[];
-      }>;
-    }>("/api/addons/exo/info"),
-  exoAddEndpoint: (label: string, url: string) =>
-    request<{ endpoint: { id: string; label: string; baseUrl: string } }>(
-      "/api/addons/exo/endpoints",
-      { method: "POST", body: JSON.stringify({ label, url }) },
-    ),
-  exoUpdateEndpoint: (
-    id: string,
-    patch: { label?: string; url?: string },
-  ) =>
-    request<{ endpoint: { id: string; label: string; baseUrl: string } }>(
-      `/api/addons/exo/endpoints/${id}`,
-      { method: "PATCH", body: JSON.stringify(patch) },
-    ),
-  exoDeleteEndpoint: (id: string) =>
-    request<void>(`/api/addons/exo/endpoints/${id}`, { method: "DELETE" }),
-  exoRefreshEndpoint: (id: string) =>
-    request<{
-      endpoint: { id: string; label: string; baseUrl: string; models: string[] };
-    }>(`/api/addons/exo/endpoints/${id}/refresh`, { method: "POST" }),
+  // (EXO Direct add-on removed in v0.2 — all inference goes through LiteLLM.)
+
   exportConversationUrl: (id: string) =>
     `/api/conversations/${id}/export.md`,
   exportConversationJsonUrl: (id: string) =>
     `/api/conversations/${id}/export.json`,
   exportProjectUrl: (id: string) => `/api/projects/${id}/export.md`,
+
+  // Workspace files (agentic UX, fs_* tools)
+  listFiles: (prefix?: string) =>
+    request<{ entries: ApiWorkspaceFile[]; stats: ApiWorkspaceStats }>(
+      `/api/files${prefix ? `?prefix=${encodeURIComponent(prefix)}` : ""}`,
+    ),
+  readFile: (path: string) =>
+    request<{ path: string; content: string; mimeType: string }>(
+      `/api/files/content?path=${encodeURIComponent(path)}`,
+    ),
+  writeFile: (path: string, content: string) =>
+    request<{ path: string; sizeBytes: number; created: boolean }>(
+      `/api/files/content`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ path, content }),
+      },
+    ),
+  deleteFile: (path: string) =>
+    request<{ ok: true }>(
+      `/api/files/content?path=${encodeURIComponent(path)}`,
+      { method: "DELETE" },
+    ),
 
   // Projects
   listProjects: () =>
@@ -530,6 +552,37 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+
+  // Voice (Gemini Live) add-on
+  voiceLiveInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      hasApiKey: boolean;
+      model: string;
+      voice: string;
+      systemInstruction: string;
+    }>("/api/addons/voice-live/info"),
+  voiceLiveUpdateConfig: (
+    body: Partial<{
+      apiKey: string | null;
+      model: string;
+      voice: string;
+      systemInstruction: string;
+    }>,
+  ) =>
+    request<{ ok: true }>("/api/addons/voice-live/config", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  voiceLiveSession: () =>
+    request<{
+      apiKey: string;
+      model: string;
+      voice: string;
+      systemInstruction: string;
+      wsUrl: string;
+    }>("/api/addons/voice-live/session", { method: "POST" }),
 
   // Auth
   me: () => request<{ user: AuthUser | null }>("/api/auth/me"),

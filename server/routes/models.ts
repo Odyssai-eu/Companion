@@ -7,10 +7,6 @@
  */
 
 import { Hono } from "hono";
-import {
-  listExoEndpoints,
-  listLoadedExoModels,
-} from "./addon-exo";
 import { authHeaders, resolveLiteLLM } from "../lib/litellm";
 
 type Env = { Variables: { userId: string } };
@@ -96,24 +92,7 @@ modelsRoute.get("/", async (c) => {
     })
     .filter((m): m is GlobalModel => m !== null);
 
-  // EXO Direct add-on: surface every loaded model on every configured
-  // endpoint. Each model id is namespaced by endpoint id so the chat route
-  // can route the request to the right cluster.
-  const endpoints = await listExoEndpoints(userId);
-  await Promise.all(
-    endpoints.map(async (ep) => {
-      const exoModels = await listLoadedExoModels(ep.baseUrl);
-      for (const id of exoModels) {
-        models.push({
-          id: `exo-direct/${ep.id}/${id}`,
-          name: `${id} · ${ep.label}`,
-          tags: [`EXO · ${ep.label}`],
-          capabilities: heuristicCaps(id),
-        });
-      }
-    }),
-  );
-
+  // (EXO Direct removed in v0.2 — all inference goes through LiteLLM now.)
   // Stable sort: tags grouped, then alpha.
   models.sort((a, b) => {
     const at = a.tags[0] ?? "~";

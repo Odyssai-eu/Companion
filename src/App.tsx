@@ -5,6 +5,7 @@ import SettingsLayout from "./layouts/SettingsLayout";
 import LoginPage from "./pages/auth/LoginPage";
 import SignupPage from "./pages/auth/SignupPage";
 import AdminExtPage from "./pages/AdminExtPage";
+import FilesPage from "./pages/FilesPage";
 import GuestEntry from "./pages/GuestEntry";
 import ProjectPage from "./pages/ProjectPage";
 import AccessibilityPage from "./pages/settings/AccessibilityPage";
@@ -56,6 +57,15 @@ export default function App() {
         element={
           <ProtectedRoute>
             <ProjectPage />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/files"
+        element={
+          <ProtectedRoute>
+            <FilesPage />
           </ProtectedRoute>
         }
       />

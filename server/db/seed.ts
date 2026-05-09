@@ -94,7 +94,16 @@ export async function seedIfEmpty() {
       name: "Hermes Agent",
       kind: "plugin",
       description:
-        "Delegate multi-step autonomous tasks to Hermes Agent. Quick mode for short tool-using requests, Deep mode for long-running background work.",
+        "Power-user tasks on your home server (RAG, ComfyUI, vault, rsync). Workspace files use the agent's built-in fs_* tools.",
+      version: "0.2.0",
+      enabled: false,
+    },
+    {
+      userId: sophie.id,
+      name: "Voice (Gemini Live)",
+      kind: "plugin",
+      description:
+        "Real-time bidirectional voice via Gemini Live API. PCM streaming over WebSocket. Replaces local TTS/ASR pipelines while Voxtral/Kokoro mature.",
       version: "0.1.0",
       enabled: false,
     },
@@ -104,15 +113,6 @@ export async function seedIfEmpty() {
       kind: "plugin",
       description:
         "Manage users, nodes, groups, file syncs and guest tokens. Required for multi-user / multi-station setups.",
-      version: "0.1.0",
-      enabled: false,
-    },
-    {
-      userId: sophie.id,
-      name: "EXO Direct",
-      kind: "plugin",
-      description:
-        "Talk straight to an EXO instance, bypassing LiteLLM. Lets you compare direct-to-engine latency against the proxied path. Set one base URL.",
       version: "0.1.0",
       enabled: false,
     },

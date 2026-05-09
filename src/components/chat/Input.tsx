@@ -19,6 +19,7 @@ export default function Input({
   model,
   onModelChange,
   models,
+  hideModelPicker = false,
 }: {
   onSend: (text: string, attachments: Attachment[]) => void;
   onCancel: () => void;
@@ -31,6 +32,7 @@ export default function Input({
   model: string;
   onModelChange: (id: string) => void;
   models: ApiGlobalModel[];
+  hideModelPicker?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState<VoiceInputState>({ status: "idle" });
@@ -329,11 +331,13 @@ export default function Input({
               Press <kbd>⇧</kbd> + <kbd>⏎</kbd> for a newline · <kbd>⏎</kbd> to send
             </p>
           )}
-          <ModelDropdown
-            value={model}
-            onChange={onModelChange}
-            models={models}
-          />
+          {!hideModelPicker && (
+            <ModelDropdown
+              value={model}
+              onChange={onModelChange}
+              models={models}
+            />
+          )}
         </div>
       </div>
       {expanded && (

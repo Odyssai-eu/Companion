@@ -4,6 +4,19 @@ import { api, type ApiAddon } from "~/lib/api";
 
 type Filter = "all" | "plugin" | "mcp" | "core";
 
+/** UI relabel without changing the DB row name. */
+function displayName(dbName: string): string {
+  if (dbName === "Hermes Agent") return "Cluster Operations";
+  return dbName;
+}
+
+function displayDescription(dbName: string): string | null {
+  if (dbName === "Hermes Agent") {
+    return "Power-user tasks on your home server (RAG, ComfyUI, vault, rsync). Workspace files use the agent's built-in fs_* tools.";
+  }
+  return null;
+}
+
 export default function AddonsPage() {
   const [addons, setAddons] = useState<ApiAddon[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -21,14 +34,7 @@ export default function AddonsPage() {
   }
 
   useEffect(() => {
-    // Touch the EXO Direct /info endpoint first — it lazy-creates the
-    // addon row for users that predate it. The "Admin Extended" plugin
-    // addon is deprecated (replaced by "Admin — Extended" core addon)
-    // so we no longer touch its /info endpoint.
-    api
-      .exoInfo()
-      .catch(() => undefined)
-      .then(() => refresh());
+    refresh();
   }, []);
 
   const counts = useMemo(() => {
@@ -214,7 +220,7 @@ function AddonCard({
     (addon.name === "Obsidian" ||
       addon.name === "Web Search" ||
       addon.name === "Hermes Agent" ||
-      addon.name === "EXO Direct");
+      addon.name === "Voice (Gemini Live)");
 
   return (
     <div className="flex flex-col gap-0 rounded-xl border border-gray-200 bg-white">
@@ -224,7 +230,9 @@ function AddonCard({
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex items-center gap-2">
-            <span className="text-[15px] font-medium text-ink">{addon.name}</span>
+            <span className="text-[15px] font-medium text-ink">
+              {displayName(addon.name)}
+            </span>
             <KindBadge kind={addon.kind} />
             {addon.version && (
               <span className="font-mono text-[11px] text-gray-400">
@@ -232,9 +240,9 @@ function AddonCard({
               </span>
             )}
           </div>
-          {addon.description && (
+          {(displayDescription(addon.name) ?? addon.description) && (
             <span className="text-[13px] leading-[20px] text-gray-600">
-              {addon.description}
+              {displayDescription(addon.name) ?? addon.description}
             </span>
           )}
         </div>
@@ -246,7 +254,7 @@ function AddonCard({
           {addon.name === "Obsidian" && <ObsidianPanel />}
           {addon.name === "Web Search" && <TavilyPanel />}
           {addon.name === "Hermes Agent" && <HermesPanel />}
-          {addon.name === "EXO Direct" && <ExoPanel />}
+          {addon.name === "Voice (Gemini Live)" && <VoiceLivePanel />}
         </div>
       )}
     </div>
@@ -822,18 +830,25 @@ function HermesPanel() {
 
       <details className="rounded-md border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-600">
         <summary className="cursor-pointer font-medium text-ink">
-          How Hermes integration works
+          How Cluster Operations works
         </summary>
         <p className="mt-3 leading-relaxed">
-          When this add-on is enabled and configured with an API key, one tool
-          appears in tool-capable chats:
+          Use this for actions that only your home cluster can perform —
+          searching your personal RAG corpus, generating images via ComfyUI,
+          reading from your local Obsidian vault, syncing files between nodes.
+          For workspace files within conversations, the agent uses its built-in{" "}
+          <code className="rounded bg-gray-100 px-1 font-mono">fs_*</code> tools
+          (no addon needed).
+        </p>
+        <p className="mt-3 leading-relaxed">
+          When enabled and configured with an API key, one tool appears in
+          tool-capable chats:
         </p>
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li>
-            <code className="rounded bg-gray-100 px-1 font-mono">hermes_agent(task)</code>{" "}
-            — delegate any operational task to the Hermes Agent on the cluster.
-            Hermes picks its internal tool (terminal, file ops, RAG search,
-            ComfyUI, Obsidian, etc.) and returns the final result.
+            <code className="rounded bg-gray-100 px-1 font-mono">cluster_action(task)</code>{" "}
+            — delegate a cluster-specific operation to your home server.
+            Hermes picks its internal tool and returns the final result.
           </li>
         </ul>
         <p className="mt-3">
@@ -874,176 +889,197 @@ function Field({
   );
 }
 
-/**
- * EXO Direct panel — manage one or more EXO endpoints (each = a cluster).
- * The chat picker exposes every loaded model on every endpoint, tagged by
- * the endpoint label. Routing to the matching cluster bypasses LiteLLM.
- */
-type ExoEndpointRow = {
-  id: string;
-  label: string;
-  baseUrl: string;
-  models: string[];
-};
+// ── Voice (Gemini Live) panel ─────────────────────────────────────────────
 
-function ExoPanel() {
-  const [endpoints, setEndpoints] = useState<ExoEndpointRow[]>([]);
-  const [newLabel, setNewLabel] = useState("");
-  const [newUrl, setNewUrl] = useState("");
+function VoiceLivePanel() {
+  type Info = Awaited<ReturnType<typeof api.voiceLiveInfo>>;
+  const [info, setInfo] = useState<Info | null>(null);
   const [busy, setBusy] = useState(false);
-  const [refreshing, setRefreshing] = useState<Set<string>>(new Set());
-  const [error, setError] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
 
-  async function loadInfo() {
+  // Local edits
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("");
+  const [voice, setVoice] = useState("");
+  const [systemInstruction, setSystemInstruction] = useState("");
+  const [showKey, setShowKey] = useState(false);
+
+  async function refresh() {
     try {
-      const info = await api.exoInfo();
-      setEndpoints(info.endpoints ?? []);
+      const r = await api.voiceLiveInfo();
+      setInfo(r);
+      setModel(r.model);
+      setVoice(r.voice);
+      setSystemInstruction(r.systemInstruction);
+      setApiKey("");
     } catch (e) {
-      setError((e as Error).message);
+      setErr((e as Error).message);
     }
   }
 
   useEffect(() => {
-    loadInfo();
+    refresh();
   }, []);
 
-  async function addEndpoint() {
-    if (!newLabel.trim() || !newUrl.trim()) return;
+  async function save() {
     setBusy(true);
-    setError(null);
+    setErr(null);
     try {
-      await api.exoAddEndpoint(newLabel.trim(), newUrl.trim());
-      setNewLabel("");
-      setNewUrl("");
-      await loadInfo();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function removeEndpoint(id: string, label: string) {
-    if (!confirm(`Remove endpoint "${label}"?`)) return;
-    setBusy(true);
-    try {
-      await api.exoDeleteEndpoint(id);
-      await loadInfo();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function refreshOne(id: string) {
-    setRefreshing((s) => new Set(s).add(id));
-    try {
-      const { endpoint } = await api.exoRefreshEndpoint(id);
-      setEndpoints((prev) =>
-        prev.map((e) => (e.id === id ? endpoint : e)),
-      );
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setRefreshing((s) => {
-        const next = new Set(s);
-        next.delete(id);
-        return next;
+      await api.voiceLiveUpdateConfig({
+        model: model.trim() || undefined,
+        voice: voice.trim() || undefined,
+        systemInstruction,
+        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       });
+      setSaved(true);
+      await refresh();
+      setTimeout(() => setSaved(false), 1800);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
     }
+  }
+
+  async function clearKey() {
+    if (!confirm("Remove the Gemini API key? Voice mode will stop working.")) return;
+    setBusy(true);
+    try {
+      await api.voiceLiveUpdateConfig({ apiKey: null });
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!info) {
+    return <span className="font-mono text-[11px] text-gray-400">Loading…</span>;
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Existing endpoints */}
-      {endpoints.length > 0 && (
-        <div className="flex flex-col gap-3">
-          {endpoints.map((ep) => (
-            <div
-              key={ep.id}
-              className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4"
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="text-[14px] font-medium text-ink">
-                    {ep.label}
-                  </span>
-                  <span className="truncate font-mono text-[11px] text-gray-500">
-                    {ep.baseUrl}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => refreshOne(ep.id)}
-                  disabled={refreshing.has(ep.id)}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-ink disabled:opacity-40"
-                >
-                  {refreshing.has(ep.id) ? "…" : "Refresh"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeEndpoint(ep.id, ep.label)}
-                  disabled={busy}
-                  className="rounded-lg border border-red-200 px-3 py-1.5 text-[12px] font-medium text-red-500 transition-colors hover:bg-red-50 disabled:opacity-40"
-                >
-                  Remove
-                </button>
-              </div>
-              {ep.models.length === 0 ? (
-                <span className="font-mono text-[11px] text-gray-400">
-                  No models loaded on this endpoint.
-                </span>
-              ) : (
-                <ul className="flex flex-col gap-1">
-                  {ep.models.map((m) => (
-                    <li
-                      key={m}
-                      className="rounded-md bg-gray-50 px-3 py-1.5 font-mono text-[11px] text-ink"
-                    >
-                      {m}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Add endpoint form */}
-      <Field
-        label="Add an EXO endpoint"
-        hint="Each endpoint = one EXO instance. Loaded models are surfaced in the chat picker, tagged by label."
-      >
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <input
-            type="text"
-            value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
-            placeholder="Label (e.g. Home cluster)"
-            className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-cyan sm:w-[200px]"
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 text-[12px] text-gray-600">
+        <span className="flex items-center gap-1.5">
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${info.hasApiKey ? "bg-emerald-500" : "bg-rose-500"}`}
           />
+          <span className="font-mono text-ink">
+            {info.hasApiKey ? "key set" : "missing key"}
+          </span>
+        </span>
+        <span>
+          <span className="text-gray-400">Model</span>{" "}
+          <code className="font-mono text-ink">{info.model}</code>
+        </span>
+        <span>
+          <span className="text-gray-400">Voice</span>{" "}
+          <code className="font-mono text-ink">{info.voice}</code>
+        </span>
+      </div>
+
+      <Field
+        label="API key"
+        hint="Gemini API key (https://aistudio.google.com/apikey). Stored server-side; minted into a session payload at voice-mode start."
+      >
+        <div className="flex items-center gap-2">
           <input
-            type="url"
-            value={newUrl}
-            onChange={(e) => setNewUrl(e.target.value)}
-            placeholder="http://192.168.86.29:52415"
-            className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
+            type={showKey ? "text" : "password"}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={info.hasApiKey ? "•••• (set — paste a new one to replace)" : "AIza…"}
+            className="flex-1 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
           />
           <button
             type="button"
-            onClick={addEndpoint}
-            disabled={busy || !newLabel.trim() || !newUrl.trim()}
-            className="rounded-lg bg-navy px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() => setShowKey((v) => !v)}
+            className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-600 hover:text-ink"
           >
-            {busy ? "Adding…" : "Add"}
+            {showKey ? "Hide" : "Show"}
           </button>
+          {info.hasApiKey && (
+            <button
+              type="button"
+              onClick={clearKey}
+              disabled={busy}
+              className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-600 hover:text-ink"
+            >
+              Revoke
+            </button>
+          )}
         </div>
       </Field>
 
-      {error && <span className="text-[12px] text-red-500">{error}</span>}
+      <Field
+        label="Model"
+        hint="Gemini Live model id. Default: models/gemini-2.5-flash-preview-native-audio-dialog."
+      >
+        <input
+          type="text"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          placeholder="models/gemini-2.5-flash-preview-native-audio-dialog"
+          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+        />
+      </Field>
+
+      <Field label="Voice" hint="Aoede / Charon / Fenrir / Kore / Puck / Zephyr">
+        <input
+          type="text"
+          value={voice}
+          onChange={(e) => setVoice(e.target.value)}
+          placeholder="Aoede"
+          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+        />
+      </Field>
+
+      <Field
+        label="System instruction"
+        hint="Optional — shapes the assistant's persona for voice sessions."
+      >
+        <textarea
+          value={systemInstruction}
+          onChange={(e) => setSystemInstruction(e.target.value)}
+          rows={3}
+          className="w-full resize-y rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+        />
+      </Field>
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={save}
+          disabled={busy}
+          className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
+        >
+          {busy ? "Saving…" : saved ? "✓ Saved" : "Save"}
+        </button>
+      </div>
+
+      <details className="rounded-md border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-600">
+        <summary className="cursor-pointer font-medium text-ink">
+          How Voice (Gemini Live) works
+        </summary>
+        <p className="mt-3 leading-relaxed">
+          When enabled with an API key, the chat's voice mode opens a WebSocket
+          to Google's Gemini Live API directly from the browser. Audio is PCM
+          16-bit 16 kHz LE in / 24 kHz out, streamed bidirectionally. The
+          server only mints session credentials — it never proxies audio.
+        </p>
+        <p className="mt-3">
+          Voxtral / Kokoro local TTS / VibeVoice ASR are paused while the
+          Gemini path is the primary voice provider. They'll come back once
+          the local stack matures.
+        </p>
+      </details>
+
+      {err && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 font-mono text-[11px] text-red-700">
+          {err}
+        </div>
+      )}
     </div>
   );
 }

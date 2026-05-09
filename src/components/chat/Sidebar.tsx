@@ -606,6 +606,14 @@ function UserFooter() {
         </div>
       </div>
       <div className="flex items-center gap-0.5">
+        <Link
+          to="/files"
+          aria-label="Files"
+          title="Files"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-gray-50 hover:text-ink"
+        >
+          <FolderIcon />
+        </Link>
         <button
           type="button"
           onClick={onLogout}
@@ -680,6 +688,23 @@ function SearchIcon() {
     >
       <circle cx="11" cy="11" r="8" />
       <path d="m21 21-4.3-4.3" />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   );
 }

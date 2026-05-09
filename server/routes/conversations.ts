@@ -7,7 +7,6 @@ import { conversations, messages, projects, users } from "../db/schema";
 import { authHeaders } from "../lib/litellm";
 import { compileNow, getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
-import { resolveExoEndpoint } from "./addon-exo";
 
 const conversationsRoute = new Hono();
 
@@ -508,41 +507,20 @@ conversationsRoute.post(
         ? [{ role: "system" as const, content: composedSystem }, ...tagged]
         : tagged;
 
-    // Mirror chat.ts target resolution: bypass LiteLLM for
-    // `exo-direct/<endpointId>/<modelId>` so the prewarm fills the KV cache
-    // of the same upstream the real chat will hit.
-    const isExoDirect = opts.model.startsWith("exo-direct/");
-    let exoBaseUrl: string | null = null;
-    let upstreamModel = opts.model;
-    if (isExoDirect) {
-      const rest = opts.model.slice("exo-direct/".length);
-      const slash = rest.indexOf("/");
-      if (slash <= 0) return c.json({ ok: false, reason: "bad_exo_id" });
-      const endpointId = rest.slice(0, slash);
-      const ep = await resolveExoEndpoint(userId, endpointId);
-      if (!ep) return c.json({ ok: false, reason: "exo_direct_unconfigured" });
-      exoBaseUrl = ep.baseUrl;
-      upstreamModel = rest.slice(slash + 1);
-    }
-    const target = isExoDirect && exoBaseUrl
-      ? { baseUrl: exoBaseUrl, apiKey: null as string | null }
-      : {
-          baseUrl: (
-            user.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
-          ).replace(/\/+$/, ""),
-          apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-        };
+    // Single inference path through LiteLLM since v0.2 (EXO Direct removed).
+    const target = {
+      baseUrl: (
+        user.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
+      ).replace(/\/+$/, ""),
+      apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+    };
 
     const upstreamBody: Record<string, unknown> = {
-      model: upstreamModel,
+      model: opts.model,
       stream: false,
       max_tokens: 1,
       messages: finalMessages,
     };
-    // EXO Direct bypasses LiteLLM and its per-model defaults — force
-    // enable_thinking=false so Qwen doesn't burn a thought trace on the
-    // prewarm 1-token completion.
-    if (isExoDirect) upstreamBody.enable_thinking = false;
 
     // Fire-and-forget. Don't block the response; the frontend doesn't care
     // about the result. Errors are logged but not surfaced.
