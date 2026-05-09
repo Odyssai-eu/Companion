@@ -685,12 +685,23 @@ async function pipeAndCollect(
           usage?: {
             prompt_tokens?: number;
             completion_tokens?: number;
+            input_tokens?: number;
+            output_tokens?: number;
           };
         };
         if (parsed.usage) {
+          // mlx-vlm reports usage under input_tokens/output_tokens; LiteLLM
+          // forwards both shapes but zeroes the OpenAI-style fields when
+          // upstream uses input/output. Read both, prefer non-zero.
           usage = {
-            promptTokens: parsed.usage.prompt_tokens ?? 0,
-            completionTokens: parsed.usage.completion_tokens ?? 0,
+            promptTokens:
+              parsed.usage.prompt_tokens ||
+              parsed.usage.input_tokens ||
+              0,
+            completionTokens:
+              parsed.usage.completion_tokens ||
+              parsed.usage.output_tokens ||
+              0,
           };
         }
         const choice = parsed.choices?.[0];
@@ -753,6 +764,7 @@ async function collectNonStream(
   usage: { promptTokens: number; completionTokens: number } | null;
   chunkCount: number;
 }> {
+  let chunkCountForReturn = 0;
   const text = await upstream.text();
   let parsed: {
     choices?: Array<{
@@ -765,7 +777,15 @@ async function collectNonStream(
       };
       finish_reason?: string | null;
     }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    // mlx-vlm reports usage as input_tokens/output_tokens; LiteLLM forwards
+    // both shapes (and unfortunately fills prompt_tokens/completion_tokens
+    // to 0 when the upstream uses input/output_tokens). Read both.
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      input_tokens?: number;
+      output_tokens?: number;
+    };
   };
   try {
     parsed = JSON.parse(text);
@@ -790,27 +810,52 @@ async function collectNonStream(
 
   const usage = parsed.usage
     ? {
-        promptTokens: parsed.usage.prompt_tokens ?? 0,
-        completionTokens: parsed.usage.completion_tokens ?? 0,
+        promptTokens:
+          parsed.usage.prompt_tokens ||
+          parsed.usage.input_tokens ||
+          0,
+        completionTokens:
+          parsed.usage.completion_tokens ||
+          parsed.usage.output_tokens ||
+          0,
       }
     : null;
 
-  // Synthesise an SSE chunk shaped like a streaming delta + finish.
-  // Only emit content if there's actual text — when the model invokes a
-  // tool, upstream content is "" and we don't want to pollute the UI.
+  // Synthesise content as a series of small streamed chunks so the client
+  // gets a typewriter effect even though we awaited the full upstream
+  // response. Mlx-vlm in non-stream returns everything in one shot — without
+  // this loop, the user sees the answer pop in as a single block. We emit
+  // ~30-character slices with a tiny delay; total wall-time stays close to
+  // raw non-stream because the inference has already finished.
   if (assistantContent) {
-    const synthChunk = {
-      choices: [
-        {
-          index: 0,
-          delta: { content: assistantContent },
-          finish_reason: null,
-        },
-      ],
-    };
-    await writer.write(
-      encoder.encode(`data: ${JSON.stringify(synthChunk)}\n\n`),
-    );
+    const SLICE = 32;
+    const DELAY_MS = 8;
+    let chunkCount = 0;
+    for (let i = 0; i < assistantContent.length; i += SLICE) {
+      const piece = assistantContent.slice(i, i + SLICE);
+      const synthChunk = {
+        choices: [
+          {
+            index: 0,
+            delta: { content: piece },
+            finish_reason: null,
+          },
+        ],
+      };
+      await writer.write(
+        encoder.encode(`data: ${JSON.stringify(synthChunk)}\n\n`),
+      );
+      chunkCount++;
+      // Skip the delay on the last slice — no need to add latency before
+      // the finish chunk.
+      if (i + SLICE < assistantContent.length) {
+        await new Promise((r) => setTimeout(r, DELAY_MS));
+      }
+    }
+    // Override the chunkCount returned at the end to reflect what we emitted.
+    // (We update via the variable below.)
+    // chunkCount usage is captured in the return.
+    chunkCountForReturn = chunkCount;
   }
   // Emit a finish chunk so the client parser sees the turn close cleanly.
   const finishChunk = {
@@ -839,7 +884,7 @@ async function collectNonStream(
     finishReason,
     assistantContent,
     usage,
-    chunkCount: assistantContent ? 1 : 0,
+    chunkCount: chunkCountForReturn,
   };
 }
 
