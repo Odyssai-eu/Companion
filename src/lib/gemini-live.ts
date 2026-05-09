@@ -144,8 +144,8 @@ export class GeminiLiveSession {
             },
           },
           systemInstruction: { parts: [{ text: sys }] },
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
+          inputAudioTranscription: { languageCode: "fr-FR" },
+          outputAudioTranscription: { languageCode: "fr-FR" },
         },
       };
       ws.send(JSON.stringify(setup));
