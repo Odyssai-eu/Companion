@@ -8,6 +8,7 @@ import {
   processFile,
 } from "~/lib/file-attach";
 import { voiceInput, type VoiceInputState } from "~/lib/voice-input";
+import { useA11yPrefs } from "~/hooks/useA11yPrefs";
 
 export default function Input({
   onSend,
@@ -40,6 +41,7 @@ export default function Input({
 }) {
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState<VoiceInputState>({ status: "idle" });
+  const a11y = useA11yPrefs();
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -283,22 +285,24 @@ export default function Input({
               <ExpandIcon />
             </button>
           )}
-          <button
-            type="button"
-            onClick={startTalk}
-            disabled={disabled || sending}
-            title={listening ? "Stop listening" : "Talk (push-to-talk)"}
-            className={`mb-0.5 flex flex-shrink-0 items-center gap-1.5 rounded-full border font-medium transition-colors disabled:opacity-50 ${
-              isMobile ? "h-11 w-11 justify-center" : "px-3 py-1.5 text-[12px]"
-            } ${
-              listening
-                ? "border-cyan bg-[rgba(79,179,217,0.12)] text-cyan"
-                : "border-gray-200 text-ink hover:bg-gray-50"
-            }`}
-          >
-            <MicIcon />
-            {!isMobile && (listening ? "Stop" : "Talk")}
-          </button>
+          {a11y.voiceUiVisible && (
+            <button
+              type="button"
+              onClick={startTalk}
+              disabled={disabled || sending}
+              title={listening ? "Stop listening" : "Talk (push-to-talk)"}
+              className={`mb-0.5 flex flex-shrink-0 items-center gap-1.5 rounded-full border font-medium transition-colors disabled:opacity-50 ${
+                isMobile ? "h-11 w-11 justify-center" : "px-3 py-1.5 text-[12px]"
+              } ${
+                listening
+                  ? "border-cyan bg-[rgba(79,179,217,0.12)] text-cyan"
+                  : "border-gray-200 text-ink hover:bg-gray-50"
+              }`}
+            >
+              <MicIcon />
+              {!isMobile && (listening ? "Stop" : "Talk")}
+            </button>
+          )}
 
           {sending ? (
             <button
@@ -336,7 +340,7 @@ export default function Input({
             </p>
           )}
           <div className="flex items-center gap-2">
-            {voiceLiveAvailable && onOpenVoiceLive && (
+            {a11y.voiceUiVisible && voiceLiveAvailable && onOpenVoiceLive && (
               <button
                 type="button"
                 onClick={onOpenVoiceLive}

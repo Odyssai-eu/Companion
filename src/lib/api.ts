@@ -36,6 +36,8 @@ export type ApiConversation = {
   userId: string;
   projectId: string | null;
   title: string;
+  /** 'chat' (text/multimodal) or 'talk' (Voice Live). */
+  kind: "chat" | "talk";
   model: string | null;
   pinned: boolean;
   /** Memory wiki injection toggle for this conversation. Inherited from
@@ -279,6 +281,7 @@ export const api = {
     title?: string;
     projectId?: string;
     model?: string;
+    kind?: "chat" | "talk";
   }) =>
     request<{ conversation: ApiConversation }>("/api/conversations", {
       method: "POST",

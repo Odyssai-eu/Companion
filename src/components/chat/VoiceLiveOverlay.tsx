@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useGeminiLive } from "~/hooks/useGeminiLive";
+import { api } from "~/lib/api";
 
 /**
  * Full-bleed overlay for the Gemini Live voice mode. Auto-starts the
@@ -9,13 +10,57 @@ import { useGeminiLive } from "~/hooks/useGeminiLive";
  *
  * Caller is responsible for guarding against the addon being disabled —
  * if /api/addons/voice-live/session 4xx's, we surface the error here.
+ *
+ * When `conversationId` is provided, finalised input/output transcripts
+ * are persisted as `user`/`assistant` messages on that conversation.
+ * `onCommit` fires after a successful append so the parent can refresh
+ * its message list.
  */
 export default function VoiceLiveOverlay({
   onClose,
+  conversationId,
+  onCommit,
 }: {
   onClose: () => void;
+  conversationId?: string | null;
+  onCommit?: () => void;
 }) {
   const live = useGeminiLive();
+  const lastInputRef = useRef("");
+  const lastOutputRef = useRef("");
+
+  // Persist finalised transcripts as messages. We snapshot the strings
+  // we last sent to avoid re-posting the same text on every render — the
+  // hook only updates lastInputFinal / lastOutputFinal on actual change.
+  useEffect(() => {
+    const t = live.transcript.lastInputFinal;
+    if (
+      conversationId &&
+      t &&
+      t !== lastInputRef.current
+    ) {
+      lastInputRef.current = t;
+      api
+        .appendMessage(conversationId, { role: "user", content: t })
+        .then(() => onCommit?.())
+        .catch(() => undefined);
+    }
+  }, [live.transcript.lastInputFinal, conversationId, onCommit]);
+
+  useEffect(() => {
+    const t = live.transcript.lastOutputFinal;
+    if (
+      conversationId &&
+      t &&
+      t !== lastOutputRef.current
+    ) {
+      lastOutputRef.current = t;
+      api
+        .appendMessage(conversationId, { role: "assistant", content: t })
+        .then(() => onCommit?.())
+        .catch(() => undefined);
+    }
+  }, [live.transcript.lastOutputFinal, conversationId, onCommit]);
 
   // Auto-start on mount.
   useEffect(() => {

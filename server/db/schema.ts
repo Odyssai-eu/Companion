@@ -87,6 +87,12 @@ export const conversations = pgTable(
       onDelete: "set null",
     }),
     title: text("title").notNull().default("New conversation"),
+    // 'chat' = classic text/multimodal chat (default).
+    // 'talk' = Voice Live conversation (no model picker, big-mic input,
+    // transcripts persisted as messages).
+    kind: text("kind", { enum: ["chat", "talk"] })
+      .notNull()
+      .default("chat"),
     model: text("model"),
     pinned: boolean("pinned").notNull().default(false),
     // Memory wiki snapshot — frozen at creation (or on explicit "Remember

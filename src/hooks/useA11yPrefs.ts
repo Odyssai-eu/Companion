@@ -1,0 +1,71 @@
+/**
+ * Reads accessibility preferences from localStorage with live reactivity
+ * (storage events + a custom 'a11y-prefs-change' event we dispatch from
+ * AccessibilityPage on toggle, since `storage` events only fire across
+ * tabs).
+ *
+ * Single source of truth: localStorage["thecompai:accessibility"], same
+ * shape as the AccessibilityPage state object.
+ */
+
+import { useEffect, useState } from "react";
+
+export type A11yPrefs = {
+  accessibleFont: boolean;
+  largerText: boolean;
+  voiceModeDefault: boolean;
+  reducedMotion: boolean;
+  highContrast: boolean;
+  dyslexiaFriendlyLineHeight: boolean;
+  /** Show the chat-input mic button + the TopBar voice-mode toggle. Off
+   *  by default so the controls don't clutter the UI for people who never
+   *  use voice. The "New talk" sidebar button is unaffected. */
+  voiceUiVisible: boolean;
+};
+
+const DEFAULTS: A11yPrefs = {
+  accessibleFont: false,
+  largerText: false,
+  voiceModeDefault: false,
+  reducedMotion: false,
+  highContrast: false,
+  dyslexiaFriendlyLineHeight: false,
+  voiceUiVisible: false,
+};
+
+const STORAGE_KEY = "thecompai:accessibility";
+const CHANGE_EVENT = "a11y-prefs-change";
+
+function read(): A11yPrefs {
+  if (typeof window === "undefined") return DEFAULTS;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
+  } catch {
+    // ignore
+  }
+  return DEFAULTS;
+}
+
+export function useA11yPrefs(): A11yPrefs {
+  const [prefs, setPrefs] = useState<A11yPrefs>(read);
+
+  useEffect(() => {
+    const onStorage = () => setPrefs(read());
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(CHANGE_EVENT, onStorage);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(CHANGE_EVENT, onStorage);
+    };
+  }, []);
+
+  return prefs;
+}
+
+/** Notify same-tab subscribers that prefs changed. AccessibilityPage calls
+ *  this after writing to localStorage. */
+export function notifyA11yPrefsChange(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(CHANGE_EVENT));
+}

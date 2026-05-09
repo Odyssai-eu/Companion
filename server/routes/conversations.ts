@@ -14,6 +14,8 @@ const createSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   projectId: z.string().uuid().optional(),
   model: z.string().max(200).optional(),
+  /** 'chat' (default) or 'talk' — chooses the layout + persistence path. */
+  kind: z.enum(["chat", "talk"]).optional(),
 });
 
 const appendMessageSchema = z.object({
@@ -92,13 +94,15 @@ conversationsRoute.post(
     const memorySnapshot = memoryEnabled
       ? await getMemoryContext(userId, data.projectId ?? null)
       : "";
+    const kind = data.kind ?? "chat";
     const [row] = await db
       .insert(conversations)
       .values({
         userId,
-        title: data.title ?? "New conversation",
+        title: data.title ?? (kind === "talk" ? "New talk" : "New conversation"),
         projectId: data.projectId,
         model: data.model,
+        kind,
         memoryEnabled,
         memorySnapshot: memorySnapshot || null,
         memorySnapshotAt: memorySnapshot ? new Date() : null,

@@ -188,32 +188,98 @@ export default function ChatLayout() {
           onRegenerate={chat.regenerate}
           onEdit={chat.editAndResend}
         />
-        <Input
-          onSend={chat.sendMessage}
-          onCancel={chat.cancel}
-          sending={chat.sending}
-          disabled={!chat.model}
-          placeholder={
-            chat.model ? "Ask anything…" : "Pick a model first"
-          }
-          modelHasVision={chat.activeModelCapabilities.vision}
-          model={chat.model}
-          onModelChange={chat.setModel}
-          models={visibleModelsForMode(
-            chat.globalModels,
-            chat.inferenceMode,
-            chat.easyModel,
-            chat.namedModels,
-          )}
-          hideModelPicker={chat.inferenceMode === "easy"}
-          voiceLiveAvailable={voiceLiveAvailable}
-          onOpenVoiceLive={() => setVoiceLiveOpen(true)}
-        />
+        {chat.conversation?.kind === "talk" ? (
+          <TalkInput
+            onOpenVoiceLive={() => setVoiceLiveOpen(true)}
+            voiceLiveAvailable={voiceLiveAvailable}
+          />
+        ) : (
+          <Input
+            onSend={chat.sendMessage}
+            onCancel={chat.cancel}
+            sending={chat.sending}
+            disabled={!chat.model}
+            placeholder={
+              chat.model ? "Ask anything…" : "Pick a model first"
+            }
+            modelHasVision={chat.activeModelCapabilities.vision}
+            model={chat.model}
+            onModelChange={chat.setModel}
+            models={visibleModelsForMode(
+              chat.globalModels,
+              chat.inferenceMode,
+              chat.easyModel,
+              chat.namedModels,
+            )}
+            hideModelPicker={chat.inferenceMode === "easy"}
+            voiceLiveAvailable={voiceLiveAvailable}
+            onOpenVoiceLive={() => setVoiceLiveOpen(true)}
+          />
+        )}
         {voiceLiveOpen && (
-          <VoiceLiveOverlay onClose={() => setVoiceLiveOpen(false)} />
+          <VoiceLiveOverlay
+            onClose={() => setVoiceLiveOpen(false)}
+            conversationId={chat.conversation?.id ?? null}
+            onCommit={chat.reload}
+          />
         )}
       </main>
     </div>
+  );
+}
+
+/**
+ * Talk-mode "input": no textarea, no model picker — a single big circular
+ * mic button that re-opens the Voice Live overlay so the user can resume
+ * (or start) the conversation. Fills the same vertical slot as the normal
+ * Input so the layout doesn't shift when switching kinds.
+ */
+function TalkInput({
+  onOpenVoiceLive,
+  voiceLiveAvailable,
+}: {
+  onOpenVoiceLive: () => void;
+  voiceLiveAvailable: boolean;
+}) {
+  return (
+    <div className="flex shrink-0 items-center justify-center border-t border-gray-200 bg-white px-4 py-6">
+      <button
+        type="button"
+        onClick={onOpenVoiceLive}
+        disabled={!voiceLiveAvailable}
+        aria-label={voiceLiveAvailable ? "Resume talking" : "Voice Live not configured"}
+        title={
+          voiceLiveAvailable
+            ? "Tap to resume talking"
+            : "Enable Voice (Gemini Live) in Settings → Add-ons"
+        }
+        className={`flex h-20 w-20 items-center justify-center rounded-full text-white shadow-lg transition-all ${
+          voiceLiveAvailable
+            ? "bg-cyan hover:scale-105 hover:opacity-95 active:scale-95"
+            : "cursor-not-allowed bg-gray-300"
+        }`}
+      >
+        <BigMicIcon />
+      </button>
+    </div>
+  );
+}
+
+function BigMicIcon() {
+  return (
+    <svg
+      width="32"
+      height="32"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+    </svg>
   );
 }
 

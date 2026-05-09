@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { notifyA11yPrefsChange } from "~/hooks/useA11yPrefs";
 
 type A11yPrefs = {
   accessibleFont: boolean;
@@ -7,6 +8,7 @@ type A11yPrefs = {
   reducedMotion: boolean;
   highContrast: boolean;
   dyslexiaFriendlyLineHeight: boolean;
+  voiceUiVisible: boolean;
 };
 
 const DEFAULTS: A11yPrefs = {
@@ -16,6 +18,7 @@ const DEFAULTS: A11yPrefs = {
   reducedMotion: false,
   highContrast: false,
   dyslexiaFriendlyLineHeight: false,
+  voiceUiVisible: false,
 };
 
 const STORAGE_KEY = "thecompai:accessibility";
@@ -35,6 +38,7 @@ export default function AccessibilityPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
+    notifyA11yPrefsChange();
     // Apply live CSS hooks on <html> so the rest of the app can react
     const root = document.documentElement;
     root.classList.toggle("a11y-accessible-font", prefs.accessibleFont);
@@ -106,6 +110,12 @@ export default function AccessibilityPage() {
             description="Opens every new chat in Voice mode. You can still switch to typing."
             value={prefs.voiceModeDefault}
             onChange={() => toggle("voiceModeDefault")}
+          />
+          <Setting
+            label="Show voice controls in chat"
+            description="Reveals the mic button in the chat input and the Voice toggle in the chat header. New Talk in the sidebar is always available regardless."
+            value={prefs.voiceUiVisible}
+            onChange={() => toggle("voiceUiVisible")}
           />
         </Group>
       </section>

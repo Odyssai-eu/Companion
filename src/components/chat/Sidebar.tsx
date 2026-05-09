@@ -86,13 +86,29 @@ export default function Sidebar({
     try {
       const { conversation } = await api.createConversation({
         projectId: activeProjectId,
-        title: "New conversation",
+        title: "New chat",
       });
       await refresh();
       navigate(`/c/${conversation.id}`);
     } catch {
       // fall back to plain new chat
       navigate("/");
+    }
+  }
+
+  async function startNewTalk() {
+    // Talk conversations always get created server-side so the route
+    // /c/<id> can switch into TalkLayout based on conv.kind=='talk'.
+    try {
+      const { conversation } = await api.createConversation({
+        projectId: activeProjectId ?? undefined,
+        title: "New talk",
+        kind: "talk",
+      });
+      await refresh();
+      navigate(`/c/${conversation.id}`);
+    } catch {
+      // ignore; user can retry
     }
   }
 
@@ -118,14 +134,24 @@ export default function Sidebar({
       </div>
 
       <div className="flex flex-col gap-1.5 px-3 pb-4">
-        <button
-          type="button"
-          onClick={startNewConversation}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-navy px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-95"
-        >
-          <PlusIcon />
-          {activeProjectId ? "New chat in project" : "New conversation"}
-        </button>
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            onClick={startNewConversation}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-[13px] font-medium text-ink transition-colors hover:bg-gray-50"
+          >
+            <PlusIcon />
+            New chat
+          </button>
+          <button
+            type="button"
+            onClick={startNewTalk}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-cyan px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+          >
+            <MicIcon />
+            New talk
+          </button>
+        </div>
         {activeProjectId && (
           <button
             type="button"
@@ -333,6 +359,24 @@ function PlusIcon() {
   );
 }
 
+function MicIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+    </svg>
+  );
+}
+
 function ConversationRow({
   conversation,
   active,
@@ -455,10 +499,15 @@ function ConversationRow({
                 title="Streaming reply"
               />
             )}
+            {conversation.kind === "talk" && (
+              <span className="mr-1 inline-flex h-3.5 w-3.5 items-center justify-center text-cyan">
+                <MicIcon size={12} />
+              </span>
+            )}
             {conversation.pinned && (
               <span className="mr-0.5 text-[10px] text-amber-500">📌</span>
             )}
-            {conversation.title || "New conversation"}
+            {conversation.title || (conversation.kind === "talk" ? "New talk" : "New conversation")}
           </span>
         )}
         <span className="flex-shrink-0 font-mono text-[11px] text-gray-400">

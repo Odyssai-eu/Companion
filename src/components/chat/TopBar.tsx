@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useA11yPrefs } from "~/hooks/useA11yPrefs";
 import { useIsMobile } from "~/hooks/useIsMobile";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
 import { api, type ApiInferenceStatus } from "~/lib/api";
@@ -29,6 +30,7 @@ export default function TopBar({
 }: Props) {
   const voiceMode = useVoiceMode();
   const isMobile = useIsMobile();
+  const a11y = useA11yPrefs();
 
   // Mobile gets a single thin row: hamburger + Creative/Normal/Code tabs +
   // voice. We drop the inference-settings sliders, Custom tab, and ToolsMenu —
@@ -60,19 +62,21 @@ export default function TopBar({
             conversationId={memoryEnabled ? conversationId ?? null : null}
             compact
           />
-          <button
-            type="button"
-            onClick={voiceMode.toggle}
-            aria-label="Voice mode"
-            aria-pressed={voiceMode.enabled}
-            className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border transition-colors ${
-              voiceMode.enabled
-                ? "border-cyan bg-cyan text-white"
-                : "border-gray-200 bg-white text-ink hover:bg-gray-50"
-            }`}
-          >
-            <VoiceIcon />
-          </button>
+          {a11y.voiceUiVisible && (
+            <button
+              type="button"
+              onClick={voiceMode.toggle}
+              aria-label="Voice mode"
+              aria-pressed={voiceMode.enabled}
+              className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border transition-colors ${
+                voiceMode.enabled
+                  ? "border-cyan bg-cyan text-white"
+                  : "border-gray-200 bg-white text-ink hover:bg-gray-50"
+              }`}
+            >
+              <VoiceIcon />
+            </button>
+          )}
         </div>
       </header>
     );
@@ -116,24 +120,26 @@ export default function TopBar({
           <RememberNowButton
             conversationId={memoryEnabled ? conversationId ?? null : null}
           />
-          <button
-            type="button"
-            onClick={voiceMode.toggle}
-            aria-label="Voice mode"
-            aria-pressed={voiceMode.enabled}
-            title={
-              voiceMode.enabled
-                ? "Voice mode ON — answers spoken"
-                : "Voice mode OFF"
-            }
-            className={`flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${
-              voiceMode.enabled
-                ? "border-cyan bg-cyan text-white"
-                : "border-gray-200 bg-white text-ink hover:bg-gray-50"
-            }`}
-          >
-            <VoiceIcon />
-          </button>
+          {a11y.voiceUiVisible && (
+            <button
+              type="button"
+              onClick={voiceMode.toggle}
+              aria-label="Voice mode"
+              aria-pressed={voiceMode.enabled}
+              title={
+                voiceMode.enabled
+                  ? "Voice mode ON — answers spoken"
+                  : "Voice mode OFF"
+              }
+              className={`flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${
+                voiceMode.enabled
+                  ? "border-cyan bg-cyan text-white"
+                  : "border-gray-200 bg-white text-ink hover:bg-gray-50"
+              }`}
+            >
+              <VoiceIcon />
+            </button>
+          )}
         </div>
       </div>
     </header>
