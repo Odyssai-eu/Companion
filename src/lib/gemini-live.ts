@@ -1,24 +1,23 @@
 /**
- * Gemini Live API client — bidirectional voice over WebSocket.
+ * Gemini Live session — bidirectional voice via the official @google/genai SDK.
  *
- * Flow:
- *   1. fetch session payload from /api/addons/voice-live/session
- *   2. open WSS to Google with `?key=<apiKey>`
- *   3. send setup message (model, voice, responseModalities)
- *   4. capture mic via AudioWorklet → PCM 16k mono int16 LE → base64 → WS
- *   5. on serverContent.modelTurn.parts[].inlineData.data → base64 →
- *      PCM 24k int16 → AudioBuffer → AudioContext playback queue
- *   6. on inputTranscription / outputTranscription → emit text events
+ * Why the SDK rather than hand-rolled WebSocket: the wire protocol has
+ * subtle invariants (setup field shape, realtimeInput vs clientContent,
+ * empty-object configs) that we kept getting wrong, breaking FR ASR.
+ * The SDK encapsulates all of that — we only feed it correctly-formatted
+ * 16 kHz PCM and consume the events it emits.
  *
- * Audio reference (per the live-api spec):
- *   in:  PCM 16-bit, 16 kHz, mono, little-endian
- *   out: PCM 16-bit, 24 kHz, mono, little-endian
+ * Audio:
+ *   in  — raw 16-bit PCM, 16 kHz, mono, little-endian, base64-encoded
+ *   out — raw 16-bit PCM, 24 kHz, mono, little-endian, base64-encoded
  *
- * v1 ships the credential plumbing + audio loop. Tool use / function
- * calling integration with TheCompAI's own tools is deferred — the
- * voice session is a separate channel from the chat tool loop for now.
+ * The capture worklet (public/audio-worklets/pcm-recorder.js) packages
+ * mic samples into int16 LE chunks. The host AudioContext is created at
+ * 16 kHz so the browser does the anti-aliased resample from 48 k device
+ * rate — never DIY.
  */
 
+import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from "@google/genai";
 import { api } from "~/lib/api";
 
 const PLAYBACK_RATE = 24000;
@@ -26,8 +25,8 @@ const PLAYBACK_RATE = 24000;
 export type GeminiLiveState =
   | "idle"
   | "connecting"
-  | "listening" // mic open, waiting / capturing user speech
-  | "speaking" // assistant audio is being played back
+  | "listening"
+  | "speaking"
   | "error";
 
 export type GeminiLiveEvent =
@@ -38,31 +37,14 @@ export type GeminiLiveEvent =
 
 type Listener = (e: GeminiLiveEvent) => void;
 
-type ServerMessage = {
-  setupComplete?: Record<string, unknown>;
-  serverContent?: {
-    modelTurn?: {
-      parts?: Array<{
-        text?: string;
-        inlineData?: { mimeType?: string; data?: string };
-      }>;
-    };
-    inputTranscription?: { text?: string; finished?: boolean };
-    outputTranscription?: { text?: string; finished?: boolean };
-    turnComplete?: boolean;
-    interrupted?: boolean;
-  };
-};
-
 export class GeminiLiveSession {
-  private ws: WebSocket | null = null;
+  private session: Session | null = null;
   private captureCtx: AudioContext | null = null;
   private playbackCtx: AudioContext | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private mediaStream: MediaStream | null = null;
   private listeners = new Set<Listener>();
   private state: GeminiLiveState = "idle";
-  // FIFO of scheduled playback chunks so we can stop/interrupt cleanly.
   private playbackQueue: AudioBufferSourceNode[] = [];
   private nextPlaybackTime = 0;
   private muted = false;
@@ -102,70 +84,58 @@ export class GeminiLiveSession {
     }
   }
 
-  /** Open mic + WebSocket + send setup message. Returns when setupComplete arrives. */
   async start(): Promise<void> {
     if (this.state !== "idle" && this.state !== "error") return;
     this.setState("connecting");
     try {
-      // 1. Fetch session credentials from our backend
       const session = await api.voiceLiveSession();
-      // 2. Open WS — Gemini accepts ?key=<API_KEY>
-      const url = `${session.wsUrl}?key=${encodeURIComponent(session.apiKey)}`;
-      const ws = new WebSocket(url);
-      this.ws = ws;
-
-      // Wait for open
-      await new Promise<void>((resolve, reject) => {
-        ws.addEventListener("open", () => resolve(), { once: true });
-        ws.addEventListener(
-          "error",
-          () => reject(new Error("websocket failed to open")),
-          { once: true },
-        );
-      });
-
-      // 3. Send setup message
       const sys =
         session.systemInstruction ||
-        // Default in French — Sophie's primary language. The model will
-        // still understand and reply in any language the user uses, but
-        // the bias is set on first turn.
+        // Default in French — Sophie's primary language. Native-audio
+        // models autodetect, but the system instruction biases the first
+        // turn until the user has actually spoken.
         "Tu es l'assistant vocal de Sophie. Réponds toujours en français, naturel et concis, sauf si l'utilisateur passe explicitement à une autre langue.";
-      const setup = {
-        setup: {
-          model: session.model,
-          generationConfig: {
-            responseModalities: ["AUDIO"],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: session.voice },
-              },
-              languageCode: "fr-FR",
-            },
-          },
+
+      const ai = new GoogleGenAI({ apiKey: session.apiKey });
+
+      // Connect via SDK. Note the camelCase field names — the SDK maps
+      // these to the underlying `setup` BidiGenerateContent message.
+      const liveSession = await ai.live.connect({
+        model: stripModelPrefix(session.model),
+        config: {
+          responseModalities: [Modality.AUDIO],
           systemInstruction: { parts: [{ text: sys }] },
-          inputAudioTranscription: { languageCode: "fr-FR" },
-          outputAudioTranscription: { languageCode: "fr-FR" },
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: session.voice },
+            },
+            // Output TTS language. Per the API ref, AudioTranscriptionConfig
+            // itself has no fields — language for input transcription is
+            // autodetected by the model.
+            languageCode: "fr-FR",
+          },
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
         },
-      };
-      ws.send(JSON.stringify(setup));
-      console.log("[gemini-live] setup sent", setup);
+        callbacks: {
+          onopen: () => {
+            // SDK is ready — capture starts after we've set state.
+          },
+          onmessage: (msg: LiveServerMessage) => {
+            this.handleServerMessage(msg);
+          },
+          onerror: (err: ErrorEvent) => {
+            this.setState("error", err.message || "live api error");
+          },
+          onclose: () => {
+            if (this.state !== "idle") this.setState("idle");
+            this.cleanup();
+          },
+        },
+      });
+      this.session = liveSession;
 
-      // 4. Wire incoming server messages
-      ws.addEventListener("message", (ev) => {
-        this.handleServerMessage(ev.data);
-      });
-      ws.addEventListener("close", () => {
-        if (this.state !== "idle") this.setState("idle");
-        this.cleanup();
-      });
-      ws.addEventListener("error", () => {
-        this.setState("error", "websocket error");
-      });
-
-      // 5. Set up audio capture
       await this.startCapture();
-
       this.setState("listening");
     } catch (err) {
       this.setState("error", (err as Error).message);
@@ -184,33 +154,43 @@ export class GeminiLiveSession {
       },
     });
 
-    // Capture context — uses native rate; the worklet downsamples to 16k.
-    const captureCtx = new AudioContext();
+    // Capture context at 16 kHz — browser does proper anti-aliased
+    // resampling from device rate. Linear-interp downsampling in the
+    // worklet (a previous version) broke FR ASR via aliasing.
+    const captureCtx = new AudioContext({ sampleRate: 16000 });
     this.captureCtx = captureCtx;
-    await captureCtx.audioWorklet.addModule(
-      "/audio-worklets/pcm-recorder.js",
+    console.log(
+      "[gemini-live] capture context",
+      "requested 16000, got",
+      captureCtx.sampleRate,
     );
+    await captureCtx.audioWorklet.addModule("/audio-worklets/pcm-recorder.js");
     const source = captureCtx.createMediaStreamSource(this.mediaStream);
     const node = new AudioWorkletNode(captureCtx, "pcm-recorder");
     this.workletNode = node;
     source.connect(node);
-    // We don't connect to destination — silent path. The worklet posts PCM
-    // chunks via port.onmessage.
+    // Silent path — worklet posts PCM via port.onmessage.
+    let chunkLogged = false;
     node.port.onmessage = (e) => {
       const buf = e.data as ArrayBuffer;
+      if (!chunkLogged) {
+        // 100ms @ 16k mono int16 = 3200 bytes — sanity check.
+        console.log(
+          "[gemini-live] first audio chunk",
+          "raw bytes",
+          buf.byteLength,
+        );
+        chunkLogged = true;
+      }
       this.sendAudioChunk(buf);
     };
 
-    // Playback context at 24 kHz so we can directly construct AudioBuffers
-    // at the API's output rate without resampling. Chrome creates this in
-    // a "suspended" state when the page hasn't had a recent user gesture —
-    // resume() explicitly so the buffer sources actually play.
+    // Playback at 24 kHz native — server outputs PCM at 24k.
     this.playbackCtx = new AudioContext({ sampleRate: PLAYBACK_RATE });
     if (this.playbackCtx.state === "suspended") {
       try {
         await this.playbackCtx.resume();
       } catch {
-        // surface as a state error; the rest of the session can still progress
         console.warn("[gemini-live] playback context could not resume");
       }
     }
@@ -218,57 +198,37 @@ export class GeminiLiveSession {
   }
 
   private sendAudioChunk(pcm: ArrayBuffer): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.session) return;
     if (this.muted) return;
     const b64 = arrayBufferToBase64(pcm);
-    const msg = {
-      realtimeInput: {
-        audio: {
-          mimeType: "audio/pcm;rate=16000",
-          data: b64,
-        },
+    this.session.sendRealtimeInput({
+      audio: {
+        data: b64,
+        mimeType: "audio/pcm;rate=16000",
       },
-    };
-    this.ws.send(JSON.stringify(msg));
+    });
   }
 
-  private async handleServerMessage(raw: unknown): Promise<void> {
-    let text: string;
-    if (typeof raw === "string") {
-      text = raw;
-    } else if (raw instanceof Blob) {
-      text = await raw.text();
-    } else if (raw instanceof ArrayBuffer) {
-      text = new TextDecoder().decode(raw);
-    } else {
-      return;
-    }
+  private handleServerMessage(msg: LiveServerMessage): void {
+    const content = msg.serverContent;
+    if (!content) return;
 
-    let msg: ServerMessage;
-    try {
-      msg = JSON.parse(text);
-    } catch {
-      return;
-    }
-    // Diagnostic — small enough to log full first turn. Strip the audio
-    // payload so the console isn't flooded with megabytes of base64.
-    const safe = JSON.parse(JSON.stringify(msg)) as ServerMessage;
-    const parts0 = safe.serverContent?.modelTurn?.parts;
-    if (parts0) {
-      for (const p of parts0) {
-        if (p.inlineData?.data) {
-          p.inlineData.data = `[base64 ${p.inlineData.data.length} chars, mime=${p.inlineData.mimeType}]`;
-        }
-      }
-    }
-    console.log("[gemini-live] msg", safe);
-
-    if (msg.serverContent?.interrupted) {
+    if (content.interrupted) {
       this.flushPlaybackQueue();
       this.setState("listening");
     }
 
-    const inputT = msg.serverContent?.inputTranscription;
+    // Multiple content parts can arrive in a single event — process all.
+    const parts = content.modelTurn?.parts ?? [];
+    for (const p of parts) {
+      const data = p.inlineData?.data;
+      const mime = p.inlineData?.mimeType ?? "";
+      if (data && mime.startsWith("audio/")) {
+        this.scheduleAudioChunk(data);
+      }
+    }
+
+    const inputT = content.inputTranscription;
     if (inputT?.text) {
       this.emit({
         type: "input_text",
@@ -276,8 +236,7 @@ export class GeminiLiveSession {
         final: Boolean(inputT.finished),
       });
     }
-
-    const outputT = msg.serverContent?.outputTranscription;
+    const outputT = content.outputTranscription;
     if (outputT?.text) {
       this.emit({
         type: "output_text",
@@ -286,24 +245,8 @@ export class GeminiLiveSession {
       });
     }
 
-    const parts = msg.serverContent?.modelTurn?.parts ?? [];
-    for (const p of parts) {
-      const data = p.inlineData?.data;
-      const mime = p.inlineData?.mimeType ?? "";
-      // Be permissive — Gemini Live can label its PCM as "audio/pcm",
-      // "audio/L16", or other audio/* variants. We only consume PCM 16-bit
-      // mono LE at 24 kHz, but we accept any audio/* mime as that and let
-      // the playback step decode best-effort.
-      if (data && mime.startsWith("audio/")) {
-        this.scheduleAudioChunk(data);
-      }
-    }
-
-    if (msg.serverContent?.turnComplete) {
+    if (content.turnComplete) {
       this.emit({ type: "turn_complete" });
-      // Once the queued audio finishes, we'll be back to listening.
-      // The state transition to listening happens on `ended` of the last
-      // queued source — see scheduleAudioChunk.
     }
   }
 
@@ -324,9 +267,7 @@ export class GeminiLiveSession {
     src.start(startAt);
     this.nextPlaybackTime = startAt + buffer.duration;
     this.playbackQueue.push(src);
-
     if (this.state !== "speaking") this.setState("speaking");
-
     src.onended = () => {
       this.playbackQueue = this.playbackQueue.filter((s) => s !== src);
       if (this.playbackQueue.length === 0 && this.state === "speaking") {
@@ -348,7 +289,6 @@ export class GeminiLiveSession {
     this.nextPlaybackTime = this.playbackCtx?.currentTime ?? 0;
   }
 
-  /** Stop everything, close the WS, release the mic. */
   async stop(): Promise<void> {
     this.cleanup();
     this.setState("idle");
@@ -356,13 +296,13 @@ export class GeminiLiveSession {
 
   private cleanup(): void {
     this.flushPlaybackQueue();
-    if (this.ws) {
+    if (this.session) {
       try {
-        this.ws.close();
+        this.session.close();
       } catch {
         // ignore
       }
-      this.ws = null;
+      this.session = null;
     }
     if (this.workletNode) {
       try {
@@ -403,6 +343,11 @@ export class GeminiLiveSession {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────
+
+/** SDK accepts `gemini-3.1-flash-live-preview` (without "models/" prefix). */
+function stripModelPrefix(model: string): string {
+  return model.startsWith("models/") ? model.slice("models/".length) : model;
+}
 
 function arrayBufferToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);

@@ -1014,13 +1014,13 @@ function VoiceLivePanel() {
 
       <Field
         label="Model"
-        hint="Gemini Live model id. Default: models/gemini-2.5-flash-preview-native-audio-dialog."
+        hint="Gemini Live model id. Default: models/gemini-3.1-flash-live-preview (newest, best multilingual ASR)."
       >
         <input
           type="text"
           value={model}
           onChange={(e) => setModel(e.target.value)}
-          placeholder="models/gemini-2.5-flash-preview-native-audio-dialog"
+          placeholder="models/gemini-3.1-flash-live-preview"
           className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
         />
       </Field>

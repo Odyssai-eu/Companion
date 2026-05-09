@@ -53,7 +53,11 @@ async function findOrInit(userId: string) {
   return created;
 }
 
-const DEFAULT_MODEL = "models/gemini-2.5-flash-preview-native-audio-dialog";
+// Gemini 3.1 Flash Live (preview) — newest Live model as of 2026-05.
+// Native speech↔speech, claims 70+ languages, lower latency, and
+// drastically better non-English transcription than the 2.5 native-audio
+// dialog model that mis-transcribes FR speech as EN-phonetic words.
+const DEFAULT_MODEL = "models/gemini-3.1-flash-live-preview";
 const DEFAULT_VOICE = "Aoede";
 
 voiceLiveRoute.get("/info", async (c) => {

@@ -1,50 +1,29 @@
 /**
- * PCM recorder worklet — captures microphone audio, downsamples from the
- * AudioContext's native sample rate to 16 kHz mono, converts float32
- * samples to little-endian int16 PCM, and posts ArrayBuffer chunks back
- * to the main thread.
+ * PCM recorder worklet — packages microphone float32 samples into 16-bit
+ * little-endian PCM ArrayBuffers and posts them to the main thread.
+ *
+ * NO manual resampling. The host creates the AudioContext at 16 kHz, and
+ * the browser handles resampling from the device rate (typically 48 kHz)
+ * with a proper anti-aliasing low-pass filter. Earlier versions did naive
+ * linear-interpolation downsampling here, which folded high frequencies
+ * back into the audible band and made non-English ASR fail catastrophically
+ * (Gemini Live transcribed "ceci est du français" as "it is sushi fancy").
  *
  * Used by src/lib/gemini-live.ts for the Gemini Live API.
- *
- * Loaded via:
- *   await audioContext.audioWorklet.addModule('/audio-worklets/pcm-recorder.js');
- *   const node = new AudioWorkletNode(audioContext, 'pcm-recorder');
- *   node.port.onmessage = (e) => sendAudioToServer(e.data);
  */
 
-const TARGET_RATE = 16000;
 const CHUNK_MS = 100; // post one buffer ~10×/sec
 
 class PcmRecorder extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.inputRate = sampleRate; // global var inside worklet — context rate
-    this.ratio = this.inputRate / TARGET_RATE;
-    // Buffer of float32 samples already downsampled to 16k. We post
-    // every CHUNK_MS worth of samples.
+    // sampleRate is a worklet global — equals the host AudioContext rate.
+    // We expect the host to create the context at 16 kHz; we don't enforce
+    // it here, just package whatever rate we get.
+    this.chunkSamples = Math.floor((sampleRate * CHUNK_MS) / 1000);
     this.buffer = new Float32Array(0);
-    this.chunkSamples = Math.floor((TARGET_RATE * CHUNK_MS) / 1000);
   }
 
-  /**
-   * Lightweight linear-interpolation downsampler. inputs[0][0] is the
-   * first channel of the first input (we only consume mono). Returns the
-   * resulting float32 chunk.
-   */
-  downsample(input) {
-    const outLen = Math.floor(input.length / this.ratio);
-    const out = new Float32Array(outLen);
-    for (let i = 0; i < outLen; i++) {
-      const srcIdx = i * this.ratio;
-      const lo = Math.floor(srcIdx);
-      const hi = Math.min(lo + 1, input.length - 1);
-      const frac = srcIdx - lo;
-      out[i] = input[lo] * (1 - frac) + input[hi] * frac;
-    }
-    return out;
-  }
-
-  /** Append `add` to `this.buffer` and return the new buffer. */
   appendToBuffer(add) {
     const merged = new Float32Array(this.buffer.length + add.length);
     merged.set(this.buffer, 0);
@@ -67,8 +46,7 @@ class PcmRecorder extends AudioWorkletProcessor {
   process(inputs) {
     const input = inputs[0]?.[0];
     if (!input || input.length === 0) return true;
-    const ds = this.downsample(input);
-    this.buffer = this.appendToBuffer(ds);
+    this.buffer = this.appendToBuffer(input);
     while (this.buffer.length >= this.chunkSamples) {
       const chunk = this.buffer.slice(0, this.chunkSamples);
       this.buffer = this.buffer.slice(this.chunkSamples);
