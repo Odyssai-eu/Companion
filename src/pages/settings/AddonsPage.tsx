@@ -891,6 +891,145 @@ function Field({
 
 // ── Voice (Gemini Live) panel ─────────────────────────────────────────────
 
+/** Full Gemini Live prebuilt voice catalog, paired with the official
+ *  one-word style descriptor Google publishes alongside each name.
+ *  Reproduced verbatim so the picker labels match the docs. */
+const VOICES: Array<{ name: string; tone: string }> = [
+  { name: "Zephyr", tone: "Bright" },
+  { name: "Puck", tone: "Upbeat" },
+  { name: "Charon", tone: "Informative" },
+  { name: "Kore", tone: "Firm" },
+  { name: "Fenrir", tone: "Excitable" },
+  { name: "Leda", tone: "Youthful" },
+  { name: "Orus", tone: "Firm" },
+  { name: "Aoede", tone: "Breezy" },
+  { name: "Callirrhoe", tone: "Easy-going" },
+  { name: "Autonoe", tone: "Bright" },
+  { name: "Enceladus", tone: "Breathy" },
+  { name: "Iapetus", tone: "Clear" },
+  { name: "Umbriel", tone: "Easy-going" },
+  { name: "Algieba", tone: "Smooth" },
+  { name: "Despina", tone: "Smooth" },
+  { name: "Erinome", tone: "Clear" },
+  { name: "Algenib", tone: "Gravelly" },
+  { name: "Rasalgethi", tone: "Informative" },
+  { name: "Laomedeia", tone: "Upbeat" },
+  { name: "Achernar", tone: "Soft" },
+  { name: "Alnilam", tone: "Firm" },
+  { name: "Schedar", tone: "Even" },
+  { name: "Gacrux", tone: "Mature" },
+  { name: "Pulcherrima", tone: "Forward" },
+  { name: "Achird", tone: "Friendly" },
+  { name: "Zubenelgenubi", tone: "Casual" },
+  { name: "Vindemiatrix", tone: "Gentle" },
+  { name: "Sadachbia", tone: "Lively" },
+  { name: "Sadaltager", tone: "Knowledgeable" },
+  { name: "Sulafat", tone: "Warm" },
+];
+
+const PRESET_MALE = "Orus";
+const PRESET_FEMALE = "Aoede";
+
+/**
+ * Three-way voice picker: Male preset (Orus), Female preset (Aoede), or
+ * Custom with a dropdown of every Gemini Live voice. The mode is derived
+ * from the saved value rather than stored separately — single source of
+ * truth stays the `voice` string the backend sends to the Live API.
+ */
+function VoicePicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const trimmed = value.trim();
+  const mode: "male" | "female" | "custom" =
+    trimmed === PRESET_MALE
+      ? "male"
+      : trimmed === PRESET_FEMALE
+        ? "female"
+        : "custom";
+
+  function pick(next: "male" | "female" | "custom") {
+    if (next === "male") onChange(PRESET_MALE);
+    else if (next === "female") onChange(PRESET_FEMALE);
+    else if (mode !== "custom") {
+      // Switching to Custom — seed with the first non-preset voice if the
+      // current value is one of the presets, so the dropdown isn't blank.
+      const seed =
+        VOICES.find((v) => v.name !== PRESET_MALE && v.name !== PRESET_FEMALE)
+          ?.name ?? "Charon";
+      onChange(seed);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-3 gap-2">
+        <ModeButton
+          active={mode === "male"}
+          label="Male"
+          sub={PRESET_MALE}
+          onClick={() => pick("male")}
+        />
+        <ModeButton
+          active={mode === "female"}
+          label="Female"
+          sub={PRESET_FEMALE}
+          onClick={() => pick("female")}
+        />
+        <ModeButton
+          active={mode === "custom"}
+          label="Custom"
+          sub={mode === "custom" ? trimmed || "—" : "Pick from list"}
+          onClick={() => pick("custom")}
+        />
+      </div>
+      {mode === "custom" && (
+        <select
+          value={trimmed}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+        >
+          {VOICES.map((v) => (
+            <option key={v.name} value={v.name}>
+              {v.name} — {v.tone}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
+function ModeButton({
+  active,
+  label,
+  sub,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  sub: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition-colors ${
+        active
+          ? "border-cyan bg-[rgba(79,179,217,0.08)] text-ink"
+          : "border-gray-200 bg-white text-ink hover:bg-gray-50"
+      }`}
+    >
+      <span className="text-[13px] font-medium">{label}</span>
+      <span className="font-mono text-[11px] text-gray-500">{sub}</span>
+    </button>
+  );
+}
+
 function VoiceLivePanel() {
   type Info = Awaited<ReturnType<typeof api.voiceLiveInfo>>;
   const [info, setInfo] = useState<Info | null>(null);
@@ -1025,14 +1164,11 @@ function VoiceLivePanel() {
         />
       </Field>
 
-      <Field label="Voice" hint="Aoede / Charon / Fenrir / Kore / Puck / Zephyr">
-        <input
-          type="text"
-          value={voice}
-          onChange={(e) => setVoice(e.target.value)}
-          placeholder="Aoede"
-          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-        />
+      <Field
+        label="Voice"
+        hint="Pick a quick preset or browse the full list."
+      >
+        <VoicePicker value={voice} onChange={setVoice} />
       </Field>
 
       <Field
