@@ -56,6 +56,7 @@ import { useIsMobile } from "~/hooks/useIsMobile";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
 import { api } from "~/lib/api";
 import { voiceInput } from "~/lib/voice-input";
+import VoiceLiveOverlay from "~/components/chat/VoiceLiveOverlay";
 
 export default function ChatLayout() {
   const { id } = useParams<{ id?: string }>();
@@ -66,6 +67,14 @@ export default function ChatLayout() {
   const navigate = useNavigate();
   const voiceMode = useVoiceMode();
   const isMobile = useIsMobile();
+  const [voiceLiveOpen, setVoiceLiveOpen] = useState(false);
+  const [voiceLiveAvailable, setVoiceLiveAvailable] = useState(false);
+  useEffect(() => {
+    api
+      .voiceLiveInfo()
+      .then((info) => setVoiceLiveAvailable(info.enabled && info.hasApiKey))
+      .catch(() => setVoiceLiveAvailable(false));
+  }, []);
 
   // ExoScopy parity: collapse the drawer when the user picks a conversation,
   // and reset on viewport-crossing so desktop never inherits a stuck-open
@@ -197,7 +206,12 @@ export default function ChatLayout() {
             chat.namedModels,
           )}
           hideModelPicker={chat.inferenceMode === "easy"}
+          voiceLiveAvailable={voiceLiveAvailable}
+          onOpenVoiceLive={() => setVoiceLiveOpen(true)}
         />
+        {voiceLiveOpen && (
+          <VoiceLiveOverlay onClose={() => setVoiceLiveOpen(false)} />
+        )}
       </main>
     </div>
   );
