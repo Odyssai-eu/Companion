@@ -203,9 +203,9 @@ export default function ChatLayout() {
             onCancel={chat.cancel}
             sending={chat.sending}
             disabled={false}
-            placeholder="Ask Hermes…"
+            placeholder="Ask Hermes (cluster ops)…"
             modelHasVision={false}
-            model="hermes-agent"
+            model="Qwen3.6-flash"
             onModelChange={() => undefined}
             models={[]}
             // Hermes runs its own model + tools on the gateway; the picker

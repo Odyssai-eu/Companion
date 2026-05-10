@@ -74,12 +74,42 @@ const WEB_SEARCH_TOOLS = [
   },
 ];
 
-// HERMES_TOOLS removed — cluster_action is no longer exposed to regular
-// chat models. Users access Hermes directly via 'New Hermes' conversations
-// (kind='hermes'), which route to the gateway and use its native tool
-// layer. The hermesRun() helper below is still used internally by the
-// `cluster_action` / `hermes_agent` dispatcher names for any in-flight
-// conversation that might call them, but the tool isn't advertised.
+/**
+ * cluster_action — opt-in tool, ONLY exposed in kind='hermes'
+ * conversations. Lets the chat model delegate to the Hermes Agent gateway
+ * for cluster-native skills the standard toolbox can't do (Obsidian
+ * vault writes, steel-browser, deep agent loops). Regular chats don't
+ * see this — empirical UX with cluster_action exposed everywhere was
+ * mediocre because the model never knew when to delegate.
+ */
+export const HERMES_DELEGATION_TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "cluster_action",
+      description:
+        "Delegate a cluster-specific operation to the user's home-server " +
+        "Hermes Agent. Use ONLY when the task requires the cluster's " +
+        "native skills: writing into the user's Obsidian vault, headless " +
+        "browsing via steel-browser, or running a multi-step agent loop " +
+        "that needs server-side state. Do NOT use for plain reads (use " +
+        "rag_search), workspace files (use fs_*), or web search (use " +
+        "web_search). Calls take 30s-3min — invoke sparingly.",
+      parameters: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+            description:
+              "The task in natural language. Be specific about what to " +
+              "do and what you expect back.",
+          },
+        },
+        required: ["task"],
+      },
+    },
+  },
+];
 
 // ── rag_search (always on when RAG_QDRANT_URL is set) ────────────────────
 
