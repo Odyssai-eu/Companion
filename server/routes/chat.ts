@@ -385,10 +385,11 @@ chatRoute.post("/completions", async (c) => {
     // the post-tool reply doesn't always need tools).
     const modelLower = (body.model ?? "").toLowerCase();
     function shouldUseNonStream(): boolean {
-      // Hermes Agent gateway always returns a single non-stream JSON
-      // response. Hand off to collectNonStream which slices it into
-      // typewriter chunks for the client.
-      if (convKind === "hermes") return true;
+      // Hermes Agent gateway supports streaming and the agent loop can
+      // take minutes — streaming is critical for both TTFT and keeping
+      // the SSE pipe alive (Hermes emits its own `:keepalive` comments
+      // while the loop runs). Use stream mode.
+      if (convKind === "hermes") return false;
       if (!toolsEnabled) return false;
       // Cloud providers stream tools fine — keep typewriter UX there.
       if (modelLower.includes("claude") || modelLower.startsWith("anthropic/")) return false;
