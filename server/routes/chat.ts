@@ -31,21 +31,15 @@ import { buildTag } from "../lib/timetag";
 import type { GuestTokenContext } from "../lib/guest-token";
 import {
   executeTool,
-  HERMES_DELEGATION_TOOLS,
   isHermesEnabled,
   isWebSearchEnabled,
+  resolveHermesTarget,
   toolsForUser,
   type ToolResult,
 } from "../lib/tools";
 
 type Env = { Variables: { userId: string } };
 const chatRoute = new Hono<Env>();
-
-/** Default LiteLLM model used for kind='hermes' conversations. Picked
- *  for high throughput on cluster-orchestration workloads — fast tool
- *  routing without the 3-minute autonomous-agent loop overhead of the
- *  Hermes Gateway. */
-const HERMES_CHAT_MODEL = "Qwen3.6-flash";
 
 // ── Types from the client ─────────────────────────────────────────────────
 
@@ -188,16 +182,38 @@ chatRoute.post("/completions", async (c) => {
     }
   }
 
-  // ── 3b. Hermes routing — kind='hermes' conversations stay on LiteLLM
-  // (fast, streaming, cheap) but with a fixed model and the cluster_action
-  // tool exposed. The chat model orchestrates and delegates to the Hermes
-  // Agent gateway only when a cluster-native skill (obsidian / vault /
-  // steel-browser) is actually needed. Memory wiki suppressed because
-  // cluster_action + rag_search cover the same ground on demand and
-  // double-feeding ballooned 'hello' into a 3-minute round trip.
+  // ── 3b. Hermes routing — kind='hermes' conversations talk DIRECTLY to
+  // the Hermes Agent gateway. The user wants Hermes itself, with all its
+  // skills (obsidian-read, qdrant-search, steel-browser, …) — not a fast
+  // LLM in front of it. Hermes is slow (30s-3min/turn) by design; that's
+  // the cost of an autonomous agent loop. Streaming keeps the SSE pipe
+  // alive while the loop runs. Memory wiki is suppressed because Hermes
+  // has its own retrieval skills that cover the same ground on demand.
   if (convKind === "hermes") {
     memoryBlock = "";
-    hermesModelOverride = HERMES_CHAT_MODEL;
+    const hermes = await resolveHermesTarget(userId);
+    if (!hermes) {
+      return c.json(
+        {
+          error: "hermes_addon_disabled",
+          detail:
+            "Enable Settings → Add-ons → Hermes Agent and set an API key to use Hermes conversations.",
+        },
+        400,
+      );
+    }
+    if (!hermes.apiKey) {
+      return c.json(
+        {
+          error: "hermes_missing_api_key",
+          detail:
+            "Hermes Agent gateway requires an API key. Configure it in Settings → Add-ons → Hermes Agent.",
+        },
+        400,
+      );
+    }
+    target = { baseUrl: hermes.baseUrl, apiKey: hermes.apiKey };
+    hermesModelOverride = hermes.model;
   }
 
   // ── 4. Inject time tags into user messages ────────────────────────────
@@ -309,21 +325,14 @@ chatRoute.post("/completions", async (c) => {
   // Tool gating:
   //  - Regular chats (kind='chat') get the standard toolbox: fs_*,
   //    rag_search (always-on if RAG configured), web_search (if Tavily).
-  //    cluster_action is intentionally NOT exposed here.
-  //  - Hermes chats (kind='hermes') get the same toolbox PLUS
-  //    cluster_action so the model can delegate to the Hermes Gateway
-  //    for vault / obsidian / steel-browser skills when relevant.
-  const effectiveModel = hermesModelOverride ?? body.model;
+  //  - Hermes chats (kind='hermes') do NOT use our tool layer — Hermes
+  //    runs its own native skills inside the gateway. We just pipe the
+  //    messages through and let Hermes do its thing.
   const anyToolEnabled =
-    ((await isWebSearchEnabled(userId)) ||
-      (await isHermesEnabled(userId)) ||
-      convKind === "hermes") &&
-    modelSupportsTools(effectiveModel);
-  const baseTools = anyToolEnabled ? await toolsForUser(userId) : [];
-  const tools =
-    convKind === "hermes" && (await isHermesEnabled(userId))
-      ? [...baseTools, ...HERMES_DELEGATION_TOOLS]
-      : baseTools;
+    convKind !== "hermes" &&
+    ((await isWebSearchEnabled(userId)) || (await isHermesEnabled(userId))) &&
+    modelSupportsTools(body.model);
+  const tools = anyToolEnabled ? await toolsForUser(userId) : [];
   const toolsEnabled = tools.length > 0;
 
   const headers: Record<string, string> = {

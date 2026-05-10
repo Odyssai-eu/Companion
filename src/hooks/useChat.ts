@@ -224,12 +224,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         setConversation(conversation);
         setMessages(msgs.map(toUIMessage));
         // Hermes conversations have no model picker — pin the model state
-        // to a placeholder so sendMessage's "no model selected" guard
-        // doesn't silently swallow user input. The backend overrides the
-        // sent model with HERMES_CHAT_MODEL (Qwen3.6-flash today) so the
-        // exact value here doesn't matter, only the truthiness.
+        // so sendMessage's "no model selected" guard doesn't silently
+        // swallow user input. The backend ignores this value and uses
+        // the gateway's configured model.
         if (conversation.kind === "hermes") {
-          setModel("Qwen3.6-flash");
+          setModel("hermes-agent");
         }
         if (conversation.projectId) {
           api
