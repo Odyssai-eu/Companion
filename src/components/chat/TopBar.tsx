@@ -16,6 +16,10 @@ type Props = {
   conversationId?: string | null;
   memoryEnabled?: boolean;
   onToggleMemory?: () => void;
+  /** Hide the memory toggle + 'remember now' chips entirely. Used for
+   *  Hermes conversations where memory wiki injection is suppressed
+   *  server-side (Hermes runs its own retrieval skills). */
+  hideMemoryControls?: boolean;
 };
 
 export default function TopBar({
@@ -27,6 +31,7 @@ export default function TopBar({
   conversationId,
   memoryEnabled = true,
   onToggleMemory,
+  hideMemoryControls = false,
 }: Props) {
   const voiceMode = useVoiceMode();
   const isMobile = useIsMobile();
@@ -52,16 +57,20 @@ export default function TopBar({
           tabs={["Creative", "Normal", "Code"]}
         />
         <div className="flex items-center gap-1.5">
-          <MemoryToggleButton
-            enabled={memoryEnabled}
-            onToggle={onToggleMemory}
-            disabled={!conversationId}
-            compact
-          />
-          <RememberNowButton
-            conversationId={memoryEnabled ? conversationId ?? null : null}
-            compact
-          />
+          {!hideMemoryControls && (
+            <>
+              <MemoryToggleButton
+                enabled={memoryEnabled}
+                onToggle={onToggleMemory}
+                disabled={!conversationId}
+                compact
+              />
+              <RememberNowButton
+                conversationId={memoryEnabled ? conversationId ?? null : null}
+                compact
+              />
+            </>
+          )}
           {a11y.voiceUiVisible && (
             <button
               type="button"
@@ -112,14 +121,18 @@ export default function TopBar({
         </div>
         <div className="flex items-center gap-3">
           <ToolsMenu />
-          <MemoryToggleButton
-            enabled={memoryEnabled}
-            onToggle={onToggleMemory}
-            disabled={!conversationId}
-          />
-          <RememberNowButton
-            conversationId={memoryEnabled ? conversationId ?? null : null}
-          />
+          {!hideMemoryControls && (
+            <>
+              <MemoryToggleButton
+                enabled={memoryEnabled}
+                onToggle={onToggleMemory}
+                disabled={!conversationId}
+              />
+              <RememberNowButton
+                conversationId={memoryEnabled ? conversationId ?? null : null}
+              />
+            </>
+          )}
           {a11y.voiceUiVisible && (
             <button
               type="button"
