@@ -74,33 +74,12 @@ const WEB_SEARCH_TOOLS = [
   },
 ];
 
-const HERMES_TOOLS = [
-  {
-    type: "function" as const,
-    function: {
-      name: "cluster_action",
-      description:
-        "Delegate a cluster-specific operation to the user's home server. " +
-        "Use ONLY for tasks that require the cluster's own toolset: RAG " +
-        "search over personal corpus, image generation via ComfyUI, vault " +
-        "operations on the local Obsidian filesystem, rsync between nodes. " +
-        "Do NOT use for files in the conversation workspace — use fs_* tools " +
-        "instead. Do NOT use for web search — use web_search/web_fetch.",
-      parameters: {
-        type: "object",
-        properties: {
-          task: {
-            type: "string",
-            description:
-              "The task in natural language. Be specific about what to do " +
-              "and what you expect back.",
-          },
-        },
-        required: ["task"],
-      },
-    },
-  },
-];
+// HERMES_TOOLS removed — cluster_action is no longer exposed to regular
+// chat models. Users access Hermes directly via 'New Hermes' conversations
+// (kind='hermes'), which route to the gateway and use its native tool
+// layer. The hermesRun() helper below is still used internally by the
+// `cluster_action` / `hermes_agent` dispatcher names for any in-flight
+// conversation that might call them, but the tool isn't advertised.
 
 // ── rag_search (always on when RAG_QDRANT_URL is set) ────────────────────
 
@@ -234,7 +213,12 @@ export async function toolsForUser(userId: string): Promise<unknown[]> {
   const out: unknown[] = [...FS_TOOLS];
   if (isRagConfigured()) out.push(...RAG_TOOLS);
   if (await isWebSearchEnabled(userId)) out.push(...WEB_SEARCH_TOOLS);
-  if (await isHermesEnabled(userId)) out.push(...HERMES_TOOLS);
+  // cluster_action (Hermes) is intentionally NOT exposed to regular chat
+  // models anymore. Users who want Hermes pick a 'New Hermes' conversation
+  // from the sidebar — that routes directly to the Hermes gateway, which
+  // runs its own native tool layer. This avoids the double-orchestration
+  // (chat model deciding when to call cluster_action vs. talking to
+  // Hermes directly) which empirically gave mediocre results.
   return out;
 }
 
@@ -346,6 +330,32 @@ type HermesConfig = {
 };
 
 const HERMES_DEFAULT_GATEWAY = "http://192.168.86.50:8642";
+
+/**
+ * Resolve the Hermes Agent gateway target for a user. Used both by the
+ * `cluster_action` tool inside regular chats AND by the chat route when
+ * a conversation has kind='hermes' and we route directly to the Hermes
+ * gateway instead of LiteLLM.
+ *
+ * Returns null when the addon is missing/disabled. The caller is
+ * responsible for surfacing a useful error.
+ */
+export async function resolveHermesTarget(userId: string): Promise<{
+  baseUrl: string;
+  apiKey: string | null;
+  model: string;
+} | null> {
+  const cfg = await getHermesConfig(userId);
+  if (!cfg) return null;
+  const baseUrl = (
+    cfg.apiUrl ?? process.env.HERMES_GATEWAY_URL ?? HERMES_DEFAULT_GATEWAY
+  ).replace(/\/+$/, "");
+  return {
+    baseUrl,
+    apiKey: cfg.apiKey ?? null,
+    model: cfg.defaultModel ?? "hermes-agent",
+  };
+}
 
 async function getHermesConfig(
   userId: string,

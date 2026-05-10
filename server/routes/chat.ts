@@ -33,6 +33,7 @@ import {
   executeTool,
   isHermesEnabled,
   isWebSearchEnabled,
+  resolveHermesTarget,
   toolsForUser,
   type ToolResult,
 } from "../lib/tools";
@@ -120,12 +121,16 @@ chatRoute.post("/completions", async (c) => {
   //   removed in v0.2 — the consolidation of all inference behind LiteLLM
   //   simplifies routing, observability and tool support. EXO instances are
   //   still reachable as regular LiteLLM aliases.
-  const target = {
+  // The chat route normally targets LiteLLM. For kind='hermes' conversations
+  // we swap to the Hermes Agent gateway (set after the conv lookup below)
+  // and skip the tool layer — Hermes handles its own tool routing natively.
+  let target = {
     baseUrl: (
       userRow.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
     ).replace(/\/+$/, ""),
     apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
   };
+  let hermesModelOverride: string | null = null;
 
   // ── 3. Resolve project + memory snapshot (frozen per-conversation) ────
   // The memory wiki is snapshot at conversation creation (or on explicit
@@ -137,6 +142,7 @@ chatRoute.post("/completions", async (c) => {
   // turn 2 onwards.
   let projectId: string | null = null;
   let memoryBlock = "";
+  let convKind: "chat" | "talk" | "hermes" = "chat";
   if (body.conversationId) {
     try {
       const [conv] = await db
@@ -145,12 +151,14 @@ chatRoute.post("/completions", async (c) => {
           userId: conversations.userId,
           memorySnapshot: conversations.memorySnapshot,
           memoryEnabled: conversations.memoryEnabled,
+          kind: conversations.kind,
         })
         .from(conversations)
         .where(eq(conversations.id, body.conversationId))
         .limit(1);
       if (conv && conv.userId === userId) {
         projectId = conv.projectId;
+        convKind = conv.kind;
         // Memory toggle (per-conversation, inherited from project at creation):
         // when off, do not inject the wiki into the system prompt at all.
         if (conv.memoryEnabled === false) {
@@ -172,6 +180,37 @@ chatRoute.post("/completions", async (c) => {
     } catch (err) {
       console.warn("[chat] memory lookup failed:", (err as Error).message);
     }
+  }
+
+  // ── 3b. Hermes routing — swap inference target if this is a 'hermes'
+  // conversation. We bypass LiteLLM and post directly to the Hermes Agent
+  // gateway. Hermes is OpenAI-compatible (POST /v1/chat/completions) but
+  // non-streaming, and runs its own tool layer — we'll force non-stream
+  // upstream and disable our tool injection further down.
+  if (convKind === "hermes") {
+    const hermes = await resolveHermesTarget(userId);
+    if (!hermes) {
+      return c.json(
+        {
+          error: "hermes_addon_disabled",
+          detail:
+            "Enable Settings → Add-ons → Hermes Agent and set an API key to use Hermes conversations.",
+        },
+        400,
+      );
+    }
+    if (!hermes.apiKey) {
+      return c.json(
+        {
+          error: "hermes_missing_api_key",
+          detail:
+            "Hermes Agent gateway requires an API key. Configure it in Settings → Add-ons → Hermes Agent.",
+        },
+        400,
+      );
+    }
+    target = { baseUrl: hermes.baseUrl, apiKey: hermes.apiKey };
+    hermesModelOverride = hermes.model;
   }
 
   // ── 4. Inject time tags into user messages ────────────────────────────
@@ -227,7 +266,9 @@ chatRoute.post("/completions", async (c) => {
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)
   const baseBody: Record<string, unknown> = {
-    model: body.model,
+    // Hermes ignores the model picker — its gateway exposes a single
+    // virtual model. For kind='hermes' we hard-override here.
+    model: hermesModelOverride ?? body.model,
     stream: true,
   };
   for (const k of [
@@ -278,7 +319,11 @@ chatRoute.post("/completions", async (c) => {
   //
   // exo's MLX runner currently aborts (SIGABRT) when handed a `tools:`
   // param even for tool-trained models, so we whitelist by model name.
+  // Hermes conversations don't use our tool layer — the Hermes gateway
+  // runs its own internal tools (filesystem, RAG, cluster ops, …) and
+  // reports back the final text. Suppress LiteLLM tools entirely.
   const anyToolEnabled =
+    convKind !== "hermes" &&
     ((await isWebSearchEnabled(userId)) || (await isHermesEnabled(userId))) &&
     modelSupportsTools(body.model);
   const tools = anyToolEnabled ? await toolsForUser(userId) : [];
@@ -340,6 +385,10 @@ chatRoute.post("/completions", async (c) => {
     // the post-tool reply doesn't always need tools).
     const modelLower = (body.model ?? "").toLowerCase();
     function shouldUseNonStream(): boolean {
+      // Hermes Agent gateway always returns a single non-stream JSON
+      // response. Hand off to collectNonStream which slices it into
+      // typewriter chunks for the client.
+      if (convKind === "hermes") return true;
       if (!toolsEnabled) return false;
       // Cloud providers stream tools fine — keep typewriter UX there.
       if (modelLower.includes("claude") || modelLower.startsWith("anthropic/")) return false;

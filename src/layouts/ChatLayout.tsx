@@ -193,6 +193,22 @@ export default function ChatLayout() {
             onOpenVoiceLive={() => setVoiceLiveOpen(true)}
             voiceLiveAvailable={voiceLiveAvailable}
           />
+        ) : chat.conversation?.kind === "hermes" ? (
+          <Input
+            onSend={chat.sendMessage}
+            onCancel={chat.cancel}
+            sending={chat.sending}
+            disabled={false}
+            placeholder="Ask Hermes…"
+            modelHasVision={false}
+            model="hermes-agent"
+            onModelChange={() => undefined}
+            models={[]}
+            // Hermes runs its own model + tools on the gateway; the picker
+            // is meaningless here.
+            hideModelPicker
+            voiceLiveAvailable={false}
+          />
         ) : (
           <Input
             onSend={chat.sendMessage}

@@ -112,6 +112,23 @@ export default function Sidebar({
     }
   }
 
+  async function startNewHermes() {
+    // Hermes conversations route directly to the Hermes Agent gateway
+    // (skipping LiteLLM), so we tag them server-side via kind='hermes'
+    // and the chat route picks the right backend at send time.
+    try {
+      const { conversation } = await api.createConversation({
+        projectId: activeProjectId ?? undefined,
+        title: "New Hermes",
+        kind: "hermes",
+      });
+      await refresh();
+      navigate(`/c/${conversation.id}`);
+    } catch {
+      // ignore; user can retry
+    }
+  }
+
   return (
     <>
       {mobileOpen && (
@@ -134,22 +151,39 @@ export default function Sidebar({
       </div>
 
       <div className="flex flex-col gap-1.5 px-3 pb-4">
-        <div className="grid grid-cols-2 gap-1.5">
+        {/* Three buttons in a 2 / 1 / 1 split: a wide Chat (the default
+         *  most-used path), a square Talk that's just a mic, and a square
+         *  Hermes that's just the agent logo. Square buttons keep the icons
+         *  centred without label fighting. */}
+        <div className="grid grid-cols-4 gap-1.5">
           <button
             type="button"
             onClick={startNewConversation}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-[13px] font-medium text-ink transition-colors hover:bg-gray-50"
+            className="col-span-2 flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-[13px] font-medium text-ink transition-colors hover:bg-gray-50"
           >
-            <PlusIcon />
-            New chat
+            Chat
           </button>
           <button
             type="button"
             onClick={startNewTalk}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-cyan px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+            aria-label="New talk"
+            title="New talk"
+            className="flex items-center justify-center rounded-lg bg-cyan px-2 py-2.5 text-white transition-opacity hover:opacity-90"
           >
-            <MicIcon />
-            New talk
+            <MicIcon size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={startNewHermes}
+            aria-label="New Hermes"
+            title="New Hermes"
+            className="flex items-center justify-center rounded-lg border border-gray-200 bg-white px-2 py-2.5 transition-colors hover:bg-gray-50"
+          >
+            <img
+              src="/logo/hermes-agent-logo.svg"
+              alt=""
+              className="h-4 w-4"
+            />
           </button>
         </div>
         {activeProjectId && (
@@ -507,10 +541,23 @@ function ConversationRow({
                 <MicIcon size={15} />
               </span>
             )}
+            {conversation.kind === "hermes" && (
+              <img
+                src="/logo/hermes-agent-logo.svg"
+                alt=""
+                aria-label="Hermes conversation"
+                className="mr-1.5 inline-block h-4 w-4 flex-shrink-0"
+              />
+            )}
             {conversation.pinned && (
               <span className="mr-0.5 text-[10px] text-amber-500">📌</span>
             )}
-            {conversation.title || (conversation.kind === "talk" ? "New talk" : "New conversation")}
+            {conversation.title ||
+              (conversation.kind === "talk"
+                ? "New talk"
+                : conversation.kind === "hermes"
+                  ? "New Hermes"
+                  : "New conversation")}
           </span>
         )}
         <span className="flex-shrink-0 font-mono text-[11px] text-gray-400">

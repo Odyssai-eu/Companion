@@ -90,7 +90,9 @@ export const conversations = pgTable(
     // 'chat' = classic text/multimodal chat (default).
     // 'talk' = Voice Live conversation (no model picker, big-mic input,
     // transcripts persisted as messages).
-    kind: text("kind", { enum: ["chat", "talk"] })
+    // 'hermes' = direct conversation with the Hermes Agent gateway,
+    // bypassing LiteLLM (Hermes handles its own tool routing natively).
+    kind: text("kind", { enum: ["chat", "talk", "hermes"] })
       .notNull()
       .default("chat"),
     model: text("model"),
