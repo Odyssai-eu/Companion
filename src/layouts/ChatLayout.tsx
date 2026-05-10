@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router";
 import InferencePanel from "~/components/chat/InferencePanel";
 import Input from "~/components/chat/Input";
 import Messages from "~/components/chat/Messages";
+import RepoBindingBar from "~/components/chat/RepoBindingBar";
 import Sidebar from "~/components/chat/Sidebar";
 import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
 import { STYLE_PRESETS, useChat } from "~/hooks/useChat";
@@ -185,6 +186,15 @@ export default function ChatLayout() {
               />
             </div>
           </div>
+        )}
+        {chat.conversation?.kind === "hermes" && chat.conversation?.id && (
+          <RepoBindingBar
+            conversationId={chat.conversation.id}
+            repoPath={chat.conversation.repoPath ?? null}
+            onChange={() => {
+              void chat.reload();
+            }}
+          />
         )}
         <Messages
           messages={chat.messages}

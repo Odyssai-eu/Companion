@@ -13,6 +13,7 @@ import { licenseGate } from "./middleware/license";
 import addonsRoute from "./routes/addons";
 import adminExtAddonRoute from "./routes/addon-admin-ext";
 import hermesAddonRoute from "./routes/addon-hermes";
+import hermesBridgeRoute from "./routes/hermes-bridge";
 import voiceLiveAddonRoute from "./routes/addon-voice-live";
 import obsidianRoute, { obsidianBearerLoader } from "./routes/addon-obsidian";
 import tavilyRoute from "./routes/addon-tavily";
@@ -76,6 +77,7 @@ app.use("/api/inference/*", licenseGate, guestSessionLoader, requireUserOrGuest)
 // so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
 app.use("/api/addons/*", licenseGate, requireUser);
+app.use("/api/hermes-bridge/*", licenseGate, requireUser);
 app.use("/api/models/*", licenseGate, guestSessionLoader, requireUserOrGuest);
 app.use("/api/models", licenseGate, guestSessionLoader, requireUserOrGuest);
 // /api/guest/session is the public snapshot endpoint — gated inside the route.
@@ -89,6 +91,7 @@ app.route("/api/profile", profileRoute);
 app.route("/api/files", filesRoute);
 app.route("/api/tts", ttsRoute);
 app.route("/api/addons", addonsRoute);
+app.route("/api/hermes-bridge", hermesBridgeRoute);
 app.route("/api/addons/obsidian", obsidianRoute);
 app.route("/api/addons/tavily", tavilyRoute);
 app.route("/api/addons/hermes", hermesAddonRoute);

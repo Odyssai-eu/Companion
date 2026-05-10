@@ -17,6 +17,10 @@ const createSchema = z.object({
   /** 'chat' (default), 'talk', or 'hermes' — chooses the layout +
    *  routing path on send. */
   kind: z.enum(["chat", "talk", "hermes"]).optional(),
+  /** Optional repo path bound to this conversation. Only meaningful
+   *  for kind='hermes' but we don't enforce that here — useful to
+   *  let the user pick before flipping kind in the future. */
+  repoPath: z.string().min(1).max(500).optional(),
 });
 
 const appendMessageSchema = z.object({
@@ -36,6 +40,8 @@ const updateSchema = z.object({
   pinned: z.boolean().optional(),
   projectId: z.string().uuid().nullish(),
   memoryEnabled: z.boolean().optional(),
+  /** Pass empty string or null to clear. */
+  repoPath: z.string().max(500).nullish(),
 });
 
 conversationsRoute.get("/", async (c) => {
@@ -56,6 +62,7 @@ conversationsRoute.get("/", async (c) => {
       projectId: conversations.projectId,
       title: conversations.title,
       kind: conversations.kind,
+      repoPath: conversations.repoPath,
       model: conversations.model,
       pinned: conversations.pinned,
       memoryEnabled: conversations.memoryEnabled,
@@ -112,6 +119,7 @@ conversationsRoute.post(
         projectId: data.projectId,
         model: data.model,
         kind,
+        repoPath: data.repoPath ?? null,
         memoryEnabled,
         memorySnapshot: memorySnapshot || null,
         memorySnapshotAt: memorySnapshot ? new Date() : null,
@@ -162,10 +170,13 @@ conversationsRoute.patch(
       data.title !== undefined ||
       data.pinned !== undefined ||
       data.projectId !== undefined ||
-      data.memoryEnabled !== undefined;
+      data.memoryEnabled !== undefined ||
+      data.repoPath !== undefined;
     const patch: Record<string, unknown> = { ...data };
     if (!isMetadataOnly) patch.updatedAt = new Date();
     if (data.projectId === null) patch.projectId = null;
+    // Empty string clears the repo binding.
+    if (data.repoPath === null || data.repoPath === "") patch.repoPath = null;
 
     // Toggling memory ON — backfill the snapshot now so the next chat turn
     // has it ready without paying a memory-service round-trip on the hot

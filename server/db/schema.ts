@@ -95,6 +95,11 @@ export const conversations = pgTable(
     kind: text("kind", { enum: ["chat", "talk", "hermes"] })
       .notNull()
       .default("chat"),
+    // Optional repo binding (kind='hermes' only). Free-text path on the
+    // gateway host. When set, the chat route prepends a "working
+    // directory" preamble to the system prompt so Hermes operates inside
+    // the bound repo (git ops, edits, builds, tests).
+    repoPath: text("repo_path"),
     model: text("model"),
     pinned: boolean("pinned").notNull().default(false),
     // Memory wiki snapshot — frozen at creation (or on explicit "Remember

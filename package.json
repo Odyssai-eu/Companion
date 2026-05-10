@@ -1,6 +1,6 @@
 {
   "name": "@thecompai/app",
-  "version": "0.2.31",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "scripts": {

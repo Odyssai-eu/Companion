@@ -143,6 +143,7 @@ chatRoute.post("/completions", async (c) => {
   let projectId: string | null = null;
   let memoryBlock = "";
   let convKind: "chat" | "talk" | "hermes" = "chat";
+  let convRepoPath: string | null = null;
   if (body.conversationId) {
     try {
       const [conv] = await db
@@ -152,6 +153,7 @@ chatRoute.post("/completions", async (c) => {
           memorySnapshot: conversations.memorySnapshot,
           memoryEnabled: conversations.memoryEnabled,
           kind: conversations.kind,
+          repoPath: conversations.repoPath,
         })
         .from(conversations)
         .where(eq(conversations.id, body.conversationId))
@@ -159,6 +161,7 @@ chatRoute.post("/completions", async (c) => {
       if (conv && conv.userId === userId) {
         projectId = conv.projectId;
         convKind = conv.kind;
+        convRepoPath = conv.repoPath;
         // Memory toggle (per-conversation, inherited from project at creation):
         // when off, do not inject the wiki into the system prompt at all.
         if (conv.memoryEnabled === false) {
@@ -251,12 +254,24 @@ chatRoute.post("/completions", async (c) => {
     lastUserAt = stamp;
   }
 
-  // ── 5. Compose system prompt: user prompt + memory ───────────────────
+  // ── 5. Compose system prompt: user prompt + memory + repo binding ───
   const systemSegments: string[] = [];
   if (body.system_prompt && body.system_prompt.trim().length > 0) {
     systemSegments.push(body.system_prompt.trim());
   }
   if (memoryBlock.trim().length > 0) systemSegments.push(memoryBlock);
+  // Repo binding (kind='hermes' only). Tell the agent where to work —
+  // it's expected to `cd` there (or pass `cwd` to bash) before any
+  // filesystem / git / build operation. We don't enforce the path; if
+  // it doesn't exist Hermes will surface the failure and the user can
+  // correct it.
+  if (convKind === "hermes" && convRepoPath) {
+    systemSegments.push(
+      `# Working directory\n\nThis conversation is bound to the repo at: \`${convRepoPath}\`\n\n` +
+        `Operate inside that directory unless explicitly told otherwise. Use \`cd ${convRepoPath}\` ` +
+        `at the start of any bash command, or pass it as cwd to your tools.`,
+    );
+  }
   const composedSystem = systemSegments.join("\n\n---\n\n");
 
   const withSystem =

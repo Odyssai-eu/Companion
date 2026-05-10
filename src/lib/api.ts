@@ -39,6 +39,8 @@ export type ApiConversation = {
   /** 'chat' (text/multimodal), 'talk' (Voice Live), or 'hermes'
    *  (direct Hermes Agent gateway conversation). */
   kind: "chat" | "talk" | "hermes";
+  /** Optional repo binding (Hermes conversations). Path on the gateway host. */
+  repoPath: string | null;
   model: string | null;
   pinned: boolean;
   /** Memory wiki injection toggle for this conversation. Inherited from
@@ -283,6 +285,7 @@ export const api = {
     projectId?: string;
     model?: string;
     kind?: "chat" | "talk" | "hermes";
+    repoPath?: string;
   }) =>
     request<{ conversation: ApiConversation }>("/api/conversations", {
       method: "POST",
@@ -303,6 +306,38 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ memoryEnabled }),
     }),
+  setConversationRepoPath: (id: string, repoPath: string | null) =>
+    request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ repoPath: repoPath ?? null }),
+    }),
+
+  // Hermes Bridge (auxiliary git ops over the bound repo) ─────────────
+  hermesBridgeHealth: () =>
+    request<{ ok: boolean; bin?: string }>("/api/hermes-bridge/health"),
+  hermesBridgeGitStatus: (repoPath: string) =>
+    request<{
+      branch: string;
+      upstream: string | null;
+      ahead: number;
+      behind: number;
+      staged: string[];
+      modified: string[];
+      untracked: string[];
+      deleted: string[];
+      dirty: boolean;
+    }>(
+      `/api/hermes-bridge/git/status?repoPath=${encodeURIComponent(repoPath)}`,
+    ),
+  hermesBridgeGitDiff: (
+    repoPath: string,
+    opts: { staged?: boolean; path?: string } = {},
+  ) => {
+    const qs = new URLSearchParams({ repoPath });
+    if (opts.staged) qs.set("staged", "true");
+    if (opts.path) qs.set("path", opts.path);
+    return request<{ diff: string }>(`/api/hermes-bridge/git/diff?${qs.toString()}`);
+  },
   moveConversationToProject: (id: string, projectId: string | null) =>
     request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
       method: "PATCH",
