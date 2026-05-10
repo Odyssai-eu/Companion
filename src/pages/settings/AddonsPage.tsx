@@ -666,6 +666,23 @@ function TavilyPanel() {
   );
 }
 
+/**
+ * NousResearch hermes-agent ships a separate web Dashboard that exposes
+ * skills, sessions, model config, history. By convention it listens on
+ * port 9119 of the same host as the gateway. Derive its URL from the
+ * configured gateway URL by swapping the port — falls back to the host
+ * with :9119 if the user's gateway URL has no port.
+ */
+function dashboardUrl(gatewayUrl: string): string {
+  try {
+    const u = new URL(gatewayUrl);
+    u.port = "9119";
+    return u.toString();
+  } catch {
+    return "http://192.168.86.50:9119";
+  }
+}
+
 function HermesPanel() {
   type Info = Awaited<ReturnType<typeof api.hermesInfo>>;
   const [info, setInfo] = useState<Info | null>(null);
@@ -826,35 +843,43 @@ function HermesPanel() {
         >
           {busy ? "Saving…" : saved ? "✓ Saved" : "Save"}
         </button>
+        <a
+          href={dashboardUrl(info.gatewayUrl)}
+          target="_blank"
+          rel="noreferrer"
+          className="rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-ink hover:bg-gray-50"
+        >
+          Open Hermes Dashboard ↗
+        </a>
       </div>
 
       <details className="rounded-md border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-600">
         <summary className="cursor-pointer font-medium text-ink">
-          How Cluster Operations works
+          How Hermes works in TheCompAI
         </summary>
         <p className="mt-3 leading-relaxed">
-          Use this for actions that only your home cluster can perform —
-          searching your personal RAG corpus, generating images via ComfyUI,
-          reading from your local Obsidian vault, syncing files between nodes.
-          For workspace files within conversations, the agent uses its built-in{" "}
-          <code className="rounded bg-gray-100 px-1 font-mono">fs_*</code> tools
-          (no addon needed).
+          Click the <strong>Hermes</strong> button in the sidebar to start a
+          dedicated conversation that talks <em>directly</em> to your Hermes
+          Agent gateway. Hermes brings its own toolbox — every skill installed
+          in <code className="rounded bg-gray-100 px-1 font-mono">~/.hermes/skills/</code>{" "}
+          on the gateway host (Notion, Obsidian, ComfyUI, GitHub, browser, …)
+          plus shell access via the terminal toolset.
         </p>
         <p className="mt-3 leading-relaxed">
-          When enabled and configured with an API key, one tool appears in
-          tool-capable chats:
+          The agent loop can take 30s–3min per turn — that's intrinsic to
+          NousResearch hermes-agent. Streaming keeps the connection alive.
         </p>
-        <ul className="mt-2 list-disc space-y-1 pl-5">
-          <li>
-            <code className="rounded bg-gray-100 px-1 font-mono">cluster_action(task)</code>{" "}
-            — delegate a cluster-specific operation to your home server.
-            Hermes picks its internal tool and returns the final result.
-          </li>
-        </ul>
-        <p className="mt-3">
-          Tools and skills are managed inside Hermes itself (see the dashboard
-          on port 9119 of the gateway host). We just talk to the OpenAI-compat
-          chat completions endpoint.
+        <p className="mt-3 leading-relaxed">
+          Skill management, model defaults and session history live in the{" "}
+          <a
+            href={dashboardUrl(info.gatewayUrl)}
+            target="_blank"
+            rel="noreferrer"
+            className="text-cyan underline-offset-2 hover:underline"
+          >
+            Hermes Dashboard
+          </a>
+          . We don't duplicate it here.
         </p>
       </details>
 
