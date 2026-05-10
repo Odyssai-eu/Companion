@@ -184,10 +184,12 @@ chatRoute.post("/completions", async (c) => {
 
   // ── 3b. Hermes routing — swap inference target if this is a 'hermes'
   // conversation. We bypass LiteLLM and post directly to the Hermes Agent
-  // gateway. Hermes is OpenAI-compatible (POST /v1/chat/completions) but
-  // non-streaming, and runs its own tool layer — we'll force non-stream
-  // upstream and disable our tool injection further down.
+  // gateway. Hermes runs its own tool layer (obsidian-read, qdrant-search,
+  // …) so we suppress our memory injection AND our LiteLLM tool layer —
+  // double-feeding the wiki ballooned 'hello' into a 3-minute round trip
+  // because the agent re-processed all 45 articles on every turn.
   if (convKind === "hermes") {
+    memoryBlock = "";
     const hermes = await resolveHermesTarget(userId);
     if (!hermes) {
       return c.json(
