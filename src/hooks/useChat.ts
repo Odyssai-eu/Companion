@@ -223,6 +223,13 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       .then(({ conversation, messages: msgs }) => {
         setConversation(conversation);
         setMessages(msgs.map(toUIMessage));
+        // Hermes conversations have no model picker — pin the model state
+        // to 'hermes-agent' so sendMessage's "no model selected" guard
+        // doesn't silently swallow user input. The backend ignores this
+        // value anyway and substitutes the gateway's configured model.
+        if (conversation.kind === "hermes") {
+          setModel("hermes-agent");
+        }
         if (conversation.projectId) {
           api
             .getProject(conversation.projectId)
