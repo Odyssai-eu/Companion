@@ -98,7 +98,6 @@ function tick(): void {
   const now = nowInTz();
   for (const slot of SLOTS) {
     if (now.hour !== slot.h || now.minute !== slot.m) continue;
-    const key = `${slot.label}:${now.date}`;
     if (lastFiredDate.get(slot.label) === now.date) continue;
     lastFiredDate.set(slot.label, now.date);
     // Don't await — runSlot can be slow on a big user table.
