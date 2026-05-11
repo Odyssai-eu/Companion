@@ -26,7 +26,7 @@ import { conversations, users } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { incrementGuestUsage } from "../lib/guest-token";
 import { authHeaders } from "../lib/litellm";
-import { getMemoryContext } from "../lib/memory";
+import { getMemoryContext, triggerCompile } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
 import type { GuestTokenContext } from "../lib/guest-token";
 import {
@@ -144,6 +144,7 @@ chatRoute.post("/completions", async (c) => {
   let memoryBlock = "";
   let convKind: "chat" | "talk" | "hermes" = "chat";
   let convRepoPath: string | null = null;
+  let convMemoryEnabled = true;
   if (body.conversationId) {
     try {
       const [conv] = await db
@@ -162,6 +163,7 @@ chatRoute.post("/completions", async (c) => {
         projectId = conv.projectId;
         convKind = conv.kind;
         convRepoPath = conv.repoPath;
+        convMemoryEnabled = conv.memoryEnabled !== false;
         // Memory toggle (per-conversation, inherited from project at creation):
         // when off, do not inject the wiki into the system prompt at all.
         if (conv.memoryEnabled === false) {
@@ -618,6 +620,20 @@ chatRoute.post("/completions", async (c) => {
         await writer.close();
       } catch {
         // already closed
+      }
+      // Memory wiki refresh — fire-and-forget after the assistant has
+      // finished. Restricted to kind='chat' with memory enabled:
+      //   - Hermes convs use Hermes's own retrieval skills (no wiki).
+      //   - Talk convs are voice-only; wiki would race with the in-flight
+      //     transcript persistence.
+      //   - Guests don't compile to the owner's wiki.
+      if (
+        body.conversationId &&
+        convKind === "chat" &&
+        convMemoryEnabled &&
+        !guest
+      ) {
+        triggerCompile(userId, body.conversationId);
       }
     }
   })();
