@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { runMigrations } from "./db/migrate";
 import { ensureAdminExists, seedIfEmpty } from "./db/seed";
+import { startMemoryScheduler } from "./lib/memory-scheduler";
 import { requireUser, sessionLoader } from "./middleware/auth";
 import { guestSessionLoader, requireUserOrGuest } from "./middleware/guest";
 import { licenseGate } from "./middleware/license";
@@ -117,6 +118,7 @@ async function main() {
   await runMigrations();
   await seedIfEmpty();
   await ensureAdminExists();
+  startMemoryScheduler();
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`→ thecomp.ai api listening on :${info.port}`);
   });
