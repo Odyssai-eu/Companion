@@ -4,6 +4,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
 import { conversations, messages, projects, users } from "../db/schema";
+import {
+  clearInference,
+  getInferenceStatus,
+  listActiveForUser,
+} from "../lib/inference-state";
 import { authHeaders } from "../lib/litellm";
 import { compileNow, getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
@@ -145,7 +150,62 @@ conversationsRoute.get("/:id", async (c) => {
     .from(messages)
     .where(eq(messages.conversationId, id))
     .orderBy(asc(messages.createdAt));
-  return c.json({ conversation, messages: msgs });
+  // Inference state is opportunistic — the client uses it to render the
+  // in-flight assistant content when reopening a conv whose stream is
+  // still running server-side. Missing or finished → { active: false }.
+  const inference = getInferenceStatus(id, userId);
+  return c.json({ conversation, messages: msgs, inference });
+});
+
+/**
+ * Active streams across all the user's conversations. Drives the
+ * sidebar / NavBar parallel-stream indicator. Mounted before /:id so
+ * Hono's path-match doesn't capture "active" as a conv id.
+ */
+conversationsRoute.get("/active", async (c) => {
+  const userId = c.get("userId");
+  return c.json({ active: listActiveForUser(userId) });
+});
+
+/**
+ * Live state of an in-flight inference. Returns the buffered content +
+ * reasoning + done/error flags. Auth-gated via the userId stored INSIDE
+ * the inference entry — a foreign UUID returns { active: false }, not
+ * an error, so the client treats it the same as "no stream".
+ */
+conversationsRoute.get("/:id/inference", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  // Validate ownership of the conv itself too — defence in depth.
+  const [row] = await db
+    .select({ userId: conversations.userId })
+    .from(conversations)
+    .where(eq(conversations.id, id))
+    .limit(1);
+  if (!row || row.userId !== userId) {
+    return c.json({ active: false }, 404);
+  }
+  return c.json(getInferenceStatus(id, userId));
+});
+
+/**
+ * Drop the buffer entry. The chat route already drops it 60s after the
+ * stream completes, but the client can call this explicitly after it
+ * has consumed the final state to avoid showing stale "active" markers.
+ */
+conversationsRoute.post("/:id/inference/clear", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const [row] = await db
+    .select({ userId: conversations.userId })
+    .from(conversations)
+    .where(eq(conversations.id, id))
+    .limit(1);
+  if (!row || row.userId !== userId) {
+    return c.json({ ok: false }, 404);
+  }
+  clearInference(id, userId);
+  return c.json({ ok: true });
 });
 
 conversationsRoute.patch(

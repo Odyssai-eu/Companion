@@ -22,13 +22,21 @@
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db/index";
-import { conversations, users } from "../db/schema";
+import { conversations, messages, users } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { incrementGuestUsage } from "../lib/guest-token";
 import { authHeaders } from "../lib/litellm";
 import { getMemoryContext, triggerCompile } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
 import type { GuestTokenContext } from "../lib/guest-token";
+import {
+  appendInferenceContent,
+  deleteInference,
+  finishInference,
+  markInferenceError,
+  recordInferenceUsage,
+  startInference,
+} from "../lib/inference-state";
 import {
   executeTool,
   isHermesEnabled,
@@ -185,6 +193,14 @@ chatRoute.post("/completions", async (c) => {
     } catch (err) {
       console.warn("[chat] memory lookup failed:", (err as Error).message);
     }
+  }
+
+  // ── 3a. Inference-state buffer — open the server-side stream record so
+  // the user can navigate away / refresh / open the same conv from another
+  // tab and still get the live content via /api/conversations/:id/inference.
+  // No-op when there's no conversationId (rare — the frontend always has one).
+  if (body.conversationId) {
+    startInference(body.conversationId, userId);
   }
 
   // ── 3b. Hermes routing — kind='hermes' conversations talk DIRECTLY to
@@ -483,8 +499,8 @@ chatRoute.post("/completions", async (c) => {
 
         const { toolCalls, finishReason, assistantContent, usage, chunkCount } =
           useNonStream
-            ? await collectNonStream(upstream, writer, encoder)
-            : await pipeAndCollect(upstream, writer, encoder);
+            ? await collectNonStream(upstream, writer, encoder, body.conversationId)
+            : await pipeAndCollect(upstream, writer, encoder, body.conversationId);
         totalChunkCount += chunkCount;
         if (usage) {
           sawUpstreamUsage = true;
@@ -606,6 +622,7 @@ chatRoute.post("/completions", async (c) => {
       }
     } catch (err) {
       console.error("[chat] upstream pipe failed:", err);
+      if (body.conversationId) markInferenceError(body.conversationId, String(err));
       try {
         await writer.write(
           encoder.encode(`data: ${JSON.stringify({ error: String(err) })}\n\n`),
@@ -620,6 +637,52 @@ chatRoute.post("/completions", async (c) => {
         await writer.close();
       } catch {
         // already closed
+      }
+      // Mark the inference-state buffer done. The persist callback is the
+      // single source of assistant-message DB writes from now on — the
+      // client used to call api.appendMessage('assistant', …) on stream
+      // end, but Phase 2 of the inference-state port moves that here so
+      // the message lands even if the client disconnected mid-stream.
+      if (body.conversationId) {
+        const convIdLocal = body.conversationId;
+        await finishInference(convIdLocal, async (content, _reasoning, st) => {
+          const stats = sawUpstreamUsage
+            ? {
+                ttft: st.ttftMs !== null ? `${st.ttftMs}ms` : undefined,
+                tokens: st.promptTokens + st.completionTokens,
+                promptTokens: st.promptTokens,
+                completionTokens: st.completionTokens,
+                reasoningTokens: st.reasoningTokens,
+                chunks: totalChunkCount,
+                durationMs: st.totalMs,
+                speed:
+                  st.totalMs && st.completionTokens
+                    ? `${((st.completionTokens / st.totalMs) * 1000).toFixed(1)} tok/s`
+                    : undefined,
+              }
+            : { chunks: totalChunkCount, durationMs: st.totalMs };
+          try {
+            await db.insert(messages).values({
+              conversationId: convIdLocal,
+              role: "assistant",
+              content,
+              stats: stats as Record<string, unknown>,
+            });
+            await db
+              .update(conversations)
+              .set({ updatedAt: new Date() })
+              .where(eq(conversations.id, convIdLocal));
+          } catch (e) {
+            console.error(
+              "[chat] server-side assistant persist failed:",
+              (e as Error).message,
+            );
+          }
+        });
+        // Drop the buffer after a grace window so a late-arriving client
+        // can still see the final content via /inference. 60s is enough
+        // for a tab-switch / page-reload to catch up.
+        setTimeout(() => deleteInference(convIdLocal), 60_000);
       }
       // Memory wiki refresh — fire-and-forget after the assistant has
       // finished. Restricted to kind='chat' with memory enabled:
@@ -713,6 +776,10 @@ async function pipeAndCollect(
   upstream: Response,
   writer: WritableStreamDefaultWriter<Uint8Array>,
   encoder: TextEncoder,
+  /** When set, content deltas + usage are mirrored into the in-memory
+   *  inference-state buffer so /inference can serve them to disconnected
+   *  clients. Skip for routes that don't want the side effect. */
+  convId?: string,
 ): Promise<{
   toolCalls: AccumulatedToolCall[];
   finishReason: string | null;
@@ -785,12 +852,14 @@ async function pipeAndCollect(
               parsed.usage.output_tokens ||
               0,
           };
+          if (convId) recordInferenceUsage(convId, parsed.usage);
         }
         const choice = parsed.choices?.[0];
         if (!choice) continue;
         if (choice.delta?.content) {
           assistantContent += choice.delta.content;
           chunkCount += 1;
+          if (convId) appendInferenceContent(convId, choice.delta.content);
         }
         if (choice.delta?.tool_calls) {
           for (const tc of choice.delta.tool_calls) {
@@ -839,6 +908,10 @@ async function collectNonStream(
   upstream: Response,
   writer: WritableStreamDefaultWriter<Uint8Array>,
   encoder: TextEncoder,
+  /** Mirror content slices + usage into the inference-state buffer
+   *  so the polling endpoint can show progress to reconnecting clients
+   *  even while we're typewriter-slicing a non-stream upstream. */
+  convId?: string,
 ): Promise<{
   toolCalls: AccumulatedToolCall[];
   finishReason: string | null;
@@ -902,6 +975,7 @@ async function collectNonStream(
           0,
       }
     : null;
+  if (convId && parsed.usage) recordInferenceUsage(convId, parsed.usage);
 
   // Synthesise content as a series of small streamed chunks so the client
   // gets a typewriter effect even though we awaited the full upstream
@@ -927,6 +1001,7 @@ async function collectNonStream(
       await writer.write(
         encoder.encode(`data: ${JSON.stringify(synthChunk)}\n\n`),
       );
+      if (convId) appendInferenceContent(convId, piece);
       chunkCount++;
       // Skip the delay on the last slice — no need to add latency before
       // the finish chunk.

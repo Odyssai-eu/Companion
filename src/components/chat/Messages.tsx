@@ -359,7 +359,7 @@ function ToolCallsBlock({
   return (
     <div className="flex flex-col gap-1.5">
       {calls.map((c, i) => {
-        const argSummary = summarizeArgs(c.name, c.args);
+        const argSummary = summarizeArgs(c.name, c.args ?? {});
         const running = !c.result;
         return (
           <details

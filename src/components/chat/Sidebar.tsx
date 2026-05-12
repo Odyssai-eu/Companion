@@ -11,8 +11,11 @@ type Props = {
    *  project; when null, only orphan conversations (no project) are shown.
    *  This mirrors ExoScopy's behaviour. */
   activeProjectId: string | null;
-  /** Conversation currently streaming a reply, if any. */
-  streamingConversationId?: string | null;
+  /** Conversation ids currently streaming a reply (client-side OR
+   *  server-side). The row shows a small pulsing dot for each id present
+   *  in this set. Replaces the older single-conversation indicator —
+   *  parallel streams are first-class now. */
+  streamingIds?: Set<string>;
   /** Mobile drawer open/closed. Desktop ignores this. */
   mobileOpen?: boolean;
   onMobileClose?: () => void;
@@ -21,7 +24,7 @@ type Props = {
 export default function Sidebar({
   activeConversationId,
   activeProjectId,
-  streamingConversationId,
+  streamingIds,
   mobileOpen = false,
   onMobileClose,
 }: Props) {
@@ -257,7 +260,7 @@ export default function Sidebar({
                 key={c.id}
                 conversation={c}
                 active={c.id === activeConversationId}
-                streaming={c.id === streamingConversationId}
+                streaming={streamingIds?.has(c.id) ?? false}
                 projects={projectsList}
                 onRemove={(id) =>
                   setConversations((prev) => prev.filter((x) => x.id !== id))

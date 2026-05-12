@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import InferencePanel from "~/components/chat/InferencePanel";
 import Input from "~/components/chat/Input";
@@ -8,6 +8,7 @@ import Sidebar from "~/components/chat/Sidebar";
 import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
 import { STYLE_PRESETS, useChat } from "~/hooks/useChat";
 import type { ApiGlobalModel } from "~/lib/api";
+import { StreamManager } from "~/lib/stream-manager";
 
 /**
  * Filter the model list down to what the user can pick, given their
@@ -77,6 +78,37 @@ export default function ChatLayout() {
       .catch(() => setVoiceLiveAvailable(false));
   }, []);
 
+  // Union of client-side StreamManager active ids + server-side
+  // `/conversations/active` poll. Drives the per-row pulsing dot in the
+  // sidebar so the user can see at a glance which threads are mid-stream
+  // — including streams running in another tab on the same account.
+  const [clientActive, setClientActive] = useState<string[]>([]);
+  const [serverActive, setServerActive] = useState<string[]>([]);
+  useEffect(() => {
+    return StreamManager.onGlobal((ids) => setClientActive(ids));
+  }, []);
+  useEffect(() => {
+    let alive = true;
+    async function tick() {
+      try {
+        const r = await api.listActiveInferences();
+        if (alive) setServerActive(r.active);
+      } catch {
+        // ignore — UI just won't show server-side parallel dots
+      }
+    }
+    void tick();
+    const i = setInterval(tick, 4000);
+    return () => {
+      alive = false;
+      clearInterval(i);
+    };
+  }, []);
+  const streamingIds = useMemo(
+    () => new Set([...clientActive, ...serverActive]),
+    [clientActive, serverActive],
+  );
+
   // ExoScopy parity: collapse the drawer when the user picks a conversation,
   // and reset on viewport-crossing so desktop never inherits a stuck-open
   // drawer.
@@ -134,7 +166,7 @@ export default function ChatLayout() {
         // When at the root chat (no projectId on the loaded conversation), we
         // show only orphans.
         activeProjectId={chat.conversation?.projectId ?? null}
-        streamingConversationId={chat.sending ? id ?? null : null}
+        streamingIds={streamingIds}
         mobileOpen={mobileSidebarOpen}
         onMobileClose={() => setMobileSidebarOpen(false)}
       />

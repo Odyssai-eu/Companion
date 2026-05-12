@@ -7,10 +7,18 @@ import {
   type ApiMessage,
   type ApiProject,
 } from "~/lib/api";
-import { streamChat, type ChatMessage } from "~/lib/chat-stream";
-import { emitFileChanged } from "~/lib/file-events";
+import { type ChatMessage } from "~/lib/chat-stream";
 import { buildUserMessage, type Attachment } from "~/lib/file-attach";
 import { estimateCost as lookupCost } from "~/lib/model-pricing";
+import { StreamManager, type StreamEntry } from "~/lib/stream-manager";
+
+/** Stable id for the in-flight assistant placeholder. The subscribe
+ *  effect targets this id to patch content/reasoning/toolCalls as the
+ *  stream progresses. Once the stream finishes and the conv is reloaded
+ *  from DB, this placeholder is replaced by the real persisted message
+ *  (with its UUID + stats). One stream per conversation → one placeholder
+ *  per conversation → safe to share a constant. */
+const LIVE_ID = "__live__";
 
 export type InferenceParams = {
   temperature: number;
@@ -51,7 +59,10 @@ export const STYLE_PRESETS: Record<
 
 export type ToolCallRecord = {
   name: string;
-  args: Record<string, unknown>;
+  /** Args may be absent on intermediate states (e.g. tool_start before
+   *  the full arguments JSON has accumulated). The renderer should
+   *  treat undefined as an empty object. */
+  args?: Record<string, unknown>;
   /** Set once the tool finishes executing. */
   result?: {
     ok: boolean;
@@ -155,7 +166,6 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   }, []);
 
   const loadedIdRef = useRef<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const sendMessageRef = useRef<
     ((text: string, attachments?: Attachment[]) => Promise<void>) | null
   >(null);
@@ -207,7 +217,10 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load conversation when URL id changes
+  // Load conversation when URL id changes — 3-case dispatch (Starbase /
+  // ExoScopy pattern). The user can refresh, switch tab/conv, or open the
+  // same conv from another device; we recover the right state in all three
+  // cases.
   useEffect(() => {
     if (!conversationId) {
       setMessages([]);
@@ -218,16 +231,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     if (loadedIdRef.current === conversationId) return;
 
     loadedIdRef.current = conversationId;
-    let pollCancel: (() => void) | null = null;
+    let serverPollAbort: (() => void) | null = null;
+
     api
       .getConversation(conversationId)
-      .then(({ conversation, messages: msgs }) => {
+      .then(({ conversation, messages: msgs, inference }) => {
         setConversation(conversation);
-        setMessages(msgs.map(toUIMessage));
-        // Hermes conversations have no model picker — pin the model state
-        // so sendMessage's "no model selected" guard doesn't silently
-        // swallow user input. The backend ignores this value and uses
-        // the gateway's configured model.
         if (conversation.kind === "hermes") {
           setModel("hermes-agent");
         }
@@ -239,26 +248,138 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         } else {
           setProject(null);
         }
-        // Catch-up poll: if the conversation ends on a user message,
-        // there's likely an inference still running on the server
-        // (started in another tab / before navigation). Poll every 2s
-        // for up to 90s until an assistant reply lands in DB, then stop.
-        // Doesn't fire if sending=true (active stream in this hook).
-        const last = msgs[msgs.length - 1];
-        if (last && last.role === "user" && !sending) {
-          pollCancel = pollForAssistantReply(conversationId, (fresh) => {
-            // Only apply if we're still on this conversation.
-            if (loadedIdRef.current !== conversationId) return;
-            setMessages(fresh.messages.map(toUIMessage));
-            setConversation(fresh.conversation);
-          });
+
+        const clientStream = StreamManager.get(conversationId);
+        const dbMessages = msgs.map(toUIMessage);
+
+        if (clientStream && !clientStream.done) {
+          // CASE 1 — client-side stream still running (we never left, or
+          // came back during the pump). The subscribe effect below will
+          // keep patching. Mount the live placeholder fed by the current
+          // buffer so the user sees the in-flight content immediately.
+          setMessages([
+            ...dbMessages,
+            buildLivePlaceholder(clientStream, conversation.model ?? null),
+          ]);
+          setSending(true);
+        } else if (clientStream && clientStream.done) {
+          // CASE 2 — client-side stream finished while we were away. DB
+          // has the persisted message (Phase 2 server-side persist). Drop
+          // the in-memory entry.
+          setMessages(dbMessages);
+          StreamManager.cleanup(conversationId);
+          setSending(false);
+        } else if (inference && inference.active) {
+          // CASE 3 — no client stream, but the server is still pumping
+          // (typically: same conv opened from another tab/device, or this
+          // tab refreshed mid-stream). Render the server buffer + poll
+          // /:id/inference until done, then reload from DB.
+          setMessages([
+            ...dbMessages,
+            buildLivePlaceholderFromServer(
+              inference,
+              conversation.model ?? null,
+            ),
+          ]);
+          setSending(true);
+          serverPollAbort = pollServerInferenceUntilDone(
+            conversationId,
+            (latest) => {
+              if (loadedIdRef.current !== conversationId) return;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === LIVE_ID
+                    ? {
+                        ...m,
+                        content: latest.content,
+                        reasoning: latest.reasoning || undefined,
+                      }
+                    : m,
+                ),
+              );
+            },
+            async () => {
+              if (loadedIdRef.current !== conversationId) return;
+              try {
+                const fresh = await api.getConversation(conversationId);
+                setMessages(fresh.messages.map(toUIMessage));
+                setConversation(fresh.conversation);
+              } catch {
+                // ignore — UI will catch up on next conv reopen
+              }
+              setSending(false);
+              api
+                .clearInference(conversationId)
+                .catch(() => undefined);
+            },
+          );
+        } else {
+          // CASE 0 — no stream anywhere. Just show what's in DB.
+          setMessages(dbMessages);
+          setSending(false);
         }
       })
       .catch((e) => setError(e.message));
+
     return () => {
-      pollCancel?.();
+      serverPollAbort?.();
     };
-  }, [conversationId, sending]);
+    // sending intentionally excluded — we only want this effect on conv
+    // change. The subscribe effect tracks the live stream separately.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
+
+  // Subscribe to the active StreamManager entry for this conversation.
+  // Patches the LIVE_ID placeholder with content / reasoning / tool calls
+  // as the pump emits them. On done, reload from DB to pick up the real
+  // persisted assistant message (with its UUID, server-stamped stats)
+  // and drop the in-memory entry.
+  useEffect(() => {
+    if (!conversationId) return;
+    const cid = conversationId;
+    let alreadyHandledDone = false;
+    const unsub = StreamManager.subscribe(cid, (entry) => {
+      setMessages((prev) => {
+        const hasLive = prev.some((m) => m.id === LIVE_ID);
+        const liveMsg: UIMessage = {
+          id: LIVE_ID,
+          role: "assistant",
+          content: entry.content,
+          reasoning: entry.reasoning || undefined,
+          toolCalls:
+            entry.toolCalls.length > 0 ? entry.toolCalls : undefined,
+          streaming: !entry.done,
+          model: model ?? undefined,
+        };
+        if (hasLive) {
+          return prev.map((m) => (m.id === LIVE_ID ? liveMsg : m));
+        }
+        // Race: server stream still being subscribed to but our placeholder
+        // got dropped by a DB reload that arrived after the cleanup. Re-mount.
+        return [...prev, liveMsg];
+      });
+      if (entry.done && !alreadyHandledDone) {
+        alreadyHandledDone = true;
+        if (entry.error) setError(entry.error);
+        // Tiny delay so any final notify lands before we tear down.
+        setTimeout(async () => {
+          try {
+            const fresh = await api.getConversation(cid);
+            if (loadedIdRef.current === cid) {
+              setMessages(fresh.messages.map(toUIMessage));
+              setConversation(fresh.conversation);
+            }
+          } catch {
+            // ignore — old placeholder stays visible until next reopen
+          }
+          StreamManager.cleanup(cid);
+          api.clearInference(cid).catch(() => undefined);
+          setSending(false);
+        }, 300);
+      }
+    });
+    return unsub;
+  }, [conversationId, model]);
 
   // Prewarm the upstream KV cache when the user opens a conversation or
   // switches models. We fire a 1-token completion at the upstream with the
@@ -336,22 +457,28 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         content: built.persistText,
         createdAt: nowIso,
       };
-      const assistantId = crypto.randomUUID();
-      const placeholder: UIMessage = {
-        id: assistantId,
+
+      // Optimistic UI: user message + LIVE_ID placeholder. The placeholder
+      // is patched by the subscribe useEffect (below) as the StreamManager
+      // emits content / reasoning / tool_calls. Once the stream finishes,
+      // the conv is reloaded from DB which has the persisted message and
+      // overwrites this placeholder.
+      const livePlaceholder: UIMessage = {
+        id: LIVE_ID,
         role: "assistant",
         content: "",
         streaming: true,
         model,
       };
-
-      setMessages((prev) => [...prev, userMsg, placeholder]);
+      setMessages((prev) => [...prev, userMsg, livePlaceholder]);
       setSending(true);
 
       if (!conversationId) {
         navigate(`/c/${convId}`, { replace: true });
       }
 
+      // Persist user message immediately so a later /:id reload sees it
+      // even if this tab dies before the stream finishes.
       api
         .appendMessage(convId, {
           role: "user",
@@ -371,123 +498,22 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         { role: "user", content: built.content, createdAt: nowIso },
       ];
 
-      const controller = new AbortController();
-      abortRef.current = controller;
-
       const effectiveInference = inferenceToPayload(inference);
       if (project?.systemPrompt && project.systemPrompt.trim()) {
         effectiveInference.system_prompt = project.systemPrompt;
       }
 
-      let streamedContent = "";
-      let streamedReasoning = "";
-      let toolCalls: ToolCallRecord[] = [];
-
-      const result = await streamChat({
-        conversationId: convId ?? undefined,
+      // Fire the stream and return immediately. The pump runs inside
+      // StreamManager (singleton, survives this component's unmount). The
+      // subscribe useEffect catches every delta + the final done event,
+      // and the server-side inference-state module persists the assistant
+      // message to DB when the stream completes (chat.ts finally block).
+      StreamManager.startStream({
+        conversationId: convId,
         messages: convoForModel,
         model,
         inference: effectiveInference,
-        signal: controller.signal,
-        onDelta: (delta) => {
-          if (delta.type === "reasoning") {
-            streamedReasoning += delta.text;
-          } else if (delta.type === "content") {
-            streamedContent += delta.text;
-          } else if (delta.type === "tool_start") {
-            // Append placeholder records (result fills in on tool_done).
-            toolCalls = [
-              ...toolCalls,
-              ...delta.calls.map((c) => ({ name: c.name, args: c.args })),
-            ];
-          } else if (delta.type === "tool_done") {
-            // Match by ordinal — tool_start and tool_done arrive in order.
-            const startIdx = toolCalls.length - delta.calls.length;
-            toolCalls = toolCalls.map((tc, i) => {
-              const matchIdx = i - startIdx;
-              if (matchIdx < 0 || matchIdx >= delta.calls.length) return tc;
-              return { ...tc, result: delta.calls[matchIdx].result };
-            });
-          } else if (delta.type === "file_changed") {
-            // Notify any FilesPage / hook subscribed for live refresh.
-            emitFileChanged(delta.path);
-          }
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    content: streamedContent,
-                    reasoning: streamedReasoning || undefined,
-                    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-                  }
-                : m,
-            ),
-          );
-        },
       });
-
-      abortRef.current = null;
-      setSending(false);
-
-      const aborted = controller.signal.aborted;
-      const stats = result.ok
-        ? {
-            ttft:
-              result.ttftMs !== undefined ? `${result.ttftMs}ms` : undefined,
-            tokens: result.tokens,
-            promptTokens: result.promptTokens,
-            completionTokens: result.completionTokens,
-            reasoningTokens: result.reasoningTokens,
-            chunks: result.chunks,
-            durationMs: result.durationMs,
-            speed:
-              result.durationMs && (result.completionTokens ?? result.tokens)
-                ? `${(((result.completionTokens ?? result.tokens ?? 0) / result.durationMs) * 1000).toFixed(1)} tok/s`
-                : undefined,
-            cost: estimateCost(
-              model,
-              result.promptTokens,
-              result.completionTokens,
-            ),
-          }
-        : undefined;
-      const finalContent =
-        !result.ok && !streamedContent
-          ? aborted
-            ? "⏹ Stopped"
-            : `⚠︎ ${result.error ?? "Couldn't reach the engine."}`
-          : streamedContent;
-      const assistantCreatedAt = new Date().toISOString();
-      const finalAssistant: UIMessage = {
-        id: assistantId,
-        role: "assistant",
-        content: finalContent,
-        reasoning: streamedReasoning || undefined,
-        streaming: false,
-        model,
-        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-        stats,
-        createdAt: assistantCreatedAt,
-      };
-
-      setMessages((prev) =>
-        prev.map((m) => (m.id === assistantId ? finalAssistant : m)),
-      );
-
-      if (!result.ok) setError(result.error ?? null);
-
-      if (convId && finalContent) {
-        api
-          .appendMessage(convId, {
-            role: "assistant",
-            content: finalContent,
-            reasoning: streamedReasoning || undefined,
-            stats: stats as Record<string, unknown> | undefined,
-            createdAt: assistantCreatedAt,
-          })
-          .catch((e) => console.warn("persist assistant failed", e));
-      }
     },
     [
       conversation?.id,
@@ -504,8 +530,15 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   sendMessageRef.current = sendMessage;
 
   const cancel = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+    const cid = conversationId ?? conversation?.id;
+    if (cid) {
+      StreamManager.stop(cid);
+      // Also clear the server-side buffer so /inference returns
+      // { active: false } on the next poll. The chat.ts cleanup timeout
+      // (60s) would do it eventually but explicit clear is snappier.
+      api.clearInference(cid).catch(() => undefined);
+    }
+  }, [conversationId, conversation?.id]);
 
   const regenerate = useCallback(
     async (assistantId: string) => {
@@ -612,40 +645,97 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 }
 
 /**
- * Background catch-up poller for in-flight inferences.
- *
- * If the user navigates away mid-stream and comes back before the
- * assistant reply has been persisted, this re-fetches the conversation
- * every 2s for up to 90s until an assistant message appears at the tail
- * (or the conversation no longer ends on a user turn — meaning the
- * persist happened). Stops as soon as it sees fresh content.
- *
- * Returns a cancel function so the caller can abort when the
- * conversationId changes or the hook unmounts.
+ * Build a UIMessage placeholder fed by the current client-side stream
+ * entry. Used on conv reopen (CASE 1) so the user immediately sees the
+ * in-flight content before the subscribe effect kicks in for the next
+ * delta.
  */
-function pollForAssistantReply(
+function buildLivePlaceholder(
+  entry: StreamEntry,
+  fallbackModel: string | null,
+): UIMessage {
+  return {
+    id: LIVE_ID,
+    role: "assistant",
+    content: entry.content,
+    reasoning: entry.reasoning || undefined,
+    toolCalls: entry.toolCalls.length > 0 ? entry.toolCalls : undefined,
+    streaming: !entry.done,
+    model: fallbackModel ?? undefined,
+  };
+}
+
+/**
+ * Build a UIMessage placeholder fed by the server-side inference state
+ * (CASE 3 — we have no client stream but the server is pumping). The
+ * polling loop below patches `content` as new bytes arrive.
+ */
+function buildLivePlaceholderFromServer(
+  inf: {
+    active: boolean;
+    done: boolean;
+    content: string;
+    reasoning: string;
+    error: string | null;
+  },
+  fallbackModel: string | null,
+): UIMessage {
+  return {
+    id: LIVE_ID,
+    role: "assistant",
+    content: inf.content,
+    reasoning: inf.reasoning || undefined,
+    streaming: !inf.done,
+    model: fallbackModel ?? undefined,
+  };
+}
+
+/**
+ * Poll /:id/inference every second until `active === false`. Calls
+ * `onProgress` for each refresh with content, and `onDone` once when
+ * the server reports done so the caller can reload from DB. Cancellable.
+ *
+ * 5-min cap covers even slow Hermes loops; beyond that, the user almost
+ * certainly closed the tab and we stop wasting cycles.
+ */
+function pollServerInferenceUntilDone(
   conversationId: string,
-  onUpdate: (data: Awaited<ReturnType<typeof api.getConversation>>) => void,
+  onProgress: (latest: {
+    content: string;
+    reasoning: string;
+  }) => void,
+  onDone: () => void,
 ): () => void {
-  const INTERVAL_MS = 2_000;
-  const TIMEOUT_MS = 90_000;
+  const INTERVAL_MS = 1_000;
+  const TIMEOUT_MS = 5 * 60_000;
   let stopped = false;
+  let firedDone = false;
   const startedAt = Date.now();
 
   async function tick() {
     if (stopped) return;
     try {
-      const fresh = await api.getConversation(conversationId);
+      const r = await api.getInference(conversationId);
       if (stopped) return;
-      const last = fresh.messages[fresh.messages.length - 1];
-      if (last && last.role !== "user") {
-        // Assistant (or tool) reply persisted — push the refresh once and stop.
-        onUpdate(fresh);
+      if (r.active === false) {
+        if (!firedDone) {
+          firedDone = true;
+          onDone();
+        }
+        stopped = true;
+        return;
+      }
+      onProgress({ content: r.content, reasoning: r.reasoning });
+      if (r.done) {
+        if (!firedDone) {
+          firedDone = true;
+          onDone();
+        }
         stopped = true;
         return;
       }
     } catch {
-      // ignore — bridge / db transient; try again on next tick.
+      // ignore — transient
     }
     if (Date.now() - startedAt >= TIMEOUT_MS) {
       stopped = true;
@@ -671,23 +761,12 @@ function toUIMessage(m: ApiMessage): UIMessage {
   };
 }
 
-/**
- * Best-effort cost display string.
- * Looks up the static price table for known cloud model ids; otherwise
- * shows token count or "$0.00".
- */
-function estimateCost(
-  model: string,
-  prompt?: number,
-  completion?: number,
-): string {
-  if (prompt !== undefined && completion !== undefined) {
-    const cost = lookupCost(model, prompt, completion);
-    if (cost !== null) return `${cost}`;
-    return `${prompt + completion} tok`;
-  }
-  return "—";
-}
+// estimateCost helper removed — stats are now produced server-side
+// in chat.ts when the inference-state buffer commits the assistant
+// message. If we want the cost back as a display field, it should be
+// computed in the persist callback and stored alongside other stats.
+// `lookupCost` from model-pricing.ts is still available there.
+void lookupCost;
 
 function inferenceToPayload(i: InferenceParams) {
   return {
