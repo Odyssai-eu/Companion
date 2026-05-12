@@ -17,6 +17,13 @@ services:
       - "${HOST_PORT:-3000}:3000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      # Persistent orchestrator SSH keypair. Without this, every rebuild
+      # regenerates the key and every cluster node loses trust until the
+      # user re-runs ssh-setup on each. Bind mount (not a named volume)
+      # so the host can back it up, swap it, or read it for incident
+      # response without docker incantations.
+      - /var/lib/thecompai/orchestrator-ssh:/root/.thecompai
     depends_on:
       db:
         condition: service_healthy
