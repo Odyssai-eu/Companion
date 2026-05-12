@@ -218,6 +218,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     if (loadedIdRef.current === conversationId) return;
 
     loadedIdRef.current = conversationId;
+    let pollCancel: (() => void) | null = null;
     api
       .getConversation(conversationId)
       .then(({ conversation, messages: msgs }) => {
@@ -238,9 +239,26 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         } else {
           setProject(null);
         }
+        // Catch-up poll: if the conversation ends on a user message,
+        // there's likely an inference still running on the server
+        // (started in another tab / before navigation). Poll every 2s
+        // for up to 90s until an assistant reply lands in DB, then stop.
+        // Doesn't fire if sending=true (active stream in this hook).
+        const last = msgs[msgs.length - 1];
+        if (last && last.role === "user" && !sending) {
+          pollCancel = pollForAssistantReply(conversationId, (fresh) => {
+            // Only apply if we're still on this conversation.
+            if (loadedIdRef.current !== conversationId) return;
+            setMessages(fresh.messages.map(toUIMessage));
+            setConversation(fresh.conversation);
+          });
+        }
       })
       .catch((e) => setError(e.message));
-  }, [conversationId]);
+    return () => {
+      pollCancel?.();
+    };
+  }, [conversationId, sending]);
 
   // Prewarm the upstream KV cache when the user opens a conversation or
   // switches models. We fire a 1-token completion at the upstream with the
@@ -590,6 +608,55 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     startNew,
     toggleMemoryEnabled,
     reload,
+  };
+}
+
+/**
+ * Background catch-up poller for in-flight inferences.
+ *
+ * If the user navigates away mid-stream and comes back before the
+ * assistant reply has been persisted, this re-fetches the conversation
+ * every 2s for up to 90s until an assistant message appears at the tail
+ * (or the conversation no longer ends on a user turn — meaning the
+ * persist happened). Stops as soon as it sees fresh content.
+ *
+ * Returns a cancel function so the caller can abort when the
+ * conversationId changes or the hook unmounts.
+ */
+function pollForAssistantReply(
+  conversationId: string,
+  onUpdate: (data: Awaited<ReturnType<typeof api.getConversation>>) => void,
+): () => void {
+  const INTERVAL_MS = 2_000;
+  const TIMEOUT_MS = 90_000;
+  let stopped = false;
+  const startedAt = Date.now();
+
+  async function tick() {
+    if (stopped) return;
+    try {
+      const fresh = await api.getConversation(conversationId);
+      if (stopped) return;
+      const last = fresh.messages[fresh.messages.length - 1];
+      if (last && last.role !== "user") {
+        // Assistant (or tool) reply persisted — push the refresh once and stop.
+        onUpdate(fresh);
+        stopped = true;
+        return;
+      }
+    } catch {
+      // ignore — bridge / db transient; try again on next tick.
+    }
+    if (Date.now() - startedAt >= TIMEOUT_MS) {
+      stopped = true;
+      return;
+    }
+    setTimeout(tick, INTERVAL_MS);
+  }
+  setTimeout(tick, INTERVAL_MS);
+
+  return () => {
+    stopped = true;
   };
 }
 
