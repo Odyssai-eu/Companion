@@ -4,12 +4,12 @@ import ChatLayout from "./layouts/ChatLayout";
 import SettingsLayout from "./layouts/SettingsLayout";
 import LoginPage from "./pages/auth/LoginPage";
 import SignupPage from "./pages/auth/SignupPage";
-import AdminExtPage from "./pages/AdminExtPage";
 import FilesPage from "./pages/FilesPage";
 import GuestEntry from "./pages/GuestEntry";
 import ProjectPage from "./pages/ProjectPage";
 import AccessibilityPage from "./pages/settings/AccessibilityPage";
 import AddonsPage from "./pages/settings/AddonsPage";
+import AdminPage from "./pages/settings/AdminPage";
 import AppearancePage from "./pages/settings/AppearancePage";
 import ComingSoonPage from "./pages/settings/ComingSoonPage";
 import DevicesPage from "./pages/settings/DevicesPage";
@@ -26,14 +26,9 @@ export default function App() {
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/g/:token" element={<GuestEntry />} />
 
-      <Route
-        path="/admin"
-        element={
-          <ProtectedRoute>
-            <AdminExtPage />
-          </ProtectedRoute>
-        }
-      />
+      {/* /admin → /settings/admin permanent redirect (Admin Extended
+       *  consolidated into Settings → Preferences in May 2026). */}
+      <Route path="/admin" element={<Navigate to="/settings/admin" replace />} />
 
       <Route
         path="/"
@@ -91,6 +86,7 @@ export default function App() {
         <Route path="accessibility" element={<AccessibilityPage />} />
         <Route path="shortcuts" element={<ShortcutsPage />} />
         <Route path="add-ons" element={<AddonsPage />} />
+        <Route path="admin" element={<AdminPage />} />
         <Route path="help" element={<HelpPage />} />
       </Route>
 

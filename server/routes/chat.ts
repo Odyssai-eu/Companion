@@ -22,11 +22,12 @@
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db/index";
-import { conversations, messages, users } from "../db/schema";
+import { conversations, messages, projects, users } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { incrementGuestUsage } from "../lib/guest-token";
 import { authHeaders } from "../lib/litellm";
 import { getMemoryContext, triggerCompile } from "../lib/memory";
+import { getProjectMemoryContext } from "../lib/project-memory";
 import { buildTag } from "../lib/timetag";
 import type { GuestTokenContext } from "../lib/guest-token";
 import {
@@ -152,6 +153,11 @@ chatRoute.post("/completions", async (c) => {
   let memoryBlock = "";
   let convKind: "chat" | "talk" | "hermes" = "chat";
   let convRepoPath: string | null = null;
+  // Project-level memory toggles. When the conv belongs to a project,
+  // we pull these from `projects` and use them to gate global-wiki
+  // injection AND the post-turn triggerCompile.
+  let projectGlobalReadOnly = false;
+  let projectDedicatedMemoryEnabled = false;
   let convMemoryEnabled = true;
   if (body.conversationId) {
     try {
@@ -172,22 +178,63 @@ chatRoute.post("/completions", async (c) => {
         convKind = conv.kind;
         convRepoPath = conv.repoPath;
         convMemoryEnabled = conv.memoryEnabled !== false;
-        // Memory toggle (per-conversation, inherited from project at creation):
-        // when off, do not inject the wiki into the system prompt at all.
         if (conv.memoryEnabled === false) {
           memoryBlock = "";
-        } else if (conv.memorySnapshot != null) {
-          memoryBlock = conv.memorySnapshot;
         } else {
-          // Lazy backfill — fetch once, persist, reuse from now on.
-          memoryBlock = await getMemoryContext(userId, projectId);
-          await db
-            .update(conversations)
-            .set({
-              memorySnapshot: memoryBlock || null,
-              memorySnapshotAt: memoryBlock ? new Date() : null,
-            })
-            .where(eq(conversations.id, body.conversationId));
+          // Resolve project memory flags (only meaningful when the conv
+          // belongs to a project). Out-of-project convs use the legacy
+          // global-wiki behaviour with no project-specific corpus.
+          let dedicated = false;
+          let globalReadOnly = false;
+          if (projectId) {
+            const [proj] = await db
+              .select({
+                dedicatedMemoryEnabled: projects.dedicatedMemoryEnabled,
+                globalMemoryReadOnly: projects.globalMemoryReadOnly,
+              })
+              .from(projects)
+              .where(eq(projects.id, projectId))
+              .limit(1);
+            if (proj) {
+              dedicated = proj.dedicatedMemoryEnabled;
+              globalReadOnly = proj.globalMemoryReadOnly;
+              projectGlobalReadOnly = globalReadOnly;
+              projectDedicatedMemoryEnabled = dedicated;
+            }
+          }
+          // Project memory corpus (live — recomputed each turn so newly
+          // imported vault files show up immediately). KV cache hits on
+          // the global snapshot + history; project corpus updates DO
+          // invalidate the prefix on file change, accepted trade-off.
+          const projectMemory =
+            projectId && dedicated
+              ? await getProjectMemoryContext(projectId)
+              : "";
+          // Global wiki: include when EITHER read-only is true (explicit
+          // opt-in) OR there's no dedicated mode at all (legacy behaviour
+          // for convs that just want the user wiki).
+          const includeGlobal = !dedicated || globalReadOnly;
+          let globalBlock = "";
+          if (includeGlobal) {
+            if (conv.memorySnapshot != null) {
+              globalBlock = conv.memorySnapshot;
+            } else {
+              globalBlock = await getMemoryContext(userId, projectId);
+              await db
+                .update(conversations)
+                .set({
+                  memorySnapshot: globalBlock || null,
+                  memorySnapshotAt: globalBlock ? new Date() : null,
+                })
+                .where(eq(conversations.id, body.conversationId));
+            }
+          }
+          // Compose: project corpus first (smaller, project-specific),
+          // global wiki second (general background). Empty segments are
+          // dropped.
+          memoryBlock = [projectMemory, globalBlock]
+            .filter((s) => s.trim().length > 0)
+            .join("\n\n---\n\n");
         }
       }
     } catch (err) {
@@ -690,11 +737,20 @@ chatRoute.post("/completions", async (c) => {
       //   - Talk convs are voice-only; wiki would race with the in-flight
       //     transcript persistence.
       //   - Guests don't compile to the owner's wiki.
+      // Memory wiki refresh — fire-and-forget. Suppressed when:
+      //  - the conv kind isn't 'chat' (Hermes/Talk handle their own context)
+      //  - the conv's memoryEnabled is off
+      //  - the conv is a guest session (don't pollute the owner's wiki)
+      //  - the project has globalMemoryReadOnly = true (explicit opt-out)
+      //  - the project has dedicatedMemoryEnabled = true (writes belong
+      //    to the project corpus, not the global wiki)
       if (
         body.conversationId &&
         convKind === "chat" &&
         convMemoryEnabled &&
-        !guest
+        !guest &&
+        !projectGlobalReadOnly &&
+        !projectDedicatedMemoryEnabled
       ) {
         triggerCompile(userId, body.conversationId);
       }

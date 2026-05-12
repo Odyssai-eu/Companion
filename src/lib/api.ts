@@ -59,10 +59,30 @@ export type ApiProject = {
   icon: string | null;
   systemPrompt: string | null;
   instructions: string | null;
-  /** Default for new conversations under this project. */
+  /** Master memory switch — when false, NO memory is injected for this
+   *  project's conversations regardless of the two flags below. */
   memoryEnabled: boolean;
+  /** When true, the project's own corpus (`project_memory_files`) is
+   *  injected. Independent from the global user wiki. */
+  dedicatedMemoryEnabled: boolean;
+  /** When true, the global user wiki is included read-only. Per-turn
+   *  triggerCompile is suppressed so this project doesn't write back. */
+  globalMemoryReadOnly: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ApiProjectMemoryFile = {
+  path: string;
+  mimeType: string;
+  sizeBytes: number;
+  updatedAt: string;
+};
+
+export type ApiProjectMemoryStats = {
+  fileCount: number;
+  bytesUsed: number;
+  bytesQuota: number;
 };
 
 export type ApiAddon = {
@@ -517,6 +537,8 @@ export const api = {
     systemPrompt?: string;
     instructions?: string;
     memoryEnabled?: boolean;
+    dedicatedMemoryEnabled?: boolean;
+    globalMemoryReadOnly?: boolean;
   }) =>
     request<{ project: ApiProject }>("/api/projects", {
       method: "POST",
@@ -530,6 +552,8 @@ export const api = {
       systemPrompt: string | null;
       instructions: string | null;
       memoryEnabled: boolean;
+      dedicatedMemoryEnabled: boolean;
+      globalMemoryReadOnly: boolean;
     }>,
   ) =>
     request<{ project: ApiProject }>(`/api/projects/${id}`, {
@@ -538,6 +562,57 @@ export const api = {
     }),
   deleteProject: (id: string) =>
     request<void>(`/api/projects/${id}`, { method: "DELETE" }),
+
+  // Project memory (per-project vault corpus) ──────────────────────────
+  listProjectMemory: (id: string) =>
+    request<{
+      files: ApiProjectMemoryFile[];
+      stats: ApiProjectMemoryStats;
+    }>(`/api/projects/${id}/memory`),
+  putProjectMemoryFile: (
+    id: string,
+    body: { path: string; content: string; mimeType?: string },
+  ) =>
+    request<{ ok: boolean; path: string }>(
+      `/api/projects/${id}/memory/files`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  importProjectMemoryFromZip: async (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`/api/projects/${id}/memory/import`, {
+      method: "POST",
+      body: form,
+      credentials: "same-origin",
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new ApiError(res.status, `${res.status} ${detail}`);
+    }
+    return res.json() as Promise<{
+      imported: Array<{ path: string; bytes: number }>;
+      skipped: Array<{ path: string; reason: string }>;
+      bytesUsed: number;
+      bytesQuota: number;
+    }>;
+  },
+  importProjectMemoryFromPath: (id: string, path: string) =>
+    request<{
+      imported: Array<{ path: string; bytes: number }>;
+      skipped: Array<{ path: string; reason: string }>;
+      bytesUsed: number;
+      bytesQuota: number;
+    }>(`/api/projects/${id}/memory/external`, {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  deleteProjectMemoryFile: (id: string, path: string) =>
+    request<void>(
+      `/api/projects/${id}/memory/file?path=${encodeURIComponent(path)}`,
+      { method: "DELETE" },
+    ),
+  wipeProjectMemory: (id: string) =>
+    request<void>(`/api/projects/${id}/memory`, { method: "DELETE" }),
 
   // Add-ons
   listAddons: () =>

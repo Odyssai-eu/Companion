@@ -53,6 +53,8 @@ const createSchema = z.object({
   systemPrompt: z.string().max(64000).optional(),
   instructions: z.string().max(64000).optional(),
   memoryEnabled: z.boolean().optional(),
+  dedicatedMemoryEnabled: z.boolean().optional(),
+  globalMemoryReadOnly: z.boolean().optional(),
 });
 
 const updateSchema = z.object({
@@ -61,6 +63,8 @@ const updateSchema = z.object({
   systemPrompt: z.string().max(64000).nullish(),
   instructions: z.string().max(64000).nullish(),
   memoryEnabled: z.boolean().optional(),
+  dedicatedMemoryEnabled: z.boolean().optional(),
+  globalMemoryReadOnly: z.boolean().optional(),
 });
 
 function iconForCategory(id: string): string | null {
@@ -141,6 +145,10 @@ projectsRoute.patch(
     if (data.instructions !== undefined)
       patch.instructions = data.instructions ?? null;
     if (data.memoryEnabled !== undefined) patch.memoryEnabled = data.memoryEnabled;
+    if (data.dedicatedMemoryEnabled !== undefined)
+      patch.dedicatedMemoryEnabled = data.dedicatedMemoryEnabled;
+    if (data.globalMemoryReadOnly !== undefined)
+      patch.globalMemoryReadOnly = data.globalMemoryReadOnly;
     const [updated] = await db
       .update(projects)
       .set(patch)

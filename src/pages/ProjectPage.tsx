@@ -7,6 +7,8 @@ import {
   type ApiConversation,
   type ApiProject,
   type ApiProjectCategory,
+  type ApiProjectMemoryFile,
+  type ApiProjectMemoryStats,
 } from "~/lib/api";
 
 export default function ProjectPage() {
@@ -23,6 +25,8 @@ export default function ProjectPage() {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [instructions, setInstructions] = useState("");
   const [memoryEnabled, setMemoryEnabled] = useState(true);
+  const [dedicatedMemoryEnabled, setDedicatedMemoryEnabled] = useState(false);
+  const [globalMemoryReadOnly, setGlobalMemoryReadOnly] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -40,6 +44,8 @@ export default function ProjectPage() {
       setSystemPrompt("");
       setInstructions("");
       setMemoryEnabled(true);
+      setDedicatedMemoryEnabled(false);
+      setGlobalMemoryReadOnly(false);
       return;
     }
     if (!id) return;
@@ -52,6 +58,8 @@ export default function ProjectPage() {
         setSystemPrompt(p.project.systemPrompt ?? "");
         setInstructions(p.project.instructions ?? "");
         setMemoryEnabled(p.project.memoryEnabled ?? true);
+        setDedicatedMemoryEnabled(p.project.dedicatedMemoryEnabled ?? false);
+        setGlobalMemoryReadOnly(p.project.globalMemoryReadOnly ?? false);
         setConversations(c.conversations.filter((x) => x.projectId === id));
       })
       .catch((e) => setError((e as Error).message));
@@ -81,6 +89,8 @@ export default function ProjectPage() {
           systemPrompt,
           instructions,
           memoryEnabled,
+          dedicatedMemoryEnabled,
+          globalMemoryReadOnly,
         });
         navigate(`/projects/${project.id}`, { replace: true });
       } else if (id) {
@@ -90,6 +100,8 @@ export default function ProjectPage() {
           systemPrompt,
           instructions,
           memoryEnabled,
+          dedicatedMemoryEnabled,
+          globalMemoryReadOnly,
         });
         setProject(project);
       }
@@ -282,42 +294,49 @@ export default function ProjectPage() {
 
             <Field
               label="Memory"
-              hint="When ON, every new conversation in this project starts with your memory wiki injected into the system prompt. Each conversation can still flip its own toggle from the chat header. Turn OFF if this project deals with sensitive context that shouldn't bleed into your wiki — or if you simply want a clean slate."
+              hint="Three composable toggles. Master OFF means no memory at all. Dedicated ON injects the project's own vault corpus. Global read-only includes the user wiki without writing back to it."
             >
-              <button
-                type="button"
-                role="switch"
-                aria-checked={memoryEnabled}
-                onClick={() => setMemoryEnabled((v) => !v)}
-                className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-3 transition-colors ${
-                  memoryEnabled
-                    ? "border-cyan bg-[rgba(79,179,217,0.06)]"
-                    : "border-gray-200 bg-white hover:bg-gray-50"
-                }`}
-              >
-                <span className="flex flex-col gap-0.5 text-left">
-                  <span className="text-[13px] font-medium text-ink">
-                    Memory injection {memoryEnabled ? "ON" : "OFF"}
-                  </span>
-                  <span className="text-[12px] text-gray-500">
-                    {memoryEnabled
-                      ? "Wiki snapshot is loaded into every new conversation here."
-                      : "New conversations start with no wiki context."}
-                  </span>
-                </span>
-                <span
-                  className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${
-                    memoryEnabled ? "bg-cyan" : "bg-gray-300"
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-[left] ${
-                      memoryEnabled ? "left-[22px]" : "left-0.5"
-                    }`}
-                  />
-                </span>
-              </button>
+              <div className="flex flex-col gap-2">
+                <MemoryToggle
+                  label={`Memory injection ${memoryEnabled ? "ON" : "OFF"}`}
+                  description={
+                    memoryEnabled
+                      ? "Memory is injected. The two sub-toggles below pick which sources."
+                      : "Nothing memory-related is sent to the model for any conversation here."
+                  }
+                  value={memoryEnabled}
+                  onChange={setMemoryEnabled}
+                />
+                <MemoryToggle
+                  label={`Dedicated project memory ${dedicatedMemoryEnabled ? "ON" : "OFF"}`}
+                  description={
+                    dedicatedMemoryEnabled
+                      ? "The project's imported vault is concatenated into the system prompt (size-capped)."
+                      : "No project corpus is injected."
+                  }
+                  value={dedicatedMemoryEnabled}
+                  onChange={setDedicatedMemoryEnabled}
+                  disabled={!memoryEnabled}
+                />
+                <MemoryToggle
+                  label={`Global memory read-only ${globalMemoryReadOnly ? "ON" : "OFF"}`}
+                  description={
+                    globalMemoryReadOnly
+                      ? "Global user wiki is included for context, but this project doesn't write back to it."
+                      : dedicatedMemoryEnabled
+                        ? "Global wiki is NOT included — only the dedicated project memory is used."
+                        : "Default — global wiki is included AND updated by this project's conversations."
+                  }
+                  value={globalMemoryReadOnly}
+                  onChange={setGlobalMemoryReadOnly}
+                  disabled={!memoryEnabled}
+                />
+              </div>
             </Field>
+
+            {!isNew && id && (dedicatedMemoryEnabled || memoryEnabled) && (
+              <ProjectMemoryPanel projectId={id} disabled={!memoryEnabled} />
+            )}
 
             <div className="flex items-center justify-between gap-3 pt-2">
               {!isNew && (
@@ -391,4 +410,294 @@ function categoryIcon(
   id: string,
 ): string {
   return cats.find((c) => c.id === id)?.icon ?? "📁";
+}
+
+/**
+ * Compact toggle row used inside the Memory Field. Three of these stack
+ * to expose the master / dedicated / read-only flags. The `disabled`
+ * prop is used to grey out the two sub-toggles when the master is off
+ * — they keep their stored value in DB but the user can't accidentally
+ * flip them while the master is closed.
+ */
+function MemoryToggle({
+  label,
+  description,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  description: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={value}
+      onClick={() => !disabled && onChange(!value)}
+      disabled={disabled}
+      className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-3 transition-colors ${
+        disabled
+          ? "border-gray-200 bg-gray-50 opacity-60"
+          : value
+            ? "border-cyan bg-[rgba(79,179,217,0.06)]"
+            : "border-gray-200 bg-white hover:bg-gray-50"
+      }`}
+    >
+      <span className="flex flex-col gap-0.5 text-left">
+        <span className="text-[13px] font-medium text-ink">{label}</span>
+        <span className="text-[12px] text-gray-500">{description}</span>
+      </span>
+      <span
+        className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${
+          value && !disabled ? "bg-cyan" : "bg-gray-300"
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-[left] ${
+            value ? "left-[22px]" : "left-0.5"
+          }`}
+        />
+      </span>
+    </button>
+  );
+}
+
+/**
+ * Vault corpus panel: lists imported files, shows quota usage, and
+ * exposes the two import paths (ZIP upload + external filesystem path).
+ * Mounted only when the project exists (no point in importing into a
+ * non-existent project) and memory is enabled.
+ */
+function ProjectMemoryPanel({
+  projectId,
+  disabled,
+}: {
+  projectId: string;
+  disabled?: boolean;
+}) {
+  const [files, setFiles] = useState<ApiProjectMemoryFile[] | null>(null);
+  const [stats, setStats] = useState<ApiProjectMemoryStats | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [externalPath, setExternalPath] = useState("");
+  const [lastImport, setLastImport] = useState<{
+    imported: number;
+    skipped: Array<{ path: string; reason: string }>;
+  } | null>(null);
+
+  async function refresh() {
+    try {
+      const r = await api.listProjectMemory(projectId);
+      setFiles(r.files);
+      setStats(r.stats);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  async function importZip(file: File) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.importProjectMemoryFromZip(projectId, file);
+      setLastImport({ imported: r.imported.length, skipped: r.skipped });
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importPath() {
+    if (!externalPath.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.importProjectMemoryFromPath(
+        projectId,
+        externalPath.trim(),
+      );
+      setLastImport({ imported: r.imported.length, skipped: r.skipped });
+      setExternalPath("");
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeFile(path: string) {
+    if (!confirm(`Remove ${path} from the project corpus?`)) return;
+    try {
+      await api.deleteProjectMemoryFile(projectId, path);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  async function wipeAll() {
+    if (!confirm("Wipe the entire project memory corpus? This can't be undone."))
+      return;
+    try {
+      await api.wipeProjectMemory(projectId);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  return (
+    <div
+      className={`flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4 ${
+        disabled ? "opacity-60" : ""
+      }`}
+    >
+      <header className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-[14px] font-medium text-ink">Project vault</h3>
+          <p className="text-[12px] text-gray-500">
+            Files imported here are injected into every conversation in this
+            project when "Dedicated project memory" is ON.
+          </p>
+        </div>
+        {stats && (
+          <span className="font-mono text-[11px] text-gray-500">
+            {stats.fileCount} file{stats.fileCount === 1 ? "" : "s"} ·{" "}
+            {(stats.bytesUsed / 1024).toFixed(1)} /{" "}
+            {(stats.bytesQuota / 1024 / 1024).toFixed(0)} MB
+          </span>
+        )}
+      </header>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <label className="flex flex-col gap-1.5 rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 py-3 hover:bg-gray-100">
+          <span className="text-[12px] font-medium text-ink">Upload ZIP</span>
+          <span className="text-[11px] text-gray-500">
+            .md / .txt / .json / .yaml inside the zip. Folders preserved.
+          </span>
+          <input
+            type="file"
+            accept=".zip,application/zip"
+            disabled={busy || disabled}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void importZip(f);
+              e.target.value = "";
+            }}
+            className="text-[11px] file:mr-2 file:rounded file:border-0 file:bg-navy file:px-2 file:py-1 file:text-white"
+          />
+        </label>
+        <div className="flex flex-col gap-1.5 rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 py-3">
+          <span className="text-[12px] font-medium text-ink">
+            Import from server path
+          </span>
+          <span className="text-[11px] text-gray-500">
+            Absolute path on the server. Walks recursively, picks up
+            accepted extensions.
+          </span>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={externalPath}
+              onChange={(e) => setExternalPath(e.target.value)}
+              placeholder="/Users/admin/vault"
+              disabled={busy || disabled}
+              className="flex-1 rounded border border-gray-200 bg-white px-2 py-1 font-mono text-[11px]"
+            />
+            <button
+              type="button"
+              onClick={importPath}
+              disabled={busy || disabled || !externalPath.trim()}
+              className="rounded bg-navy px-3 py-1 text-[11px] font-medium text-white hover:opacity-95 disabled:opacity-40"
+            >
+              Import
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {lastImport && (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
+          Imported {lastImport.imported} file
+          {lastImport.imported === 1 ? "" : "s"}
+          {lastImport.skipped.length > 0 && (
+            <>
+              {" — "}
+              {lastImport.skipped.length} skipped (
+              {Array.from(
+                new Set(lastImport.skipped.map((s) => s.reason)),
+              ).join(", ")}
+              )
+            </>
+          )}
+          .
+        </div>
+      )}
+
+      {err && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 font-mono text-[11px] text-red-700">
+          {err}
+        </div>
+      )}
+
+      {files && files.length > 0 && (
+        <div className="rounded-md border border-gray-200 bg-white">
+          <table className="w-full text-[12px]">
+            <thead className="bg-gray-50 text-[10px] uppercase tracking-[0.06em] text-gray-500">
+              <tr>
+                <th className="px-3 py-1.5 text-left font-medium">Path</th>
+                <th className="px-3 py-1.5 text-right font-medium">Size</th>
+                <th className="px-3 py-1.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {files.map((f) => (
+                <tr key={f.path} className="border-t border-gray-100">
+                  <td className="px-3 py-1.5 font-mono">{f.path}</td>
+                  <td className="px-3 py-1.5 text-right font-mono text-gray-500">
+                    {(f.sizeBytes / 1024).toFixed(1)} KB
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => removeFile(f.path)}
+                      disabled={busy || disabled}
+                      className="text-[11px] text-red-500 hover:text-red-700"
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {files && files.length > 0 && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={wipeAll}
+            disabled={busy || disabled}
+            className="text-[11px] text-red-500 hover:text-red-700"
+          >
+            Wipe entire corpus
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }

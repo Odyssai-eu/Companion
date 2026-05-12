@@ -57,10 +57,22 @@ export const projects = pgTable(
     icon: text("icon"),
     systemPrompt: text("system_prompt"),
     instructions: text("instructions"),
-    // Default for new conversations created under this project. The
-    // conversation can override it. When false, no memory wiki is read,
-    // injected, or written for any conversation in this project.
+    // Master switch — when false, NO memory is injected for this project.
     memoryEnabled: boolean("memory_enabled").notNull().default(true),
+    // When true, the project's own corpus (project_memory_files) is
+    // injected into the system prompt. Independent from the global user
+    // wiki — turning this on does NOT include global. Turning both on
+    // composes (project corpus + read-only global).
+    dedicatedMemoryEnabled: boolean("dedicated_memory_enabled")
+      .notNull()
+      .default(false),
+    // When true, the global user wiki is included but conversations in
+    // this project do NOT trigger updates to it (triggerCompile is
+    // suppressed). Use for projects that should benefit from prior
+    // wisdom without polluting it.
+    globalMemoryReadOnly: boolean("global_memory_read_only")
+      .notNull()
+      .default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
@@ -75,6 +87,38 @@ export const projects = pgTable(
     ),
   }),
 );
+
+/**
+ * Per-project memory corpus. Files imported via vault upload land here
+ * and get injected (raw, concatenated, size-capped) into the system
+ * prompt when projects.dedicatedMemoryEnabled is true. Phase 2 will
+ * replace the raw-concat path with RAG indexing.
+ */
+export const projectMemoryFiles = pgTable(
+  "project_memory_files",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** Destination path inside the project vault (e.g. "concepts/foo.md"). */
+    path: text("path").notNull(),
+    mimeType: text("mime_type").notNull().default("text/markdown"),
+    sizeBytes: integer("size_bytes").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    projectIdx: index("project_memory_files_project_idx").on(t.projectId),
+  }),
+);
+
+export type ProjectMemoryFile = typeof projectMemoryFiles.$inferSelect;
 
 export const conversations = pgTable(
   "conversations",

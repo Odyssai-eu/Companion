@@ -45,14 +45,16 @@ export default function SettingsNav() {
   const { role } = useAuth();
   const isAdminish = role === "admin" || role === "organiser";
 
-  // Surface the Admin link to admin/organiser only. Slot it in the
-  // Extensions section right next to Add-ons.
+  // Surface the Admin link to admin/organiser only. Slotted in the
+  // Preferences section — same layout, no separate full-page chrome.
+  // Compute fleet / file sync moved out to mlx-odyss.eu (D-18); we only
+  // surface user lifecycle + guest tokens here now.
   const sections: NavSection[] = isAdminish
     ? baseSections.map((s) =>
-        s.title === "Extensions"
+        s.title === "Preferences"
           ? {
               ...s,
-              items: [...s.items, { to: "/admin", label: "Admin Extended" }],
+              items: [...s.items, { to: "/settings/admin", label: "Admin" }],
             }
           : s,
       )
