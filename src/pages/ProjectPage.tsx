@@ -299,54 +299,21 @@ export default function ProjectPage() {
 
             <Field
               label="Memory"
-              hint="Three composable toggles. The active combination is shown below the rows."
+              hint="Pick one mode. The project vault setup below shows up when a mode that uses it is selected."
             >
-              <div className="flex flex-col gap-2">
-                <MemoryToggle
-                  label={`Memory injection ${memoryEnabled ? "ON" : "OFF"}`}
-                  description={
-                    memoryEnabled
-                      ? "Memory is injected into the system prompt. Pick the sources below."
-                      : "No memory is injected for any conversation in this project."
-                  }
-                  value={memoryEnabled}
-                  onChange={setMemoryEnabled}
-                />
-                <MemoryToggle
-                  label={`Dedicated project memory ${dedicatedMemoryEnabled ? "ON" : "OFF"}`}
-                  description={
-                    dedicatedMemoryEnabled
-                      ? "The project's own vault (uploaded ZIP + linked external path) is injected."
-                      : "Project vault is ignored even when configured."
-                  }
-                  value={dedicatedMemoryEnabled}
-                  onChange={setDedicatedMemoryEnabled}
-                  disabled={!memoryEnabled}
-                />
-                <MemoryToggle
-                  label={`Global memory included (read-only) ${globalMemoryReadOnly ? "ON" : "OFF"}`}
-                  description={
-                    globalMemoryReadOnly
-                      ? "Your global user wiki is injected for context. This project's chats do NOT write back to it."
-                      : dedicatedMemoryEnabled
-                        ? "Global wiki is excluded — this project is fully isolated."
-                        : "Default — global wiki is injected AND updated by this project's chats."
-                  }
-                  value={globalMemoryReadOnly}
-                  onChange={setGlobalMemoryReadOnly}
-                  disabled={!memoryEnabled}
-                />
-                <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-600">
-                  <span className="font-medium text-ink">
-                    Active configuration:{" "}
-                  </span>
-                  {memoryConfigSummary(
-                    memoryEnabled,
-                    dedicatedMemoryEnabled,
-                    globalMemoryReadOnly,
-                  )}
-                </div>
-              </div>
+              <MemoryModePicker
+                value={resolveMemoryMode(
+                  memoryEnabled,
+                  dedicatedMemoryEnabled,
+                  globalMemoryReadOnly,
+                )}
+                onChange={(mode) => {
+                  const flags = memoryModeToFlags(mode);
+                  setMemoryEnabled(flags.memoryEnabled);
+                  setDedicatedMemoryEnabled(flags.dedicatedMemoryEnabled);
+                  setGlobalMemoryReadOnly(flags.globalMemoryReadOnly);
+                }}
+              />
             </Field>
 
             {!isNew && id && memoryEnabled && dedicatedMemoryEnabled && (
@@ -432,79 +399,151 @@ function categoryIcon(
 }
 
 /**
- * Plain-English description of the active memory configuration. Shown
- * under the three toggles so the user always sees what exactly will hit
- * the system prompt without having to mentally combine the rows.
+ * Single-choice memory mode for a project. Replaces the three composable
+ * toggles (memoryEnabled / dedicatedMemoryEnabled / globalMemoryReadOnly)
+ * in the UI while preserving the backend semantics — the helpers below
+ * encode / decode the mode to the existing flag triple.
  */
-function memoryConfigSummary(
+type MemoryMode =
+  | "off"
+  | "global-rw"
+  | "global-ro"
+  | "project-only"
+  | "project-and-global-ro";
+
+function resolveMemoryMode(
   master: boolean,
   dedicated: boolean,
   readOnly: boolean,
-): string {
-  if (!master) return "Memory disabled — nothing is injected.";
-  if (dedicated && readOnly) {
-    return "Project vault + global wiki (read-only, no write-back).";
-  }
-  if (dedicated && !readOnly) {
-    return "Project vault only — fully isolated from your global wiki.";
-  }
-  if (!dedicated && readOnly) {
-    return "Global wiki only, read-only. No write-back from this project.";
-  }
-  return "Global wiki only (default). This project's chats also update the wiki.";
+): MemoryMode {
+  if (!master) return "off";
+  if (dedicated && readOnly) return "project-and-global-ro";
+  if (dedicated && !readOnly) return "project-only";
+  if (!dedicated && readOnly) return "global-ro";
+  return "global-rw";
 }
 
-/**
- * Compact toggle row used inside the Memory Field. Three of these stack
- * to expose the master / dedicated / read-only flags. The `disabled`
- * prop is used to grey out the two sub-toggles when the master is off
- * — they keep their stored value in DB but the user can't accidentally
- * flip them while the master is closed.
- */
-function MemoryToggle({
-  label,
-  description,
+function memoryModeToFlags(mode: MemoryMode): {
+  memoryEnabled: boolean;
+  dedicatedMemoryEnabled: boolean;
+  globalMemoryReadOnly: boolean;
+} {
+  switch (mode) {
+    case "off":
+      return {
+        memoryEnabled: false,
+        dedicatedMemoryEnabled: false,
+        globalMemoryReadOnly: false,
+      };
+    case "global-rw":
+      return {
+        memoryEnabled: true,
+        dedicatedMemoryEnabled: false,
+        globalMemoryReadOnly: false,
+      };
+    case "global-ro":
+      return {
+        memoryEnabled: true,
+        dedicatedMemoryEnabled: false,
+        globalMemoryReadOnly: true,
+      };
+    case "project-only":
+      return {
+        memoryEnabled: true,
+        dedicatedMemoryEnabled: true,
+        globalMemoryReadOnly: false,
+      };
+    case "project-and-global-ro":
+      return {
+        memoryEnabled: true,
+        dedicatedMemoryEnabled: true,
+        globalMemoryReadOnly: true,
+      };
+  }
+}
+
+const MEMORY_MODE_OPTIONS: Array<{
+  value: MemoryMode;
+  title: string;
+  description: string;
+}> = [
+  {
+    value: "global-rw",
+    title: "Global wiki (default)",
+    description:
+      "Inject your global user wiki. This project's chats also update it.",
+  },
+  {
+    value: "global-ro",
+    title: "Global wiki, read-only",
+    description:
+      "Inject the wiki but don't let this project write back. Use when the project should benefit from prior context without polluting it.",
+  },
+  {
+    value: "project-only",
+    title: "Project vault only",
+    description:
+      "Inject only the project's own vault (uploaded ZIP + linked external path). No global wiki at all — fully isolated.",
+  },
+  {
+    value: "project-and-global-ro",
+    title: "Project vault + global wiki (read-only)",
+    description:
+      "Combine the project vault with the wiki for context, but never write back to the wiki.",
+  },
+  {
+    value: "off",
+    title: "Memory off",
+    description:
+      "Nothing memory-related is injected. Sensitive projects, or just a clean slate.",
+  },
+];
+
+function MemoryModePicker({
   value,
   onChange,
-  disabled,
 }: {
-  label: string;
-  description: string;
-  value: boolean;
-  onChange: (v: boolean) => void;
-  disabled?: boolean;
+  value: MemoryMode;
+  onChange: (mode: MemoryMode) => void;
 }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={value}
-      onClick={() => !disabled && onChange(!value)}
-      disabled={disabled}
-      className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-3 transition-colors ${
-        disabled
-          ? "border-gray-200 bg-gray-50 opacity-60"
-          : value
-            ? "border-cyan bg-[rgba(79,179,217,0.06)]"
-            : "border-gray-200 bg-white hover:bg-gray-50"
-      }`}
-    >
-      <span className="flex flex-col gap-0.5 text-left">
-        <span className="text-[13px] font-medium text-ink">{label}</span>
-        <span className="text-[12px] text-gray-500">{description}</span>
-      </span>
-      <span
-        className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${
-          value && !disabled ? "bg-cyan" : "bg-gray-300"
-        }`}
-      >
-        <span
-          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-[left] ${
-            value ? "left-[22px]" : "left-0.5"
-          }`}
-        />
-      </span>
-    </button>
+    <div className="flex flex-col gap-1.5">
+      {MEMORY_MODE_OPTIONS.map((opt) => {
+        const selected = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(opt.value)}
+            className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-left transition-colors ${
+              selected
+                ? "border-cyan bg-[rgba(79,179,217,0.06)]"
+                : "border-gray-200 bg-white hover:bg-gray-50"
+            }`}
+          >
+            <span
+              className={`mt-1 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border ${
+                selected ? "border-cyan bg-cyan" : "border-gray-300 bg-white"
+              }`}
+            >
+              {selected && (
+                <span className="h-1.5 w-1.5 rounded-full bg-white" />
+              )}
+            </span>
+            <span className="flex flex-col gap-0.5">
+              <span className="text-[13px] font-medium text-ink">
+                {opt.title}
+              </span>
+              <span className="text-[12px] text-gray-500">
+                {opt.description}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
