@@ -324,13 +324,24 @@ function runRsyncDirect(
   return new Promise((resolve) => {
     const sourcePath = joinRemote(source.modelPath, live.modelPath) + "/";
     const targetSpec = `${target.sshUser}@${target.ip}:${joinRemote(target.modelPath, live.modelPath)}/`;
-    // The inner rsync runs ON source. Build it as a single shell-quoted string.
+    // The inner rsync runs ON source. Build it as a single shell snippet.
+    //
+    // macOS ships rsync 2.6.9 which doesn't know `--info=progress2`
+    // (introduced in rsync 3.1). Pick the Homebrew rsync (modern) if
+    // present on the source — otherwise fall back to the plain
+    // `--progress` flag, which both old and new rsync understand. Less
+    // smooth UX (per-file progress vs total %) but the regex parser
+    // still picks up the `(\d+)%` token correctly.
     const innerSshOpts =
       "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15";
+    const pickRsync =
+      '[ -x /opt/homebrew/bin/rsync ] && RSYNC=/opt/homebrew/bin/rsync && PROG=--info=progress2 || { RSYNC=rsync; PROG=--progress; }';
     const innerRsync = [
-      "rsync",
+      pickRsync,
+      "&&",
+      "$RSYNC",
       "-avz",
-      "--info=progress2",
+      "$PROG",
       "--no-inc-recursive",
       "-e",
       shellQuote(innerSshOpts),
