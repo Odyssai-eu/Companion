@@ -1,46 +1,143 @@
 /**
  * Per-project memory corpus reader.
  *
- * Used by the chat route when `projects.dedicatedMemoryEnabled` is true:
- * it concatenates the project's files (size-capped) and returns a single
- * markdown block to prepend to the system prompt.
+ * Returns the markdown block to prepend to the system prompt when
+ * `projects.dedicatedMemoryEnabled` is true. Two sources are merged:
  *
- * Phase 1 (this module) does raw concatenation. Phase 2 will swap to RAG
- * retrieval — the public function signature stays the same so the chat
- * route doesn't need to know.
+ *   1. `project_memory_files` — files COPIED into the DB (ZIP upload).
+ *   2. `projects.external_vault_path` — absolute path on the gateway
+ *      filesystem, read LIVE every turn (no copy, no sync — disk edits
+ *      surface immediately).
  *
- * Cap defaults: 200 KB of corpus per turn. Files are concatenated in
- * lexical path order so the prefix stays byte-stable across turns (KV
- * cache friendly) as long as the underlying files don't change.
+ * Both are size-capped together at MAX_CONTEXT_BYTES so a huge external
+ * vault can't blow up the prompt. Files are emitted in lexical path
+ * order across both sources so the prefix stays byte-stable across
+ * turns when no source files changed (KV cache friendly).
+ *
+ * Phase 2 will swap the raw-concat path for RAG retrieval — the public
+ * function signature stays the same so the chat route doesn't need to
+ * know.
  */
 
-import { asc, eq } from "drizzle-orm";
+import { promises as fs } from "node:fs";
+import { join, normalize } from "node:path";
+import { eq } from "drizzle-orm";
 import { db } from "../db/index";
-import { projectMemoryFiles } from "../db/schema";
+import { projectMemoryFiles, projects } from "../db/schema";
 
 const MAX_CONTEXT_BYTES = 200 * 1024;
+/** Accepted file extensions for the external vault walk. Same set as
+ *  the ZIP importer — keeps the two paths consistent. */
+const ACCEPTED_EXTS = new Set([
+  ".md",
+  ".markdown",
+  ".txt",
+  ".json",
+  ".yaml",
+  ".yml",
+]);
 
-export async function getProjectMemoryContext(
-  projectId: string,
-): Promise<string> {
+type CorpusEntry = {
+  path: string;
+  content: string;
+  /** Origin tag for the header label, helps the model distinguish a
+   *  live mount from a snapshot. Purely cosmetic. */
+  origin: "imported" | "vault";
+};
+
+async function readDbFiles(projectId: string): Promise<CorpusEntry[]> {
   const rows = await db
     .select({
       path: projectMemoryFiles.path,
       content: projectMemoryFiles.content,
-      sizeBytes: projectMemoryFiles.sizeBytes,
     })
     .from(projectMemoryFiles)
-    .where(eq(projectMemoryFiles.projectId, projectId))
-    .orderBy(asc(projectMemoryFiles.path));
+    .where(eq(projectMemoryFiles.projectId, projectId));
+  return rows.map((r) => ({
+    path: r.path,
+    content: r.content,
+    origin: "imported" as const,
+  }));
+}
 
-  if (rows.length === 0) return "";
+async function readVaultFiles(rootPath: string): Promise<CorpusEntry[]> {
+  const out: CorpusEntry[] = [];
+  async function walk(dir: string, rel: string): Promise<void> {
+    let entries: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      // unreadable directory — surface as empty and continue.
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      const abs = join(dir, entry.name);
+      const relPath = normalize(rel ? `${rel}/${entry.name}` : entry.name).replace(
+        /\\/g,
+        "/",
+      );
+      if (entry.isDirectory()) {
+        await walk(abs, relPath);
+      } else if (entry.isFile()) {
+        const dot = entry.name.lastIndexOf(".");
+        const ext = dot >= 0 ? entry.name.slice(dot).toLowerCase() : "";
+        if (!ACCEPTED_EXTS.has(ext)) continue;
+        try {
+          const content = await fs.readFile(abs, "utf8");
+          out.push({ path: relPath, content, origin: "vault" });
+        } catch {
+          // skip unreadable file
+        }
+      }
+    }
+  }
+  await walk(rootPath, "");
+  return out;
+}
 
-  // Greedy fill up to the cap, deterministic order.
-  const parts: string[] = ["# Project memory\n"];
-  let totalBytes = parts[0].length;
+/**
+ * Build the project-memory markdown block. Combines DB-imported files
+ * with live external vault files when both are configured. Returns ""
+ * when neither source has content.
+ */
+export async function getProjectMemoryContext(
+  projectId: string,
+): Promise<string> {
+  const [proj] = await db
+    .select({ externalVaultPath: projects.externalVaultPath })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+
+  const dbFiles = await readDbFiles(projectId);
+  const vaultFiles = proj?.externalVaultPath
+    ? await readVaultFiles(proj.externalVaultPath)
+    : [];
+
+  if (dbFiles.length === 0 && vaultFiles.length === 0) return "";
+
+  // Merge + sort lexically so the prefix stays byte-stable across turns.
+  // If both sources contain the same path, the imported one wins — gives
+  // the user an explicit override path: copy + edit a file in the DB to
+  // shadow what the vault says.
+  const seen = new Set<string>();
+  const merged: CorpusEntry[] = [];
+  for (const e of dbFiles) {
+    seen.add(e.path);
+    merged.push(e);
+  }
+  for (const e of vaultFiles) {
+    if (!seen.has(e.path)) merged.push(e);
+  }
+  merged.sort((a, b) => a.path.localeCompare(b.path));
+
+  const header = "# Project memory";
+  const parts: string[] = [header];
+  let totalBytes = header.length;
   let truncated = 0;
-  for (const r of rows) {
-    const block = `\n## \`${r.path}\`\n\n${r.content}\n`;
+  for (const r of merged) {
+    const block = `\n\n## ${r.path}\n\n${r.content}\n`;
     if (totalBytes + block.length > MAX_CONTEXT_BYTES) {
       truncated++;
       continue;
@@ -50,7 +147,7 @@ export async function getProjectMemoryContext(
   }
   if (truncated > 0) {
     parts.push(
-      `\n_(${truncated} file${truncated === 1 ? "" : "s"} omitted — corpus exceeds the ${Math.round(
+      `\n\n_(${truncated} file${truncated === 1 ? "" : "s"} omitted — corpus exceeds the ${Math.round(
         MAX_CONTEXT_BYTES / 1024,
       )} KB per-turn cap. Phase 2 will replace this with RAG.)_\n`,
     );

@@ -27,6 +27,7 @@ export default function ProjectPage() {
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [dedicatedMemoryEnabled, setDedicatedMemoryEnabled] = useState(false);
   const [globalMemoryReadOnly, setGlobalMemoryReadOnly] = useState(false);
+  const [externalVaultPath, setExternalVaultPath] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -46,6 +47,7 @@ export default function ProjectPage() {
       setMemoryEnabled(true);
       setDedicatedMemoryEnabled(false);
       setGlobalMemoryReadOnly(false);
+      setExternalVaultPath("");
       return;
     }
     if (!id) return;
@@ -60,6 +62,7 @@ export default function ProjectPage() {
         setMemoryEnabled(p.project.memoryEnabled ?? true);
         setDedicatedMemoryEnabled(p.project.dedicatedMemoryEnabled ?? false);
         setGlobalMemoryReadOnly(p.project.globalMemoryReadOnly ?? false);
+        setExternalVaultPath(p.project.externalVaultPath ?? "");
         setConversations(c.conversations.filter((x) => x.projectId === id));
       })
       .catch((e) => setError((e as Error).message));
@@ -91,6 +94,7 @@ export default function ProjectPage() {
           memoryEnabled,
           dedicatedMemoryEnabled,
           globalMemoryReadOnly,
+          externalVaultPath: externalVaultPath.trim() || null,
         });
         navigate(`/projects/${project.id}`, { replace: true });
       } else if (id) {
@@ -102,6 +106,7 @@ export default function ProjectPage() {
           memoryEnabled,
           dedicatedMemoryEnabled,
           globalMemoryReadOnly,
+          externalVaultPath: externalVaultPath.trim() || null,
         });
         setProject(project);
       }
@@ -294,15 +299,15 @@ export default function ProjectPage() {
 
             <Field
               label="Memory"
-              hint="Three composable toggles. Master OFF means no memory at all. Dedicated ON injects the project's own vault corpus. Global read-only includes the user wiki without writing back to it."
+              hint="Three composable toggles. The active combination is shown below the rows."
             >
               <div className="flex flex-col gap-2">
                 <MemoryToggle
                   label={`Memory injection ${memoryEnabled ? "ON" : "OFF"}`}
                   description={
                     memoryEnabled
-                      ? "Memory is injected. The two sub-toggles below pick which sources."
-                      : "Nothing memory-related is sent to the model for any conversation here."
+                      ? "Memory is injected into the system prompt. Pick the sources below."
+                      : "No memory is injected for any conversation in this project."
                   }
                   value={memoryEnabled}
                   onChange={setMemoryEnabled}
@@ -311,31 +316,45 @@ export default function ProjectPage() {
                   label={`Dedicated project memory ${dedicatedMemoryEnabled ? "ON" : "OFF"}`}
                   description={
                     dedicatedMemoryEnabled
-                      ? "The project's imported vault is concatenated into the system prompt (size-capped)."
-                      : "No project corpus is injected."
+                      ? "The project's own vault (uploaded ZIP + linked external path) is injected."
+                      : "Project vault is ignored even when configured."
                   }
                   value={dedicatedMemoryEnabled}
                   onChange={setDedicatedMemoryEnabled}
                   disabled={!memoryEnabled}
                 />
                 <MemoryToggle
-                  label={`Global memory read-only ${globalMemoryReadOnly ? "ON" : "OFF"}`}
+                  label={`Global memory included (read-only) ${globalMemoryReadOnly ? "ON" : "OFF"}`}
                   description={
                     globalMemoryReadOnly
-                      ? "Global user wiki is included for context, but this project doesn't write back to it."
+                      ? "Your global user wiki is injected for context. This project's chats do NOT write back to it."
                       : dedicatedMemoryEnabled
-                        ? "Global wiki is NOT included — only the dedicated project memory is used."
-                        : "Default — global wiki is included AND updated by this project's conversations."
+                        ? "Global wiki is excluded — this project is fully isolated."
+                        : "Default — global wiki is injected AND updated by this project's chats."
                   }
                   value={globalMemoryReadOnly}
                   onChange={setGlobalMemoryReadOnly}
                   disabled={!memoryEnabled}
                 />
+                <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-600">
+                  <span className="font-medium text-ink">
+                    Active configuration:{" "}
+                  </span>
+                  {memoryConfigSummary(
+                    memoryEnabled,
+                    dedicatedMemoryEnabled,
+                    globalMemoryReadOnly,
+                  )}
+                </div>
               </div>
             </Field>
 
-            {!isNew && id && (dedicatedMemoryEnabled || memoryEnabled) && (
-              <ProjectMemoryPanel projectId={id} disabled={!memoryEnabled} />
+            {!isNew && id && memoryEnabled && dedicatedMemoryEnabled && (
+              <ProjectMemoryPanel
+                projectId={id}
+                externalVaultPath={externalVaultPath}
+                onExternalVaultPathChange={setExternalVaultPath}
+              />
             )}
 
             <div className="flex items-center justify-between gap-3 pt-2">
@@ -413,6 +432,29 @@ function categoryIcon(
 }
 
 /**
+ * Plain-English description of the active memory configuration. Shown
+ * under the three toggles so the user always sees what exactly will hit
+ * the system prompt without having to mentally combine the rows.
+ */
+function memoryConfigSummary(
+  master: boolean,
+  dedicated: boolean,
+  readOnly: boolean,
+): string {
+  if (!master) return "Memory disabled — nothing is injected.";
+  if (dedicated && readOnly) {
+    return "Project vault + global wiki (read-only, no write-back).";
+  }
+  if (dedicated && !readOnly) {
+    return "Project vault only — fully isolated from your global wiki.";
+  }
+  if (!dedicated && readOnly) {
+    return "Global wiki only, read-only. No write-back from this project.";
+  }
+  return "Global wiki only (default). This project's chats also update the wiki.";
+}
+
+/**
  * Compact toggle row used inside the Memory Field. Three of these stack
  * to expose the master / dedicated / read-only flags. The `disabled`
  * prop is used to grey out the two sub-toggles when the master is off
@@ -467,23 +509,36 @@ function MemoryToggle({
 }
 
 /**
- * Vault corpus panel: lists imported files, shows quota usage, and
- * exposes the two import paths (ZIP upload + external filesystem path).
- * Mounted only when the project exists (no point in importing into a
- * non-existent project) and memory is enabled.
+ * Vault corpus panel — surfaces both ingestion paths and the file list.
+ *
+ * Two ways to feed the project memory:
+ *   1. ZIP upload — files are COPIED into the DB, hierarchy preserved.
+ *      Use when the source vault won't change much.
+ *   2. Linked external path — absolute path on the gateway. The chat
+ *      route reads it LIVE every turn. Use when you keep editing the
+ *      vault on disk (Obsidian, etc.) and want changes to surface
+ *      immediately. The path is a project field — managed via the
+ *      parent form save, not a separate upload.
+ *
+ * Both can coexist; their files are merged at chat time (DB wins on
+ * path conflict).
+ *
+ * Mounted only when memoryEnabled AND dedicatedMemoryEnabled are both
+ * true — otherwise the project vault is ignored regardless.
  */
 function ProjectMemoryPanel({
   projectId,
-  disabled,
+  externalVaultPath,
+  onExternalVaultPathChange,
 }: {
   projectId: string;
-  disabled?: boolean;
+  externalVaultPath: string;
+  onExternalVaultPathChange: (v: string) => void;
 }) {
   const [files, setFiles] = useState<ApiProjectMemoryFile[] | null>(null);
   const [stats, setStats] = useState<ApiProjectMemoryStats | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [externalPath, setExternalPath] = useState("");
   const [lastImport, setLastImport] = useState<{
     imported: number;
     skipped: Array<{ path: string; reason: string }>;
@@ -518,25 +573,6 @@ function ProjectMemoryPanel({
     }
   }
 
-  async function importPath() {
-    if (!externalPath.trim()) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api.importProjectMemoryFromPath(
-        projectId,
-        externalPath.trim(),
-      );
-      setLastImport({ imported: r.imported.length, skipped: r.skipped });
-      setExternalPath("");
-      await refresh();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function removeFile(path: string) {
     if (!confirm(`Remove ${path} from the project corpus?`)) return;
     try {
@@ -548,7 +584,7 @@ function ProjectMemoryPanel({
   }
 
   async function wipeAll() {
-    if (!confirm("Wipe the entire project memory corpus? This can't be undone."))
+    if (!confirm("Wipe the entire imported corpus? This can't be undone (the linked external path is untouched)."))
       return;
     try {
       await api.wipeProjectMemory(projectId);
@@ -559,22 +595,18 @@ function ProjectMemoryPanel({
   }
 
   return (
-    <div
-      className={`flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4 ${
-        disabled ? "opacity-60" : ""
-      }`}
-    >
+    <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
       <header className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-[14px] font-medium text-ink">Project vault</h3>
           <p className="text-[12px] text-gray-500">
-            Files imported here are injected into every conversation in this
-            project when "Dedicated project memory" is ON.
+            Imported files + linked external path are merged into the system
+            prompt for every conversation in this project.
           </p>
         </div>
         {stats && (
           <span className="font-mono text-[11px] text-gray-500">
-            {stats.fileCount} file{stats.fileCount === 1 ? "" : "s"} ·{" "}
+            {stats.fileCount} imported file{stats.fileCount === 1 ? "" : "s"} ·{" "}
             {(stats.bytesUsed / 1024).toFixed(1)} /{" "}
             {(stats.bytesQuota / 1024 / 1024).toFixed(0)} MB
           </span>
@@ -583,14 +615,17 @@ function ProjectMemoryPanel({
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <label className="flex flex-col gap-1.5 rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 py-3 hover:bg-gray-100">
-          <span className="text-[12px] font-medium text-ink">Upload ZIP</span>
+          <span className="text-[12px] font-medium text-ink">
+            Import ZIP (copy into DB)
+          </span>
           <span className="text-[11px] text-gray-500">
-            .md / .txt / .json / .yaml inside the zip. Folders preserved.
+            .md / .txt / .json / .yaml inside the zip. Hierarchy preserved
+            (sub-folders + index.md at root land at their original paths).
           </span>
           <input
             type="file"
             accept=".zip,application/zip"
-            disabled={busy || disabled}
+            disabled={busy}
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) void importZip(f);
@@ -601,30 +636,19 @@ function ProjectMemoryPanel({
         </label>
         <div className="flex flex-col gap-1.5 rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 py-3">
           <span className="text-[12px] font-medium text-ink">
-            Import from server path
+            Linked external path (read live)
           </span>
           <span className="text-[11px] text-gray-500">
-            Absolute path on the server. Walks recursively, picks up
-            accepted extensions.
+            Absolute path on the gateway host. Read on every chat turn —
+            no copy, edits land immediately. Save the project to apply.
           </span>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={externalPath}
-              onChange={(e) => setExternalPath(e.target.value)}
-              placeholder="/Users/admin/vault"
-              disabled={busy || disabled}
-              className="flex-1 rounded border border-gray-200 bg-white px-2 py-1 font-mono text-[11px]"
-            />
-            <button
-              type="button"
-              onClick={importPath}
-              disabled={busy || disabled || !externalPath.trim()}
-              className="rounded bg-navy px-3 py-1 text-[11px] font-medium text-white hover:opacity-95 disabled:opacity-40"
-            >
-              Import
-            </button>
-          </div>
+          <input
+            type="text"
+            value={externalVaultPath}
+            onChange={(e) => onExternalVaultPathChange(e.target.value)}
+            placeholder="/Users/admin/vault"
+            className="rounded border border-gray-200 bg-white px-2 py-1 font-mono text-[11px]"
+          />
         </div>
       </div>
 
@@ -673,7 +697,7 @@ function ProjectMemoryPanel({
                     <button
                       type="button"
                       onClick={() => removeFile(f.path)}
-                      disabled={busy || disabled}
+                      disabled={busy}
                       className="text-[11px] text-red-500 hover:text-red-700"
                     >
                       Remove
@@ -691,7 +715,7 @@ function ProjectMemoryPanel({
           <button
             type="button"
             onClick={wipeAll}
-            disabled={busy || disabled}
+            disabled={busy}
             className="text-[11px] text-red-500 hover:text-red-700"
           >
             Wipe entire corpus

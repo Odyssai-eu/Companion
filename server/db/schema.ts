@@ -73,6 +73,13 @@ export const projects = pgTable(
     globalMemoryReadOnly: boolean("global_memory_read_only")
       .notNull()
       .default(false),
+    // Absolute filesystem path on the gateway host that the chat route
+    // reads LIVE every turn. Different shape from project_memory_files
+    // (which holds DB-copied content): the external vault stays in
+    // sync with the disk on its own. Useful when the user keeps an
+    // Obsidian vault locally and wants TheCompAI to see edits
+    // immediately. Null = no external mount.
+    externalVaultPath: text("external_vault_path"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),

@@ -68,6 +68,10 @@ export type ApiProject = {
   /** When true, the global user wiki is included read-only. Per-turn
    *  triggerCompile is suppressed so this project doesn't write back. */
   globalMemoryReadOnly: boolean;
+  /** Absolute path on the gateway host. When set, the chat route reads
+   *  the directory live every turn (no copy) and concatenates accepted
+   *  files into the system prompt alongside the DB-imported ones. */
+  externalVaultPath: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -539,6 +543,7 @@ export const api = {
     memoryEnabled?: boolean;
     dedicatedMemoryEnabled?: boolean;
     globalMemoryReadOnly?: boolean;
+    externalVaultPath?: string | null;
   }) =>
     request<{ project: ApiProject }>("/api/projects", {
       method: "POST",
@@ -554,6 +559,7 @@ export const api = {
       memoryEnabled: boolean;
       dedicatedMemoryEnabled: boolean;
       globalMemoryReadOnly: boolean;
+      externalVaultPath: string | null;
     }>,
   ) =>
     request<{ project: ApiProject }>(`/api/projects/${id}`, {

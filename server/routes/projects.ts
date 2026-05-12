@@ -55,6 +55,7 @@ const createSchema = z.object({
   memoryEnabled: z.boolean().optional(),
   dedicatedMemoryEnabled: z.boolean().optional(),
   globalMemoryReadOnly: z.boolean().optional(),
+  externalVaultPath: z.string().max(1000).nullish(),
 });
 
 const updateSchema = z.object({
@@ -65,6 +66,9 @@ const updateSchema = z.object({
   memoryEnabled: z.boolean().optional(),
   dedicatedMemoryEnabled: z.boolean().optional(),
   globalMemoryReadOnly: z.boolean().optional(),
+  /** Absolute path on the gateway host. Pass null / empty string to
+   *  clear. The chat route reads this live every turn; no copy. */
+  externalVaultPath: z.string().max(1000).nullish(),
 });
 
 function iconForCategory(id: string): string | null {
@@ -98,6 +102,12 @@ projectsRoute.post("/", zValidator("json", createSchema), async (c) => {
       systemPrompt: data.systemPrompt ?? cat?.systemPrompt ?? "",
       instructions: data.instructions,
       memoryEnabled: data.memoryEnabled ?? true,
+      dedicatedMemoryEnabled: data.dedicatedMemoryEnabled ?? false,
+      globalMemoryReadOnly: data.globalMemoryReadOnly ?? false,
+      externalVaultPath:
+        data.externalVaultPath && data.externalVaultPath.trim()
+          ? data.externalVaultPath.trim()
+          : null,
     })
     .returning();
   return c.json({ project: row }, 201);
@@ -149,6 +159,12 @@ projectsRoute.patch(
       patch.dedicatedMemoryEnabled = data.dedicatedMemoryEnabled;
     if (data.globalMemoryReadOnly !== undefined)
       patch.globalMemoryReadOnly = data.globalMemoryReadOnly;
+    if (data.externalVaultPath !== undefined) {
+      patch.externalVaultPath =
+        data.externalVaultPath && data.externalVaultPath.trim()
+          ? data.externalVaultPath.trim()
+          : null;
+    }
     const [updated] = await db
       .update(projects)
       .set(patch)
