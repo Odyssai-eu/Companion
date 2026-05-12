@@ -37,24 +37,6 @@ export async function seedIfEmpty() {
   await db.insert(addons).values([
     {
       userId: sophie.id,
-      name: "Admin — Simple",
-      kind: "core",
-      description:
-        "Invite users, manage roles, revoke devices. Installed by default on Team plans.",
-      version: "1.0.0",
-      enabled: true,
-    },
-    {
-      userId: sophie.id,
-      name: "Admin — Extended",
-      kind: "core",
-      description:
-        "Audit log, SSO, usage analytics, billing reconciliation, infra diagnostics à la Starbase. Activate when you need it.",
-      version: "1.0.0",
-      enabled: false,
-    },
-    {
-      userId: sophie.id,
       name: "Voice Mode",
       kind: "plugin",
       description:
@@ -104,15 +86,6 @@ export async function seedIfEmpty() {
       kind: "plugin",
       description:
         "Real-time bidirectional voice via Gemini Live API. PCM streaming over WebSocket. Replaces local TTS/ASR pipelines while Voxtral/Kokoro mature.",
-      version: "0.1.0",
-      enabled: false,
-    },
-    {
-      userId: sophie.id,
-      name: "Admin Extended",
-      kind: "plugin",
-      description:
-        "Manage users, nodes, groups, file syncs and guest tokens. Required for multi-user / multi-station setups.",
       version: "0.1.0",
       enabled: false,
     },

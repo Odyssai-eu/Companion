@@ -141,78 +141,28 @@ function UsersSection({ selfId }: { selfId: string }) {
 
       {error && <ErrorBanner error={error} />}
 
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="w-full text-[13px]">
-          <thead className="bg-gray-50 text-[11px] uppercase tracking-[0.06em] text-gray-500">
-            <tr>
-              <Th>Email</Th>
-              <Th>Name</Th>
-              <Th>Role</Th>
-              <Th>Active</Th>
-              <Th>Last seen</Th>
-              <Th className="text-right">Actions</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows === null && (
-              <tr>
-                <td colSpan={6} className="py-8 text-center font-mono text-[11px] text-gray-400">
-                  Loading…
-                </td>
-              </tr>
-            )}
-            {rows && rows.length === 0 && (
-              <tr>
-                <td colSpan={6} className="py-8 text-center font-mono text-[11px] text-gray-400">
-                  No users.
-                </td>
-              </tr>
-            )}
-            {rows?.map((u) => (
-              <tr key={u.id} className="border-t border-gray-100">
-                <Td>
-                  <span className="font-mono">{u.email}</span>
-                  {u.id === selfId && (
-                    <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
-                      you
-                    </span>
-                  )}
-                </Td>
-                <Td>{u.name ?? <span className="text-gray-400">—</span>}</Td>
-                <Td><RolePill role={u.role} /></Td>
-                <Td>
-                  {u.active ? (
-                    <span className="inline-flex items-center gap-1 text-emerald-700">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                      yes
-                    </span>
-                  ) : (
-                    <span className="text-gray-400">no</span>
-                  )}
-                </Td>
-                <Td>
-                  <span className="font-mono text-[12px] text-gray-500">
-                    {fmtDate(u.lastInteractionAt)}
-                  </span>
-                </Td>
-                <Td className="text-right">
-                  <div className="inline-flex gap-1">
-                    <RowBtn onClick={() => setEditing(u)}>Edit</RowBtn>
-                    <RowBtn onClick={() => setResetting(u)}>Reset pwd</RowBtn>
-                    {u.id !== selfId && (
-                      <>
-                        <RowBtn onClick={() => toggleActive(u)}>
-                          {u.active ? "Deactivate" : "Activate"}
-                        </RowBtn>
-                        <RowBtn danger onClick={() => deleteUser(u)}>Delete</RowBtn>
-                      </>
-                    )}
-                  </div>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="flex flex-col">
+        {rows === null && (
+          <p className="py-6 text-center font-mono text-[11px] text-gray-400">
+            Loading…
+          </p>
+        )}
+        {rows && rows.length === 0 && (
+          <p className="py-6 text-center font-mono text-[11px] text-gray-400">
+            No users.
+          </p>
+        )}
+        {rows?.map((u) => (
+          <UserRow
+            key={u.id}
+            user={u}
+            isSelf={u.id === selfId}
+            onEdit={() => setEditing(u)}
+            onResetPwd={() => setResetting(u)}
+            onToggleActive={() => toggleActive(u)}
+            onDelete={() => deleteUser(u)}
+          />
+        ))}
       </div>
 
       {showCreate && (
@@ -242,6 +192,72 @@ function UsersSection({ selfId }: { selfId: string }) {
         />
       )}
     </section>
+  );
+}
+
+/**
+ * Card-style row used by both the Users and Guests lists. Wraps cleanly
+ * inside the narrow Settings outlet (max-w-[960px] with side nav) — no
+ * horizontal scrollbar, no fixed-width columns. Action buttons stack
+ * below the metadata on narrow viewports via flex-wrap.
+ */
+function UserRow({
+  user,
+  isSelf,
+  onEdit,
+  onResetPwd,
+  onToggleActive,
+  onDelete,
+}: {
+  user: ApiAdminUser;
+  isSelf: boolean;
+  onEdit: () => void;
+  onResetPwd: () => void;
+  onToggleActive: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 py-3 last:border-b-0">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-[13px] text-ink">{user.email}</span>
+          {isSelf && (
+            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
+              you
+            </span>
+          )}
+          <RolePill role={user.role} />
+          {user.active ? (
+            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              active
+            </span>
+          ) : (
+            <span className="text-[11px] text-gray-400">inactive</span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-x-3 gap-y-0 text-[12px] text-gray-500">
+          {user.name && <span>{user.name}</span>}
+          <span className="font-mono text-[11px]">
+            last seen {fmtDate(user.lastInteractionAt)}
+          </span>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        <RowBtn onClick={onEdit}>Edit</RowBtn>
+        <RowBtn onClick={onResetPwd}>Reset pwd</RowBtn>
+        {!isSelf && (
+          <>
+            <RowBtn onClick={onToggleActive}>
+              {user.active ? "Deactivate" : "Activate"}
+            </RowBtn>
+            <RowBtn danger onClick={onDelete}>
+              Delete
+            </RowBtn>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -481,74 +497,25 @@ function GuestsSection() {
 
       {error && <ErrorBanner error={error} />}
 
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="w-full text-[13px]">
-          <thead className="bg-gray-50 text-[11px] uppercase tracking-[0.06em] text-gray-500">
-            <tr>
-              <Th>Label</Th>
-              <Th>Budget</Th>
-              <Th>Scope</Th>
-              <Th>Expires</Th>
-              <Th>Created</Th>
-              <Th className="text-right">Actions</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows === null && (
-              <tr>
-                <td colSpan={6} className="py-8 text-center font-mono text-[11px] text-gray-400">
-                  Loading…
-                </td>
-              </tr>
-            )}
-            {rows && rows.length === 0 && (
-              <tr>
-                <td colSpan={6} className="py-8 text-center font-mono text-[11px] text-gray-400">
-                  No guest tokens yet.
-                </td>
-              </tr>
-            )}
-            {rows?.map((t) => {
-              const revoked = !!t.revokedAt;
-              const expired = t.expiresAt && new Date(t.expiresAt).getTime() < Date.now();
-              return (
-                <tr key={t.id} className={`border-t border-gray-100 ${revoked || expired ? "opacity-50" : ""}`}>
-                  <Td>
-                    {t.label || <span className="text-gray-400">(no label)</span>}
-                    {revoked && <span className="ml-2 text-[10px] text-red-600">revoked</span>}
-                    {!revoked && expired && <span className="ml-2 text-[10px] text-gray-500">expired</span>}
-                  </Td>
-                  <Td>
-                    <span className="font-mono text-[12px] text-gray-700">
-                      {t.tokensUsed.toLocaleString()} /{" "}
-                      {t.tokenBudget === 0 ? "∞" : t.tokenBudget.toLocaleString()}
-                    </span>
-                  </Td>
-                  <Td><span className="font-mono text-[12px]">{t.scope}</span></Td>
-                  <Td>
-                    <span className="font-mono text-[12px] text-gray-500">
-                      {fmtDate(t.expiresAt)}
-                    </span>
-                  </Td>
-                  <Td>
-                    <span className="font-mono text-[12px] text-gray-500">
-                      {fmtDate(t.createdAt)}
-                    </span>
-                  </Td>
-                  <Td className="text-right">
-                    {!revoked && (
-                      <div className="inline-flex gap-1">
-                        <RowBtn onClick={() => extend(t, 7)}>+7d</RowBtn>
-                        <RowBtn onClick={() => extend(t, 30)}>+30d</RowBtn>
-                        <RowBtn danger onClick={() => revoke(t)}>Revoke</RowBtn>
-                      </div>
-                    )}
-                  </Td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="flex flex-col">
+        {rows === null && (
+          <p className="py-6 text-center font-mono text-[11px] text-gray-400">
+            Loading…
+          </p>
+        )}
+        {rows && rows.length === 0 && (
+          <p className="py-6 text-center font-mono text-[11px] text-gray-400">
+            No guest tokens yet.
+          </p>
+        )}
+        {rows?.map((t) => (
+          <GuestRow
+            key={t.id}
+            token={t}
+            onExtend={(days) => extend(t, days)}
+            onRevoke={() => revoke(t)}
+          />
+        ))}
       </div>
 
       {showMint && (
@@ -565,6 +532,68 @@ function GuestsSection() {
         <MintedTokenModal token={minted.token} onClose={() => setMinted(null)} />
       )}
     </section>
+  );
+}
+
+function GuestRow({
+  token,
+  onExtend,
+  onRevoke,
+}: {
+  token: ApiGuestToken;
+  onExtend: (days: number) => void;
+  onRevoke: () => void;
+}) {
+  const revoked = !!token.revokedAt;
+  const expired =
+    !!token.expiresAt && new Date(token.expiresAt).getTime() < Date.now();
+  const dead = revoked || expired;
+  return (
+    <div
+      className={`flex flex-wrap items-center gap-3 border-b border-gray-100 py-3 last:border-b-0 ${
+        dead ? "opacity-50" : ""
+      }`}
+    >
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] text-ink">
+            {token.label || (
+              <span className="text-gray-400">(no label)</span>
+            )}
+          </span>
+          {revoked && (
+            <span className="text-[10px] text-red-600">revoked</span>
+          )}
+          {!revoked && expired && (
+            <span className="text-[10px] text-gray-500">expired</span>
+          )}
+          <span className="font-mono text-[11px] text-gray-500">
+            {token.tokensUsed.toLocaleString()} /{" "}
+            {token.tokenBudget === 0 ? "∞" : token.tokenBudget.toLocaleString()}
+          </span>
+          <span className="font-mono text-[11px] text-gray-400">
+            scope {token.scope}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-x-3 text-[11px] text-gray-500">
+          <span className="font-mono">
+            expires {fmtDate(token.expiresAt)}
+          </span>
+          <span className="font-mono">
+            created {fmtDate(token.createdAt)}
+          </span>
+        </div>
+      </div>
+      {!revoked && (
+        <div className="flex flex-wrap items-center gap-1">
+          <RowBtn onClick={() => onExtend(7)}>+7d</RowBtn>
+          <RowBtn onClick={() => onExtend(30)}>+30d</RowBtn>
+          <RowBtn danger onClick={onRevoke}>
+            Revoke
+          </RowBtn>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -722,14 +751,6 @@ function ErrorBanner({ error }: { error: string }) {
       {error}
     </div>
   );
-}
-
-function Th({ children, className = "" }: { children?: React.ReactNode; className?: string }) {
-  return <th className={`px-3 py-2 text-left font-medium ${className}`}>{children}</th>;
-}
-
-function Td({ children, className = "" }: { children?: React.ReactNode; className?: string }) {
-  return <td className={`px-3 py-2 align-middle ${className}`}>{children}</td>;
 }
 
 function RowBtn({
