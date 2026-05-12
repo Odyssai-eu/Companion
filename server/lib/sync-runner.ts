@@ -334,15 +334,19 @@ function runRsyncDirect(
     // still picks up the `(\d+)%` token correctly.
     const innerSshOpts =
       "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15";
+    // Pick the Homebrew rsync (3.x) if present, otherwise stock macOS
+    // rsync (2.6.9). Old rsync doesn't know --info=progress2 OR
+    // --no-inc-recursive — gate BOTH together. EXTRA carries any flags
+    // that are only safe on rsync 3+.
     const pickRsync =
-      '[ -x /opt/homebrew/bin/rsync ] && RSYNC=/opt/homebrew/bin/rsync && PROG=--info=progress2 || { RSYNC=rsync; PROG=--progress; }';
+      '[ -x /opt/homebrew/bin/rsync ] && { RSYNC=/opt/homebrew/bin/rsync; PROG=--info=progress2; EXTRA=--no-inc-recursive; } || { RSYNC=rsync; PROG=--progress; EXTRA=; }';
     const innerRsync = [
       pickRsync,
       "&&",
       "$RSYNC",
       "-avz",
       "$PROG",
-      "--no-inc-recursive",
+      "$EXTRA",
       "-e",
       shellQuote(innerSshOpts),
       shellQuote(sourcePath),
