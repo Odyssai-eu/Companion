@@ -18,14 +18,13 @@ export default function SettingsLayout() {
     if (!isMobile) setDrawerOpen(false);
   }, [isMobile]);
 
-  // Close-to-chat handler: try going back in history; if there's nothing to
-  // go back to (fresh tab landed straight on /settings/...), navigate home.
+  // Close-to-chat handler: navigate to /. The previous implementation
+  // called navigate(-1), which forced the user to mash the X repeatedly
+  // when they'd browsed several pages inside Settings (each step in the
+  // settings nav pushed a history entry). Settings is modal-style — one
+  // click on the X means out, regardless of where in the section you are.
   function closeSettings() {
-    if (window.history.length > 1) {
-      navigate(-1);
-    } else {
-      navigate("/");
-    }
+    navigate("/");
   }
 
   // Esc anywhere in /settings/* exits settings. Same affordance as a modal.
