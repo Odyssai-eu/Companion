@@ -117,7 +117,7 @@ async function main() {
   await ensureAdminExists();
   startMemoryScheduler();
   serve({ fetch: app.fetch, port }, (info) => {
-    console.log(`→ thecomp.ai api listening on :${info.port}`);
+    console.log(`→ companion api listening on :${info.port}`);
   });
 }
 

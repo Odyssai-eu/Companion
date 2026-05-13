@@ -86,7 +86,7 @@ export default function AddonsPage() {
           Add-ons.
         </h1>
         <p className="max-w-[640px] text-[15px] leading-[24px] text-gray-600">
-          Extend Thecomp.ai with plugins and MCP servers. Each add-on can
+          Extend Companion with plugins and MCP servers. Each add-on can
           surface in the Tools menu and carry its own screen if it needs one.
         </p>
       </header>
@@ -454,7 +454,7 @@ function ObsidianPanel() {
           )}
         </div>
         <p className="mt-2 text-[11px] text-gray-500">
-          Paste this in the Thecomp.ai plugin inside Obsidian. Treat it like a
+          Paste this in the Companion plugin inside Obsidian. Treat it like a
           password — anyone with the URL + token can download your wiki.
         </p>
       </Field>
@@ -493,7 +493,7 @@ function ObsidianPanel() {
         </summary>
         <ol className="mt-3 flex list-decimal flex-col gap-2 pl-5">
           <li>
-            Download the latest release of the Thecomp.ai plugin from the
+            Download the latest release of the Companion plugin from the
             companion repo.
           </li>
           <li>
@@ -511,7 +511,7 @@ function ObsidianPanel() {
           </li>
           <li>
             The plugin syncs on startup and every 30 minutes. You can trigger a
-            manual sync from the command palette (<code>Thecomp.ai: Sync now</code>).
+            manual sync from the command palette (<code>Companion: Sync now</code>).
           </li>
         </ol>
       </details>
@@ -855,7 +855,7 @@ function HermesPanel() {
 
       <details className="rounded-md border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-600">
         <summary className="cursor-pointer font-medium text-ink">
-          How Hermes works in TheCompAI
+          How Hermes works in Companion
         </summary>
         <p className="mt-3 leading-relaxed">
           Click the <strong>Hermes</strong> button in the sidebar to start a

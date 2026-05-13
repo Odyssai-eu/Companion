@@ -1,7 +1,7 @@
 {
-  "name": "Thecomp.ai",
-  "short_name": "Thecomp.ai",
-  "description": "Your own AI infrastructure, on every device.",
+  "name": "Companion",
+  "short_name": "Companion",
+  "description": "The universal client for local AI inference.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#FAFAFA",

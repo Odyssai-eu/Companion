@@ -20,7 +20,7 @@ export default function Wordmark({ size = "md" }: { size?: "sm" | "md" }) {
     <div className="flex items-center gap-2.5">
       <img
         src="/logo/icon-192.png"
-        alt="Thecomp.ai"
+        alt="Companion"
         className={`${logoSize} flex-shrink-0 rounded-full`}
       />
       <span className={`${textSize} font-mono tracking-tight`}>

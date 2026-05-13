@@ -113,10 +113,10 @@ export default function InferencePage() {
           Inference.
         </h1>
         <p className="max-w-[640px] text-[15px] leading-[24px] text-gray-600">
-          Thecomp.ai talks to your models through a single LiteLLM proxy. Point
+          Companion talks to your models through a single LiteLLM proxy. Point
           it at your home cluster, your team's shared instance, or a hosted
           one. The admin curates the model list (locals, cloud providers,
-          fallbacks) by editing the proxy's config — Thecomp.ai just shows you
+          fallbacks) by editing the proxy's config — Companion just shows you
           what it offers.
         </p>
       </header>
@@ -298,7 +298,7 @@ export default function InferencePage() {
 
       <Section title="Timezone">
         <p className="text-[13px] text-gray-600">
-          Used to format the date stamps Thecomp.ai injects into every chat
+          Used to format the date stamps Companion injects into every chat
           ({"["}YYYY-MM-DDTHH:MM:SS+ZZ:ZZ | Δ: …{"]"}) so the model knows what
           time it is in your world.
         </p>

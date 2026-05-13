@@ -4,9 +4,9 @@ const TOPICS: { id: string; title: string; body: string }[] = [
   {
     id: "getting-started",
     title: "Getting started",
-    body: `### What is Thecomp.ai?
+    body: `### What is Companion?
 
-A universal client for AI inference. You bring the engine — local cluster (exo, Ollama, LM Studio, vLLM, MLX), or a cloud key (OpenRouter, Anthropic, OpenAI) — and we give you a single, consistent client across desktop and mobile.
+A universal client for AI inference. You bring the engine — local cluster (Odysseus, Ollama, LM Studio, vLLM, MLX), or a cloud key (OpenRouter, Anthropic, OpenAI) — and Companion gives you a single, consistent client across desktop and mobile.
 
 ### First steps
 
@@ -15,7 +15,7 @@ A universal client for AI inference. You bring the engine — local cluster (exo
 3. **Pick a model** in the top bar — Local tab for your cluster, Cloud tab for OpenRouter/Anthropic. The 👁 chip means vision-capable, ⚒ means tools/function calling.
 4. **Start typing** — Enter to send, Shift+Enter for a newline.
 
-Conversations and projects sync to your account, so opening Thecomp.ai on a second device picks up where you left off.`,
+Conversations and projects sync to your account, so opening Companion on a second device picks up where you left off.`,
   },
   {
     id: "attachments",
@@ -128,7 +128,7 @@ export default function HelpPage() {
           Help.
         </h1>
         <p className="max-w-[640px] text-[15px] leading-[24px] text-gray-600">
-          A field guide to the parts of Thecomp.ai you might not have explored
+          A field guide to the parts of Companion you might not have explored
           yet. The Bear keeps it short.
         </p>
       </header>

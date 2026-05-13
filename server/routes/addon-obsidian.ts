@@ -193,13 +193,13 @@ obsidianRoute.get("/vault.zip", async (c) => {
   zip.file(
     "_README.md",
     [
-      "# Thecomp.ai memory vault",
+      "# Companion memory vault",
       "",
-      "_Read-only mirror of the personal wiki that Thecomp.ai compiled from",
+      "_Read-only mirror of the personal wiki that Companion compiled from",
       "your conversations._",
       "",
       "Files in this folder are overwritten on each sync. Edit them inside",
-      "Thecomp.ai if you want changes to stick.",
+      "Companion if you want changes to stick.",
       "",
       "Layout:",
       "",

@@ -28,7 +28,7 @@ export default function IconRail() {
       <div className="flex flex-col items-center gap-4">
         <img
           src="/logo/icon-192.png"
-          alt="Thecomp.ai"
+          alt="Companion"
           className="h-9 w-9 rounded-full"
         />
         <div className="flex flex-col items-center gap-1">

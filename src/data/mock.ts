@@ -158,7 +158,7 @@ export type Message = {
 };
 
 export const projects: Project[] = [
-  { id: "p1", name: "Thecomp.ai product", count: 24 },
+  { id: "p1", name: "Companion product", count: 24 },
   { id: "p2", name: "Audiobook pipeline", count: 11 },
   { id: "p3", name: "Research notes", count: 7 },
 ];
