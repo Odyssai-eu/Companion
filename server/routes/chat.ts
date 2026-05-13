@@ -178,64 +178,73 @@ chatRoute.post("/completions", async (c) => {
         convKind = conv.kind;
         convRepoPath = conv.repoPath;
         convMemoryEnabled = conv.memoryEnabled !== false;
-        if (conv.memoryEnabled === false) {
-          memoryBlock = "";
-        } else {
-          // Resolve project memory flags (only meaningful when the conv
-          // belongs to a project). Out-of-project convs use the legacy
-          // global-wiki behaviour with no project-specific corpus.
-          let dedicated = false;
-          let globalReadOnly = false;
-          if (projectId) {
-            const [proj] = await db
-              .select({
-                dedicatedMemoryEnabled: projects.dedicatedMemoryEnabled,
-                globalMemoryReadOnly: projects.globalMemoryReadOnly,
-              })
-              .from(projects)
-              .where(eq(projects.id, projectId))
-              .limit(1);
-            if (proj) {
-              dedicated = proj.dedicatedMemoryEnabled;
-              globalReadOnly = proj.globalMemoryReadOnly;
-              projectGlobalReadOnly = globalReadOnly;
-              projectDedicatedMemoryEnabled = dedicated;
-            }
+
+        // Two-toggle composition (Sophie's simplified layout):
+        //   memoryEnabled            = "Global wiki" toggle. Conv-level
+        //                              switch on whether the global user
+        //                              wiki is injected at all.
+        //   projects.dedicatedMemoryEnabled
+        //                            = "Project wiki" toggle (project-level).
+        //   projects.globalMemoryReadOnly
+        //                            = Read-only sub-toggle under Global.
+        //                              Only meaningful when global is on.
+        //
+        // The two main flags compose independently — you can have one,
+        // both, or neither. The previous version coupled them ("project
+        // ON disables global unless read-only ON"); the new model treats
+        // them as orthogonal so the UI radio collapses cleanly into two
+        // checkboxes.
+        let dedicated = false;
+        let globalReadOnly = false;
+        if (projectId) {
+          const [proj] = await db
+            .select({
+              dedicatedMemoryEnabled: projects.dedicatedMemoryEnabled,
+              globalMemoryReadOnly: projects.globalMemoryReadOnly,
+            })
+            .from(projects)
+            .where(eq(projects.id, projectId))
+            .limit(1);
+          if (proj) {
+            dedicated = proj.dedicatedMemoryEnabled;
+            globalReadOnly = proj.globalMemoryReadOnly;
+            projectGlobalReadOnly = globalReadOnly;
+            projectDedicatedMemoryEnabled = dedicated;
           }
-          // Project memory corpus (live — recomputed each turn so newly
-          // imported vault files show up immediately). KV cache hits on
-          // the global snapshot + history; project corpus updates DO
-          // invalidate the prefix on file change, accepted trade-off.
-          const projectMemory =
-            projectId && dedicated
-              ? await getProjectMemoryContext(projectId)
-              : "";
-          // Global wiki: include when EITHER read-only is true (explicit
-          // opt-in) OR there's no dedicated mode at all (legacy behaviour
-          // for convs that just want the user wiki).
-          const includeGlobal = !dedicated || globalReadOnly;
-          let globalBlock = "";
-          if (includeGlobal) {
-            if (conv.memorySnapshot != null) {
-              globalBlock = conv.memorySnapshot;
-            } else {
-              globalBlock = await getMemoryContext(userId, projectId);
-              await db
-                .update(conversations)
-                .set({
-                  memorySnapshot: globalBlock || null,
-                  memorySnapshotAt: globalBlock ? new Date() : null,
-                })
-                .where(eq(conversations.id, body.conversationId));
-            }
-          }
-          // Compose: project corpus first (smaller, project-specific),
-          // global wiki second (general background). Empty segments are
-          // dropped.
-          memoryBlock = [projectMemory, globalBlock]
-            .filter((s) => s.trim().length > 0)
-            .join("\n\n---\n\n");
         }
+
+        // Project corpus — live every turn. Recompute on change so newly
+        // imported / edited files surface immediately. Prefix stability
+        // (KV cache) holds as long as no files changed.
+        const projectMemory =
+          projectId && dedicated
+            ? await getProjectMemoryContext(projectId)
+            : "";
+
+        // Global wiki — independently gated by the conv's memoryEnabled.
+        // The frozen snapshot is reused turn-to-turn for cache hits.
+        let globalBlock = "";
+        if (conv.memoryEnabled !== false) {
+          if (conv.memorySnapshot != null) {
+            globalBlock = conv.memorySnapshot;
+          } else {
+            globalBlock = await getMemoryContext(userId, projectId);
+            await db
+              .update(conversations)
+              .set({
+                memorySnapshot: globalBlock || null,
+                memorySnapshotAt: globalBlock ? new Date() : null,
+              })
+              .where(eq(conversations.id, body.conversationId));
+          }
+        }
+
+        // Compose: project corpus first (project-specific, more
+        // targeted), global wiki second (general background). Empty
+        // segments are dropped — when both are off the result is "".
+        memoryBlock = [projectMemory, globalBlock]
+          .filter((s) => s.trim().length > 0)
+          .join("\n\n---\n\n");
       }
     } catch (err) {
       console.warn("[chat] memory lookup failed:", (err as Error).message);
