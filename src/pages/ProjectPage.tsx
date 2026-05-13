@@ -568,7 +568,6 @@ function ProjectMemoryPanel({
   // DB corpus. tcai:// paths force read-only server-side regardless of
   // the consumer's toggle.
   const sharePath = `tcai://project/${projectId}`;
-  const isTcaiLink = externalVaultPath.trim().startsWith("tcai://project/");
   // Consumer freely picks RO/RW regardless of path shape — the hub's
   // Sharing toggle is the only source-side gate. RW means the consumer
   // project's chats will (once auto-compile lands) write back into the
