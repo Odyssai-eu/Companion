@@ -569,9 +569,12 @@ function ProjectMemoryPanel({
   // the consumer's toggle.
   const sharePath = `tcai://project/${projectId}`;
   const isTcaiLink = externalVaultPath.trim().startsWith("tcai://project/");
-  // When the consumer pastes a tcai:// link, server forces RO. Reflect
-  // that in the UI so the toggle isn't lying about its effect.
-  const effectiveReadOnly = isTcaiLink ? true : externalVaultReadOnly;
+  // Consumer freely picks RO/RW regardless of path shape — the hub's
+  // Sharing toggle is the only source-side gate. RW means the consumer
+  // project's chats will (once auto-compile lands) write back into the
+  // linked vault. Filesystem path with RW = write to disk. tcai:// path
+  // with RW = write to the source project's DB corpus.
+  const effectiveReadOnly = externalVaultReadOnly;
   const [copiedShare, setCopiedShare] = useState(false);
   async function copyShare() {
     try {
@@ -669,7 +672,8 @@ function ProjectMemoryPanel({
           />
           <span className="font-medium">Sharing</span>
           <span className="text-gray-500">
-            — let other projects link to this vault read-only.
+            — let other projects link to this vault. Each consumer picks
+            read-only or read-write on their side.
           </span>
         </label>
         {sharingEnabled ? (
@@ -686,8 +690,8 @@ function ProjectMemoryPanel({
               {copiedShare ? "Copied!" : "Copy"}
             </button>
             <span className="basis-full text-[11px] text-gray-400">
-              Paste into another project's Linked external path to share
-              this vault read-only with it.
+              Paste into another project's Linked external path. Each
+              consumer chooses read-only or read-write on their side.
             </span>
           </div>
         ) : (
@@ -739,14 +743,14 @@ function ProjectMemoryPanel({
             <input
               type="checkbox"
               checked={effectiveReadOnly}
-              disabled={isTcaiLink || !externalVaultPath.trim()}
+              disabled={!externalVaultPath.trim()}
               onChange={(e) => onExternalVaultReadOnlyChange(e.target.checked)}
             />
             <span>
               Read only
-              {isTcaiLink && (
-                <span className="ml-1 text-gray-400">
-                  — always read-only for shared links
+              {!effectiveReadOnly && externalVaultPath.trim() && (
+                <span className="ml-1 text-amber-700">
+                  — this project will write back to the linked vault
                 </span>
               )}
             </span>
