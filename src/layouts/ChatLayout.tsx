@@ -9,6 +9,7 @@ import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
 import { STYLE_PRESETS, useChat } from "~/hooks/useChat";
 import type { ApiGlobalModel } from "~/lib/api";
 import { StreamManager } from "~/lib/stream-manager";
+import { estimateMessageListTokens } from "~/lib/tokens";
 
 /**
  * Filter the model list down to what the user can pick, given their
@@ -118,6 +119,15 @@ export default function ChatLayout() {
   useEffect(() => {
     if (isMobile && id) setMobileSidebarOpen(false);
   }, [id, isMobile]);
+
+  // Rough context usage for the bar under the composer. Only the
+  // conversation history contributes here — the draft being typed is
+  // counted inside Input.tsx so this re-render fires only when messages
+  // actually grow. Char-based estimate, see src/lib/tokens.ts.
+  const priorTokens = useMemo(
+    () => estimateMessageListTokens(chat.messages),
+    [chat.messages],
+  );
 
   useGlobalShortcuts({
     onNewChat: () => navigate("/"),
@@ -254,6 +264,7 @@ export default function ChatLayout() {
             // is meaningless here.
             hideModelPicker
             voiceLiveAvailable={false}
+            priorTokens={priorTokens}
           />
         ) : (
           <Input
@@ -276,6 +287,7 @@ export default function ChatLayout() {
             hideModelPicker={chat.inferenceMode === "easy"}
             voiceLiveAvailable={voiceLiveAvailable}
             onOpenVoiceLive={() => setVoiceLiveOpen(true)}
+            priorTokens={priorTokens}
           />
         )}
         {voiceLiveOpen && (

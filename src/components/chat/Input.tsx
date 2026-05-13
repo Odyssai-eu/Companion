@@ -7,6 +7,7 @@ import {
   formatBytes,
   processFile,
 } from "~/lib/file-attach";
+import { estimateTokens, formatTokenCount } from "~/lib/tokens";
 import { voiceInput, type VoiceInputState } from "~/lib/voice-input";
 import { useA11yPrefs } from "~/hooks/useA11yPrefs";
 
@@ -23,6 +24,7 @@ export default function Input({
   hideModelPicker = false,
   onOpenVoiceLive,
   voiceLiveAvailable,
+  priorTokens = 0,
 }: {
   onSend: (text: string, attachments: Attachment[]) => void;
   onCancel: () => void;
@@ -38,6 +40,10 @@ export default function Input({
   hideModelPicker?: boolean;
   onOpenVoiceLive?: () => void;
   voiceLiveAvailable?: boolean;
+  /** Rough token count of the conversation history already on the wire
+   *  (computed in ChatLayout from chat.messages). Combined with the live
+   *  estimate of the typed value to render the context bar. */
+  priorTokens?: number;
 }) {
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState<VoiceInputState>({ status: "idle" });
@@ -333,6 +339,12 @@ export default function Input({
             </button>
           )}
         </div>
+        <ContextBar
+          model={model}
+          models={models}
+          priorTokens={priorTokens}
+          draft={value}
+        />
         <div className="flex items-center justify-between gap-2 pt-1">
           {!isMobile && (
             <p className="font-mono text-[11px] text-gray-400">
@@ -551,29 +563,15 @@ function ModelDropdown({
                 {group}
               </div>
               {list.map((m) => (
-                <button
+                <ModelRow
                   key={m.id}
-                  type="button"
-                  onClick={() => {
+                  model={m}
+                  selected={m.id === value}
+                  onPick={() => {
                     onChange(m.id);
                     setOpen(false);
                   }}
-                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[13px] ${
-                    m.id === value
-                      ? "bg-cyan/10 text-navy"
-                      : "text-ink hover:bg-gray-50"
-                  }`}
-                >
-                  <span className="truncate font-mono">{m.name}</span>
-                  {m.capabilities.vision && (
-                    <span
-                      title="Vision-capable"
-                      className="flex-shrink-0 rounded-full bg-cyan/15 px-1.5 py-0.5 text-[10px] text-cyan-700"
-                    >
-                      👁
-                    </span>
-                  )}
-                </button>
+                />
               ))}
             </div>
           ))}
@@ -816,5 +814,200 @@ function ChevronIcon() {
     >
       <polyline points="6 9 12 15 18 9" />
     </svg>
+  );
+}
+
+/**
+ * One row in the ModelDropdown. Renders the alias on the first line,
+ * a compact metadata line below (family · quantization · ctx), plus
+ * status badges (loaded / loading / cold) when the Odyssai capability
+ * contract is available. Hover tooltip carries the long-form details
+ * (size, backend, nodes, tps, cold-start ETA) so the picker stays
+ * scannable without losing the depth a power user wants.
+ *
+ * When `m.odyssai` is absent (cloud aliases, no engine configured),
+ * we fall back to just the alias + vision chip — same as before.
+ */
+function ModelRow({
+  model,
+  selected,
+  onPick,
+}: {
+  model: ApiGlobalModel;
+  selected: boolean;
+  onPick: () => void;
+}) {
+  const o = model.odyssai;
+  const subtitle = o
+    ? [
+        o.family ?? null,
+        o.quantization ?? null,
+        o.context_length ? `ctx ${formatTokenCount(o.context_length)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+  const tooltip = o ? buildOdyssaiTooltip(o) : undefined;
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      title={tooltip}
+      className={`flex w-full items-start justify-between gap-2 px-3 py-2 text-left text-[13px] ${
+        selected ? "bg-cyan/10 text-navy" : "text-ink hover:bg-gray-50"
+      }`}
+    >
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="truncate font-mono">{model.name}</span>
+        {subtitle && (
+          <span className="truncate font-mono text-[10px] text-gray-500">
+            {subtitle}
+          </span>
+        )}
+      </span>
+      <span className="flex shrink-0 items-center gap-1">
+        {o && <LoadStateBadge caps={o} />}
+        {model.capabilities.vision && (
+          <span
+            title="Vision-capable"
+            className="rounded-full bg-cyan/15 px-1.5 py-0.5 text-[10px] text-cyan-700"
+          >
+            👁
+          </span>
+        )}
+        {model.capabilities.tools && (
+          <span
+            title="Tool / function calling"
+            className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-700"
+          >
+            ⚒
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * Small state pill on the right of each row. Three visual states:
+ *   🟢 loaded  — green, model is warm and ready
+ *   🟡 loading — amber pulse, hot-loading (4-8 min for big MoEs)
+ *   ⚪ cold    — neutral, exists in the catalog but not in RAM
+ *   (none)     — no capability info (cloud or non-Odyssai engine)
+ */
+function LoadStateBadge({
+  caps,
+}: {
+  caps: NonNullable<ApiGlobalModel["odyssai"]>;
+}) {
+  if (caps.loading) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] text-amber-800">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+        loading
+      </span>
+    );
+  }
+  if (caps.loaded) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 font-mono text-[10px] text-emerald-800">
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+        loaded
+      </span>
+    );
+  }
+  if (caps.admin_loadable) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600">
+        <span className="h-1.5 w-1.5 rounded-full bg-gray-300" />
+        cold
+      </span>
+    );
+  }
+  return null;
+}
+
+/**
+ * Multi-line tooltip text shown on hover. Native `title` attribute —
+ * no fancy popover, just plain text. Lines that have no value are
+ * skipped so cloud models don't show "size: null" gibberish.
+ */
+function buildOdyssaiTooltip(
+  caps: NonNullable<ApiGlobalModel["odyssai"]>,
+): string {
+  const lines: string[] = [];
+  if (caps.alias_for) lines.push(`Alias of: ${caps.alias_for}`);
+  if (caps.pool) lines.push(`Pool: ${caps.pool}`);
+  if (caps.backend && caps.nodes) {
+    lines.push(`Backend: ${caps.backend} · ${caps.nodes} node${caps.nodes === 1 ? "" : "s"}`);
+  } else if (caps.backend) {
+    lines.push(`Backend: ${caps.backend}`);
+  }
+  if (caps.context_length) {
+    lines.push(`Context: ${caps.context_length.toLocaleString()} tokens`);
+  }
+  if (caps.quantization) lines.push(`Quantization: ${caps.quantization}`);
+  if (caps.size_bytes) lines.push(`Size: ${formatBytes(caps.size_bytes)}`);
+  if (caps.estimated_tps) {
+    lines.push(`Speed: ~${caps.estimated_tps.toFixed(1)} tok/s`);
+  }
+  if (!caps.loaded && caps.estimated_load_s) {
+    lines.push(
+      `Cold-start ETA: ~${Math.round(caps.estimated_load_s)}s`,
+    );
+  }
+  if (caps.kv_cache_q8) lines.push("KV cache: 8-bit");
+  return lines.join("\n");
+}
+
+/**
+ * Context-budget bar — renders when the selected model has a known
+ * `context_length` (declared via the Odyssai capability contract, see
+ * server/lib/odyssai-contract.ts). Combines an estimate of the
+ * conversation history (priorTokens, computed in ChatLayout) with a
+ * live estimate of the draft typed in the textarea.
+ *
+ * Token count is char-based (≈4 chars/token) — fine for budget signal,
+ * not for billing. See src/lib/tokens.ts. When the model exposes no
+ * context_length (cloud aliases without contract, heuristic fallback),
+ * the bar is hidden — we'd rather show nothing than guess a ceiling.
+ */
+function ContextBar({
+  model,
+  models,
+  priorTokens,
+  draft,
+}: {
+  model: string;
+  models: ApiGlobalModel[];
+  priorTokens: number;
+  draft: string;
+}) {
+  const current = models.find((m) => m.id === model);
+  const ctx = current?.odyssai?.context_length ?? null;
+  if (!ctx || ctx <= 0) return null;
+  const used = priorTokens + estimateTokens(draft);
+  const pct = Math.min(100, (used / ctx) * 100);
+  const tone =
+    pct >= 90
+      ? { bar: "bg-rose-500", text: "text-rose-700" }
+      : pct >= 70
+        ? { bar: "bg-amber-500", text: "text-amber-700" }
+        : { bar: "bg-cyan", text: "text-gray-500" };
+  return (
+    <div
+      className="flex items-center gap-2 pt-1.5"
+      title={`~${used.toLocaleString()} tokens used of ${ctx.toLocaleString()} context window (rough estimate, ≈4 chars/token).`}
+    >
+      <div className="relative h-1 flex-1 overflow-hidden rounded-full bg-gray-100">
+        <div
+          className={`absolute inset-y-0 left-0 ${tone.bar} transition-[width]`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className={`font-mono text-[10px] ${tone.text}`}>
+        ≈ {formatTokenCount(used)} / {formatTokenCount(ctx)}
+      </span>
+    </div>
   );
 }
