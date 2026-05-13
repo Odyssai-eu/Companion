@@ -28,6 +28,7 @@ export default function ProjectPage() {
   const [dedicatedMemoryEnabled, setDedicatedMemoryEnabled] = useState(false);
   const [globalMemoryReadOnly, setGlobalMemoryReadOnly] = useState(false);
   const [externalVaultPath, setExternalVaultPath] = useState("");
+  const [externalVaultReadOnly, setExternalVaultReadOnly] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -48,6 +49,7 @@ export default function ProjectPage() {
       setDedicatedMemoryEnabled(false);
       setGlobalMemoryReadOnly(false);
       setExternalVaultPath("");
+      setExternalVaultReadOnly(true);
       return;
     }
     if (!id) return;
@@ -63,6 +65,7 @@ export default function ProjectPage() {
         setDedicatedMemoryEnabled(p.project.dedicatedMemoryEnabled ?? false);
         setGlobalMemoryReadOnly(p.project.globalMemoryReadOnly ?? false);
         setExternalVaultPath(p.project.externalVaultPath ?? "");
+        setExternalVaultReadOnly(p.project.externalVaultReadOnly ?? true);
         setConversations(c.conversations.filter((x) => x.projectId === id));
       })
       .catch((e) => setError((e as Error).message));
@@ -95,6 +98,7 @@ export default function ProjectPage() {
           dedicatedMemoryEnabled,
           globalMemoryReadOnly,
           externalVaultPath: externalVaultPath.trim() || null,
+          externalVaultReadOnly: externalVaultReadOnly,
         });
         navigate(`/projects/${project.id}`, { replace: true });
       } else if (id) {
@@ -107,6 +111,7 @@ export default function ProjectPage() {
           dedicatedMemoryEnabled,
           globalMemoryReadOnly,
           externalVaultPath: externalVaultPath.trim() || null,
+          externalVaultReadOnly: externalVaultReadOnly,
         });
         setProject(project);
       }
@@ -312,7 +317,9 @@ export default function ProjectPage() {
               <ProjectMemoryPanel
                 projectId={id}
                 externalVaultPath={externalVaultPath}
+                externalVaultReadOnly={externalVaultReadOnly}
                 onExternalVaultPathChange={setExternalVaultPath}
+                onExternalVaultReadOnlyChange={setExternalVaultReadOnly}
               />
             )}
 
@@ -535,12 +542,35 @@ function ToggleRow({
 function ProjectMemoryPanel({
   projectId,
   externalVaultPath,
+  externalVaultReadOnly,
   onExternalVaultPathChange,
+  onExternalVaultReadOnlyChange,
 }: {
   projectId: string;
   externalVaultPath: string;
+  externalVaultReadOnly: boolean;
   onExternalVaultPathChange: (v: string) => void;
+  onExternalVaultReadOnlyChange: (v: boolean) => void;
 }) {
+  // Cross-project share path. Copyable string that another project
+  // pastes into its own Linked external path to read from this one's
+  // DB corpus. tcai:// paths force read-only server-side regardless of
+  // the consumer's toggle.
+  const sharePath = `tcai://project/${projectId}`;
+  const isTcaiLink = externalVaultPath.trim().startsWith("tcai://project/");
+  // When the consumer pastes a tcai:// link, server forces RO. Reflect
+  // that in the UI so the toggle isn't lying about its effect.
+  const effectiveReadOnly = isTcaiLink ? true : externalVaultReadOnly;
+  const [copiedShare, setCopiedShare] = useState(false);
+  async function copyShare() {
+    try {
+      await navigator.clipboard?.writeText(sharePath);
+      setCopiedShare(true);
+      setTimeout(() => setCopiedShare(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }
   const [files, setFiles] = useState<ApiProjectMemoryFile[] | null>(null);
   const [stats, setStats] = useState<ApiProjectMemoryStats | null>(null);
   const [busy, setBusy] = useState(false);
@@ -619,6 +649,24 @@ function ProjectMemoryPanel({
         )}
       </header>
 
+      <div className="flex flex-wrap items-center gap-2 rounded-md bg-gray-50 px-3 py-2 text-[11px]">
+        <span className="text-gray-500">Share path:</span>
+        <code className="flex-1 min-w-0 truncate font-mono text-ink">
+          {sharePath}
+        </code>
+        <button
+          type="button"
+          onClick={copyShare}
+          className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-100"
+        >
+          {copiedShare ? "Copied!" : "Copy"}
+        </button>
+        <span className="basis-full text-[11px] text-gray-400">
+          Paste into another project's Linked external path to share this
+          vault read-only with it.
+        </span>
+      </div>
+
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <label className="flex flex-col gap-1.5 rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 py-3 hover:bg-gray-100">
           <span className="text-[12px] font-medium text-ink">
@@ -645,16 +693,33 @@ function ProjectMemoryPanel({
             Linked external path (read live)
           </span>
           <span className="text-[11px] text-gray-500">
-            Absolute path on the gateway host. Read on every chat turn —
-            no copy, edits land immediately. Save the project to apply.
+            Absolute filesystem path on the gateway host, OR another
+            project's <code className="font-mono">tcai://</code> share
+            path. Read every turn — no copy.
           </span>
           <input
             type="text"
             value={externalVaultPath}
             onChange={(e) => onExternalVaultPathChange(e.target.value)}
-            placeholder="/Users/admin/vault"
+            placeholder="/Users/admin/vault   or   tcai://project/…"
             className="rounded border border-gray-200 bg-white px-2 py-1 font-mono text-[11px]"
           />
+          <label className="flex items-center gap-2 pt-1 text-[11px] text-gray-600">
+            <input
+              type="checkbox"
+              checked={effectiveReadOnly}
+              disabled={isTcaiLink || !externalVaultPath.trim()}
+              onChange={(e) => onExternalVaultReadOnlyChange(e.target.checked)}
+            />
+            <span>
+              Read only
+              {isTcaiLink && (
+                <span className="ml-1 text-gray-400">
+                  — always read-only for shared links
+                </span>
+              )}
+            </span>
+          </label>
         </div>
       </div>
 

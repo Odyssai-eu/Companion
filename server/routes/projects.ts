@@ -56,6 +56,7 @@ const createSchema = z.object({
   dedicatedMemoryEnabled: z.boolean().optional(),
   globalMemoryReadOnly: z.boolean().optional(),
   externalVaultPath: z.string().max(1000).nullish(),
+  externalVaultReadOnly: z.boolean().optional(),
 });
 
 const updateSchema = z.object({
@@ -69,6 +70,7 @@ const updateSchema = z.object({
   /** Absolute path on the gateway host. Pass null / empty string to
    *  clear. The chat route reads this live every turn; no copy. */
   externalVaultPath: z.string().max(1000).nullish(),
+  externalVaultReadOnly: z.boolean().optional(),
 });
 
 function iconForCategory(id: string): string | null {
@@ -108,6 +110,7 @@ projectsRoute.post("/", zValidator("json", createSchema), async (c) => {
         data.externalVaultPath && data.externalVaultPath.trim()
           ? data.externalVaultPath.trim()
           : null,
+      externalVaultReadOnly: data.externalVaultReadOnly ?? true,
     })
     .returning();
   return c.json({ project: row }, 201);
@@ -165,6 +168,8 @@ projectsRoute.patch(
           ? data.externalVaultPath.trim()
           : null;
     }
+    if (data.externalVaultReadOnly !== undefined)
+      patch.externalVaultReadOnly = data.externalVaultReadOnly;
     const [updated] = await db
       .update(projects)
       .set(patch)

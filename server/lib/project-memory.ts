@@ -21,9 +21,19 @@
 
 import { promises as fs } from "node:fs";
 import { join, normalize } from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../db/index";
 import { projectMemoryFiles, projects } from "../db/schema";
+
+/**
+ * URL scheme for cross-project vault links. A project pastes
+ * `tcai://project/<uuid>` into its Linked external path and we resolve
+ * to that project's DB-backed corpus (project_memory_files), scoped to
+ * the same owner for safety. Single-level — we don't recurse through
+ * the target's own linked paths.
+ */
+const TCAI_PROJECT_PREFIX = "tcai://project/";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const MAX_CONTEXT_BYTES = 200 * 1024;
 /** Accepted file extensions for the external vault walk. Same set as
@@ -40,9 +50,9 @@ const ACCEPTED_EXTS = new Set([
 type CorpusEntry = {
   path: string;
   content: string;
-  /** Origin tag for the header label, helps the model distinguish a
-   *  live mount from a snapshot. Purely cosmetic. */
-  origin: "imported" | "vault";
+  /** Origin tag for the header label, helps the model distinguish
+   *  sources. Purely cosmetic but useful when the model needs to cite. */
+  origin: "imported" | "vault" | "shared";
 };
 
 async function readDbFiles(projectId: string): Promise<CorpusEntry[]> {
@@ -57,6 +67,48 @@ async function readDbFiles(projectId: string): Promise<CorpusEntry[]> {
     path: r.path,
     content: r.content,
     origin: "imported" as const,
+  }));
+}
+
+/**
+ * Resolve a `tcai://project/<uuid>` link to the target project's DB
+ * corpus. Returns [] when:
+ *   - the URL is malformed (bad UUID)
+ *   - the target project doesn't exist
+ *   - the target belongs to a different user than the caller (same-user
+ *     scoping — defence in depth even though TheCompAI is single-tenant)
+ *   - the target IS the calling project (self-link makes no sense)
+ *
+ * Single-level only: we don't follow the target's own external_vault_path.
+ * Prevents recursion loops and keeps the resolution cheap.
+ */
+async function readTcaiLink(
+  rawPath: string,
+  ownerUserId: string,
+  callingProjectId: string,
+): Promise<CorpusEntry[]> {
+  const id = rawPath.slice(TCAI_PROJECT_PREFIX.length).trim();
+  if (!UUID_RE.test(id)) return [];
+  if (id === callingProjectId) return [];
+  const [target] = await db
+    .select({ id: projects.id, userId: projects.userId })
+    .from(projects)
+    .where(and(eq(projects.id, id), eq(projects.userId, ownerUserId)))
+    .limit(1);
+  if (!target) return [];
+  // Use the same DB reader to enumerate the target's corpus, then tag
+  // every entry as 'shared' so the model sees provenance.
+  const rows = await db
+    .select({
+      path: projectMemoryFiles.path,
+      content: projectMemoryFiles.content,
+    })
+    .from(projectMemoryFiles)
+    .where(eq(projectMemoryFiles.projectId, target.id));
+  return rows.map((r) => ({
+    path: r.path,
+    content: r.content,
+    origin: "shared" as const,
   }));
 }
 
@@ -97,23 +149,41 @@ async function readVaultFiles(rootPath: string): Promise<CorpusEntry[]> {
 }
 
 /**
- * Build the project-memory markdown block. Combines DB-imported files
- * with live external vault files when both are configured. Returns ""
- * when neither source has content.
+ * Build the project-memory markdown block. Sources merged:
+ *   - project_memory_files (DB) for the calling project
+ *   - the linked external path, which can be:
+ *       - an absolute filesystem path → live readdir
+ *       - a tcai://project/<uuid> link → target project's DB corpus
+ *   - the project's own external vault (the same path field also works
+ *     for filesystem mounts)
+ *
+ * Returns "" when nothing is configured / readable.
  */
 export async function getProjectMemoryContext(
   projectId: string,
 ): Promise<string> {
   const [proj] = await db
-    .select({ externalVaultPath: projects.externalVaultPath })
+    .select({
+      userId: projects.userId,
+      externalVaultPath: projects.externalVaultPath,
+    })
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1);
 
   const dbFiles = await readDbFiles(projectId);
-  const vaultFiles = proj?.externalVaultPath
-    ? await readVaultFiles(proj.externalVaultPath)
-    : [];
+  let vaultFiles: CorpusEntry[] = [];
+  if (proj?.externalVaultPath) {
+    if (proj.externalVaultPath.startsWith(TCAI_PROJECT_PREFIX)) {
+      vaultFiles = await readTcaiLink(
+        proj.externalVaultPath,
+        proj.userId,
+        projectId,
+      );
+    } else {
+      vaultFiles = await readVaultFiles(proj.externalVaultPath);
+    }
+  }
 
   if (dbFiles.length === 0 && vaultFiles.length === 0) return "";
 

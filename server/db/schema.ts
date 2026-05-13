@@ -79,7 +79,18 @@ export const projects = pgTable(
     // sync with the disk on its own. Useful when the user keeps an
     // Obsidian vault locally and wants TheCompAI to see edits
     // immediately. Null = no external mount.
+    //
+    // Also accepts the shape `tcai://project/<uuid>` to point at another
+    // project's internal corpus. This is the shared-memory mechanism —
+    // user copies the share path from project A and pastes it into
+    // project B's linked field. Reads only (forced RO server-side).
     externalVaultPath: text("external_vault_path"),
+    // Read-only flag for external_vault_path. Default true — writing to
+    // a filesystem vault is opt-in. When the path is a tcai:// link,
+    // this is treated as true regardless of the stored value.
+    externalVaultReadOnly: boolean("external_vault_read_only")
+      .notNull()
+      .default(true),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
