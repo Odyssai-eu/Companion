@@ -337,7 +337,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   useEffect(() => {
     if (!conversationId) return;
     const cid = conversationId;
-    let alreadyHandledDone = false;
+    // Track which stream we've already torn down (by startedAt). A plain
+    // boolean would stick across sends in the same conversation (effect
+    // doesn't re-mount when conversationId is unchanged), so the 2nd done
+    // would never fire setSending(false). Each send creates a new entry
+    // with a fresh startedAt — that's our identity key.
+    let lastHandledStart: number | null = null;
     const unsub = StreamManager.subscribe(cid, (entry) => {
       setMessages((prev) => {
         const hasLive = prev.some((m) => m.id === LIVE_ID);
@@ -358,8 +363,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         // got dropped by a DB reload that arrived after the cleanup. Re-mount.
         return [...prev, liveMsg];
       });
-      if (entry.done && !alreadyHandledDone) {
-        alreadyHandledDone = true;
+      if (entry.done && entry.startedAt !== lastHandledStart) {
+        lastHandledStart = entry.startedAt;
         if (entry.error) setError(entry.error);
         // Tiny delay so any final notify lands before we tear down.
         setTimeout(async () => {
