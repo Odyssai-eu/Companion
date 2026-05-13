@@ -21,13 +21,20 @@ import { desc, eq, gte } from "drizzle-orm";
 import { db } from "../db/index";
 import { conversations, users } from "../db/schema";
 import { triggerCompile } from "./memory";
+import {
+  compileProject,
+  listEligibleProjects,
+} from "./project-compile";
 
 const SCHEDULE_TZ = process.env.MEMORY_SCHEDULER_TZ ?? "Europe/Brussels";
-/** Local-clock targets. Order doesn't matter — we check all on every tick. */
-const SLOTS = [
-  { h: 7, m: 0, label: "07:00" },
-  { h: 12, m: 30, label: "12:30" },
-  { h: 20, m: 0, label: "20:00" },
+/** Local-clock targets. Order doesn't matter — we check all on every
+ *  tick. `kind` selects which compile to fire: global wiki for the
+ *  existing three slots, project memory at 19:00. */
+const SLOTS: Array<{ h: number; m: number; label: string; kind: "global" | "project" }> = [
+  { h: 7, m: 0, label: "07:00", kind: "global" },
+  { h: 12, m: 30, label: "12:30", kind: "global" },
+  { h: 19, m: 0, label: "19:00", kind: "project" },
+  { h: 20, m: 0, label: "20:00", kind: "global" },
 ];
 /** Polling cadence. Every 60s is enough — we only need ±1min accuracy. */
 const TICK_MS = 60_000;
@@ -67,9 +74,8 @@ function nowInTz(): {
   };
 }
 
-async function runSlot(slotLabel: string): Promise<void> {
+async function runGlobalSlot(slotLabel: string): Promise<void> {
   const since = new Date(Date.now() - ACTIVE_WINDOW_MS);
-  // Users with activity in the last 24h.
   const activeUsers = await db
     .select({ id: users.id })
     .from(users)
@@ -77,8 +83,6 @@ async function runSlot(slotLabel: string): Promise<void> {
 
   let triggered = 0;
   for (const u of activeUsers) {
-    // Pick the user's most recently touched conversation as the compile
-    // source. Skip if they have none.
     const [conv] = await db
       .select({ id: conversations.id })
       .from(conversations)
@@ -90,7 +94,28 @@ async function runSlot(slotLabel: string): Promise<void> {
     triggered++;
   }
   console.log(
-    `[memory-scheduler] slot=${slotLabel} fired triggerCompile for ${triggered} users`,
+    `[memory-scheduler] slot=${slotLabel} (global) fired triggerCompile for ${triggered} users`,
+  );
+}
+
+async function runProjectSlot(slotLabel: string): Promise<void> {
+  const eligible = await listEligibleProjects(ACTIVE_WINDOW_MS);
+  if (eligible.length === 0) {
+    console.log(
+      `[memory-scheduler] slot=${slotLabel} (project) no eligible projects`,
+    );
+    return;
+  }
+  let ok = 0;
+  for (const p of eligible) {
+    const status = await compileProject(p);
+    console.log(
+      `[memory-scheduler] slot=${slotLabel} (project) project=${p.id} ${status}`,
+    );
+    if (status.startsWith("wrote ")) ok++;
+  }
+  console.log(
+    `[memory-scheduler] slot=${slotLabel} (project) ${ok}/${eligible.length} compiled`,
   );
 }
 
@@ -100,10 +125,13 @@ function tick(): void {
     if (now.hour !== slot.h || now.minute !== slot.m) continue;
     if (lastFiredDate.get(slot.label) === now.date) continue;
     lastFiredDate.set(slot.label, now.date);
-    // Don't await — runSlot can be slow on a big user table.
-    void runSlot(slot.label).catch((err) => {
+    const runner =
+      slot.kind === "project"
+        ? runProjectSlot(slot.label)
+        : runGlobalSlot(slot.label);
+    void runner.catch((err) => {
       console.error(
-        `[memory-scheduler] slot=${slot.label} runSlot failed:`,
+        `[memory-scheduler] slot=${slot.label} (${slot.kind}) failed:`,
         err,
       );
     });
@@ -115,7 +143,9 @@ export function startMemoryScheduler(): void {
   if (started) return;
   started = true;
   console.log(
-    `[memory-scheduler] started (tz=${SCHEDULE_TZ}, slots=${SLOTS.map((s) => s.label).join(", ")})`,
+    `[memory-scheduler] started (tz=${SCHEDULE_TZ}, slots=${SLOTS.map(
+      (s) => `${s.label}/${s.kind}`,
+    ).join(", ")})`,
   );
   // Run once immediately so a restart within the firing minute doesn't
   // miss the slot.
