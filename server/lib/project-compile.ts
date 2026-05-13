@@ -40,19 +40,21 @@ import {
 const TCAI_PROJECT_PREFIX = "tcai://project/";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /**
- * Summarizer model resolution order:
- *   1. env PROJECT_COMPILE_MODEL (explicit override, deploy-wide)
- *   2. the project owner's `users.default_model`
- *      (whatever they picked in Settings → Inference)
- *   3. hard fallback string
+ * Summarizer model resolution. Primary is local; secondary is cloud
+ * and only fires if the primary call errors (network / 5xx / timeout).
  *
- * The fallback is deliberately something safe to use locally — the
- * previous default (`Qwen3.6-flash`) ambiguously routes to OpenRouter
- * in some LiteLLM configs. Aliasing through the user's own default
- * keeps compile on the same model the user trusts for their own work
- * (and same billing path).
+ * Primary order:
+ *   1. env PROJECT_COMPILE_MODEL (deploy-wide override)
+ *   2. users.default_model (whatever the user picked in Settings)
+ *   3. 'agent-fast' (Qwen3.6-35B-A3B-MLX-8bit local on the cluster)
+ *
+ * Cloud fallback: 'Qwen3.6-flash' (routes to OpenRouter via LiteLLM
+ * on Sophie's setup). Only used if the primary path fails — keeps
+ * normal traffic on the local cluster but doesn't drop the compile
+ * when the cluster is down for maintenance.
  */
-const COMPILE_MODEL_FALLBACK = "agent-fast";
+const COMPILE_MODEL_LOCAL_FALLBACK = "agent-fast";
+const COMPILE_MODEL_CLOUD_FALLBACK = "Qwen3.6-flash";
 const DEFAULT_LITELLM = process.env.LITELLM_URL ?? "http://192.168.86.44:4000";
 const DEFAULT_KEY = process.env.LITELLM_API_KEY ?? null;
 /** Match the per-file cap in project-memory.ts so a single compile
@@ -201,16 +203,12 @@ async function summarize(
     .limit(1);
   const baseUrl = (user?.litellmUrl ?? DEFAULT_LITELLM).replace(/\/+$/, "");
   const apiKey = user?.litellmApiKey ?? DEFAULT_KEY;
-  // Model resolution: deploy-wide override → user's own default → safe
-  // local fallback. We deliberately avoid Qwen3.6-flash (which routes
-  // to OpenRouter on the user's stack) — the compile must stay on the
-  // local cluster.
-  const compileModel =
+  const primaryModel =
     process.env.PROJECT_COMPILE_MODEL ??
     user?.defaultModel ??
-    COMPILE_MODEL_FALLBACK;
-  // Cap input size — a single project may have a giant day. 60 KB of
-  // input is plenty for a summary task.
+    COMPILE_MODEL_LOCAL_FALLBACK;
+
+  // 60 KB input cap — a giant day shouldn't blow the prompt.
   const MAX_INPUT_BYTES = 60 * 1024;
   let body = "";
   for (const m of msgs) {
@@ -218,6 +216,38 @@ async function summarize(
     if (body.length + piece.length > MAX_INPUT_BYTES) break;
     body += piece;
   }
+
+  // Try primary (local). On failure (timeout / 5xx / network), retry
+  // ONCE with the cloud fallback. The compile shouldn't silently skip
+  // when the cluster is down — we'd rather pay a cloud call than miss
+  // a day's notes.
+  const candidates =
+    primaryModel === COMPILE_MODEL_CLOUD_FALLBACK
+      ? [primaryModel]
+      : [primaryModel, COMPILE_MODEL_CLOUD_FALLBACK];
+
+  let lastErr: Error | null = null;
+  for (const model of candidates) {
+    try {
+      return await callLLM(baseUrl, apiKey, model, p.name, body);
+    } catch (err) {
+      lastErr = err as Error;
+      console.warn(
+        `[project-compile] model=${model} failed: ${lastErr.message.slice(0, 120)}`,
+      );
+      // Try next candidate.
+    }
+  }
+  throw lastErr ?? new Error("summarizer: no model succeeded");
+}
+
+async function callLLM(
+  baseUrl: string,
+  apiKey: string | null,
+  model: string,
+  projectName: string,
+  body: string,
+): Promise<string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
@@ -226,7 +256,7 @@ async function summarize(
     method: "POST",
     headers,
     body: JSON.stringify({
-      model: compileModel,
+      model,
       stream: false,
       max_tokens: 800,
       temperature: 0.3,
@@ -234,14 +264,16 @@ async function summarize(
         { role: "system", content: SUMMARIZER_PROMPT },
         {
           role: "user",
-          content: `Project: ${p.name}\n\nRecent conversations:\n\n${body}`,
+          content: `Project: ${projectName}\n\nRecent conversations:\n\n${body}`,
         },
       ],
     }),
     signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) {
-    throw new Error(`summarizer ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    throw new Error(
+      `summarizer ${res.status}: ${(await res.text()).slice(0, 200)}`,
+    );
   }
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
