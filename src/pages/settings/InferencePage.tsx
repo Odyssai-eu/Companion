@@ -36,6 +36,14 @@ export default function InferencePage() {
     useState<ApiInferenceMode>("expert");
   const [easyModel, setEasyModel] = useState("");
   const [namedModels, setNamedModels] = useState<ApiNamedModels>({});
+  // Odyssai engine — capability contract source. Distinct from LiteLLM.
+  const [engineUrl, setEngineUrl] = useState("");
+  const [engineToken, setEngineToken] = useState("");
+  const [engineTokenDirty, setEngineTokenDirty] = useState(false);
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<
+    Awaited<ReturnType<typeof api.probeInferenceEngine>> | null
+  >(null);
 
   useEffect(() => {
     Promise.all([api.inferenceSettings(), api.listAllModels().catch(() => ({ models: [] }))])
@@ -48,6 +56,7 @@ export default function InferencePage() {
         setInferenceMode(s.inferenceMode);
         setEasyModel(s.easyModel ?? "");
         setNamedModels(s.namedModels ?? {});
+        setEngineUrl(s.engineUrl ?? "");
       })
       .catch((e) => setError((e as Error).message));
   }, []);
@@ -66,12 +75,17 @@ export default function InferencePage() {
         namedModels: Object.values(namedModels).some((v) => v && v.length > 0)
           ? namedModels
           : null,
+        engineUrl: engineUrl.trim() || null,
       };
       if (keyDirty) patch.litellmApiKey = apiKey.trim() || null;
+      if (engineTokenDirty)
+        patch.engineToken = engineToken.trim() || null;
       await api.updateInferenceSettings(patch);
       setSaved("Saved");
       setKeyDirty(false);
       setApiKey("");
+      setEngineTokenDirty(false);
+      setEngineToken("");
       const fresh = await api.inferenceSettings();
       setSettings(fresh);
       setTimeout(() => setSaved(null), 2000);
@@ -91,6 +105,31 @@ export default function InferencePage() {
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function runProbe() {
+    const url = engineUrl.trim();
+    if (!url) return;
+    setProbing(true);
+    setProbeResult(null);
+    try {
+      const r = await api.probeInferenceEngine({
+        url,
+        token: engineTokenDirty ? engineToken.trim() || undefined : undefined,
+      });
+      setProbeResult(r);
+    } catch (e) {
+      setProbeResult({
+        reachable: false,
+        isOdyssai: false,
+        authRequired: false,
+        authProvided: false,
+        modelsReachable: false,
+        error: (e as Error).message,
+      });
+    } finally {
+      setProbing(false);
     }
   }
 
@@ -168,6 +207,59 @@ export default function InferencePage() {
             Refresh model list
           </button>
         </div>
+      </Section>
+
+      <Section title="Engine capabilities (optional)">
+        <p className="text-[13px] text-gray-600">
+          Direct URL to an Odyssai-compatible engine (e.g. Odysseus). When
+          set, Companion polls the engine's capability contract instead of
+          guessing per-model features (vision, tools, context length, loaded
+          state). Inference still routes through LiteLLM above — this is
+          purely for accurate capability info.
+        </p>
+        <Field label="Engine URL" hint="Empty disables the contract; we fall back to heuristics.">
+          <input
+            type="url"
+            value={engineUrl}
+            onChange={(e) => setEngineUrl(e.target.value)}
+            placeholder="http://192.168.86.141:8000"
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+        </Field>
+        <Field
+          label="Admin token (optional)"
+          hint="Only needed for /admin/* on the engine. Public /v1/* and the contract itself don't require auth."
+        >
+          <input
+            type="password"
+            value={engineTokenDirty ? engineToken : settings.hasEngineToken ? "•••••••• (saved)" : ""}
+            onChange={(e) => {
+              setEngineToken(e.target.value);
+              setEngineTokenDirty(true);
+            }}
+            placeholder={settings.hasEngineToken ? "•••••••• (saved)" : "Bearer token"}
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+        </Field>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={runProbe}
+            disabled={probing || !engineUrl.trim()}
+            className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {probing ? "Probing…" : "Test"}
+          </button>
+          {probeResult && <ProbeBadge result={probeResult} />}
+        </div>
+        {settings.engineMeta && !probeResult && (
+          <p className="font-mono text-[11px] text-gray-500">
+            Saved engine:{" "}
+            <strong>{String(settings.engineMeta.name ?? "—")}</strong>{" "}
+            v{String(settings.engineMeta.version ?? "—")} · vendor{" "}
+            {String(settings.engineMeta.vendor ?? "—")}
+          </p>
+        )}
       </Section>
 
       <Section title="Inference mode">
@@ -377,5 +469,54 @@ function Field({
         <span className="font-mono text-[11px] text-gray-400">{hint}</span>
       )}
     </div>
+  );
+}
+
+/**
+ * Renders the probe result as a single badge line. Three states:
+ *   ✓ Odyssai detected — green, when vendor matches
+ *   ⓘ Reachable, generic OpenAI-compat — cyan, /v1/models works but no contract
+ *   ⨯ Unreachable — red, neither endpoint answered
+ */
+function ProbeBadge({
+  result,
+}: {
+  result: NonNullable<
+    Awaited<ReturnType<typeof api.probeInferenceEngine>>
+  >;
+}) {
+  if (!result.reachable) {
+    return (
+      <span className="rounded-md bg-rose-100 px-2 py-1 font-mono text-[11px] text-rose-700">
+        ⨯ Unreachable
+        {result.error && <span className="ml-2 opacity-70">— {result.error}</span>}
+      </span>
+    );
+  }
+  if (result.isOdyssai) {
+    return (
+      <span className="rounded-md bg-emerald-100 px-2 py-1 font-mono text-[11px] text-emerald-800">
+        ✓ Odyssai detected
+        {result.meta?.version && (
+          <span className="ml-2 opacity-80">v{result.meta.version}</span>
+        )}
+        {typeof result.modelsCount === "number" && (
+          <span className="ml-2 opacity-80">· {result.modelsCount} models</span>
+        )}
+        {result.authRequired && !result.authProvided && (
+          <span className="ml-2 text-amber-700">
+            · admin token required for /admin/*
+          </span>
+        )}
+      </span>
+    );
+  }
+  return (
+    <span className="rounded-md bg-cyan/15 px-2 py-1 font-mono text-[11px] text-cyan">
+      ⓘ Generic OpenAI-compatible endpoint
+      {typeof result.modelsCount === "number" && (
+        <span className="ml-2 opacity-80">· {result.modelsCount} models</span>
+      )}
+    </span>
   );
 }

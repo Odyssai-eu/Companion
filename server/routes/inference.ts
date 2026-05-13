@@ -12,6 +12,8 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { users } from "../db/schema";
+import { invalidateEngineCache } from "../lib/odyssai-capabilities";
+import { probeEngine } from "../lib/odyssai-probe";
 
 type Env = { Variables: { userId: string } };
 const inferenceRoute = new Hono<Env>();
@@ -27,6 +29,9 @@ inferenceRoute.get("/settings", async (c) => {
       inferenceMode: users.inferenceMode,
       easyModel: users.easyModel,
       namedModels: users.namedModels,
+      engineUrl: users.engineUrl,
+      engineToken: users.engineToken,
+      engineMeta: users.engineMeta,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -41,6 +46,9 @@ inferenceRoute.get("/settings", async (c) => {
     inferenceMode: u.inferenceMode as "easy" | "advanced" | "expert",
     easyModel: u.easyModel,
     namedModels: u.namedModels ?? {},
+    engineUrl: u.engineUrl,
+    hasEngineToken: Boolean(u.engineToken),
+    engineMeta: u.engineMeta,
   });
 });
 
@@ -61,6 +69,8 @@ const patchSchema = z.object({
   inferenceMode: z.enum(["easy", "advanced", "expert"]).optional(),
   easyModel: z.string().max(200).nullish(),
   namedModels: namedModelsSchema,
+  engineUrl: z.string().url().max(400).nullish(),
+  engineToken: z.string().max(400).nullish(),
 });
 
 inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => {
@@ -74,12 +84,61 @@ inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => 
   if (data.inferenceMode !== undefined) patch.inferenceMode = data.inferenceMode;
   if (data.easyModel !== undefined) patch.easyModel = data.easyModel ?? null;
   if (data.namedModels !== undefined) patch.namedModels = data.namedModels ?? null;
+  if (data.engineUrl !== undefined) {
+    patch.engineUrl = data.engineUrl ?? null;
+    // Drop the cache when the URL changes so the next /api/models reads
+    // fresh caps from the new target instead of the stale one.
+    invalidateEngineCache();
+  }
+  if (data.engineToken !== undefined) {
+    patch.engineToken = data.engineToken ?? null;
+  }
   if (Object.keys(patch).length === 0) {
     return c.json({ error: "no_fields_to_update" }, 400);
   }
   await db.update(users).set(patch).where(eq(users.id, userId));
   return c.json({ ok: true });
 });
+
+/**
+ * Probe an engine URL on demand. Drives the "Test" button in Settings →
+ * Inference. Body is { url, token? } — we don't read the user's saved
+ * fields because the user is editing them in the form and may not have
+ * saved yet.
+ *
+ * On a successful probe of an Odyssai engine, the engine_meta column is
+ * cached so the UI can render version / features without re-probing.
+ */
+const probeSchema = z.object({
+  url: z.string().url().max(400),
+  token: z.string().max(400).optional(),
+});
+
+inferenceRoute.post(
+  "/engine/probe",
+  zValidator("json", probeSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const { url, token } = c.req.valid("json");
+    const result = await probeEngine(url, token);
+    // Persist the meta snapshot only when it's an Odyssai engine (no
+    // value in caching a 404 / generic OpenAI response). Async, no
+    // await — the response is the source of truth for the UI.
+    if (result.isOdyssai && result.meta) {
+      void db
+        .update(users)
+        .set({
+          engineMeta: result.meta as unknown as Record<string, unknown>,
+        })
+        .where(eq(users.id, userId))
+        .catch(() => undefined);
+    }
+    // Caps cache may hold stale data from the previous URL — flush so
+    // the next /api/models fetches fresh.
+    invalidateEngineCache(url);
+    return c.json(result);
+  },
+);
 
 inferenceRoute.get("/status", async (c) => {
   const userId = c.get("userId");

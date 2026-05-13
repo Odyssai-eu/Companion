@@ -6,8 +6,13 @@
  * through if LiteLLM publishes them via model_info.
  */
 
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { db } from "../db/index";
+import { users } from "../db/schema";
 import { authHeaders, resolveLiteLLM } from "../lib/litellm";
+import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
+import type { OdyssaiModelCapabilities } from "../lib/odyssai-contract";
 
 type Env = { Variables: { userId: string } };
 const modelsRoute = new Hono<Env>();
@@ -19,16 +24,33 @@ export type GlobalModel = {
   /** Optional grouping tag(s) the admin can set in litellm/config.yaml under
    *  model_info.tags. Useful to render "Local" / "Cloud" / "Reasoning" groups. */
   tags: string[];
-  /** Coarse capability flags. Heuristic on the id when LiteLLM doesn't expose. */
+  /** Coarse capability flags — backwards-compat with existing client. The
+   *  full Odyssai capability block (when available) lives in `odyssai`. */
   capabilities: {
     vision: boolean;
     tools: boolean;
   };
+  /** Set when the user has an engine URL configured AND the engine
+   *  returned an `x_odyssai` block for this model. Carries the rich
+   *  contract: loaded?, pool, backend, context_length, etc. */
+  odyssai?: OdyssaiModelCapabilities;
 };
 
 modelsRoute.get("/", async (c) => {
   const userId = c.get("userId");
   const target = await resolveLiteLLM(userId);
+
+  // Engine capability map — populated only when the user configured an
+  // Odyssai-compatible engine URL. Empty Map when not set (or unreachable),
+  // which makes the merge below a no-op without branching.
+  const [me] = await db
+    .select({ engineUrl: users.engineUrl, engineToken: users.engineToken })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const odyssaiCaps = me?.engineUrl
+    ? await fetchEngineCapabilities(me.engineUrl, me.engineToken)
+    : new Map<string, OdyssaiModelCapabilities>();
 
   // Use LiteLLM's /model/info — richer than /v1/models, returns per-model
   // litellm_params (the underlying upstream model id) and model_info flags.
@@ -80,14 +102,30 @@ modelsRoute.get("/", async (c) => {
       //    the upstream path (e.g. ".../gemma-4-26b...") is much more
       //    reliable than the alias ("agent-fast") for capability detection.
       const heuristic = heuristicCaps(`${id} ${upstreamModel}`);
+      // Case-insensitive match handles the LiteLLM "Argo" vs Odysseus
+      // "argo" skew documented in the contract brief.
+      const odyssai = odyssaiCaps.get(id.toLowerCase());
+      // When the engine declares caps, they win over LiteLLM model_info
+      // AND the heuristic. The engine knows the truth about its own
+      // models (vision, tools, context length) — that's the whole point
+      // of the contract.
+      const visionFinal =
+        odyssai?.supports_vision ??
+        info.supports_vision ??
+        heuristic.vision;
+      const toolsFinal =
+        odyssai?.supports_tools ??
+        info.supports_function_calling ??
+        heuristic.tools;
       return {
         id,
         name: info.name ?? id,
         tags: info.tags ?? [],
         capabilities: {
-          vision: info.supports_vision ?? heuristic.vision,
-          tools: info.supports_function_calling ?? heuristic.tools,
+          vision: visionFinal,
+          tools: toolsFinal,
         },
+        ...(odyssai ? { odyssai } : {}),
       };
     })
     .filter((m): m is GlobalModel => m !== null);

@@ -1,8 +1,36 @@
+export type OdyssaiModelCapabilities = {
+  loaded: boolean;
+  loading: boolean;
+  pool: string | null;
+  backend: string | null;
+  nodes: number | null;
+  context_length: number | null;
+  max_output_tokens: number | null;
+  quantization: string | null;
+  size_bytes: number | null;
+  modalities: string[];
+  family: string | null;
+  supports_tools: boolean | null;
+  supports_vision: boolean | null;
+  supports_json_mode: boolean | null;
+  supports_streaming: boolean;
+  estimated_tps: number | null;
+  estimated_load_s: number | null;
+  warm: boolean;
+  kv_cache_q8: boolean;
+  admin_loadable: boolean;
+  alias_for?: string;
+};
+
 export type ApiGlobalModel = {
   id: string;
   name: string;
   tags: string[];
   capabilities: { vision: boolean; tools: boolean };
+  /** Rich per-model contract from an Odyssai-compatible engine. Present
+   *  only when the user configured an engine URL AND the engine returned
+   *  an `x_odyssai` block for this model id. */
+  odyssai?: OdyssaiModelCapabilities;
 };
 
 export type ApiInferenceMode = "easy" | "advanced" | "expert";
@@ -23,6 +51,34 @@ export type ApiInferenceSettings = {
   inferenceMode: ApiInferenceMode;
   easyModel: string | null;
   namedModels: ApiNamedModels;
+  /** Direct URL to an Odyssai-compatible engine for capability discovery
+   *  (distinct from litellmUrl which routes inference). */
+  engineUrl: string | null;
+  /** True when an engine bearer token is on file (its value is never
+   *  returned, only its presence). */
+  hasEngineToken: boolean;
+  /** Cached `.well-known/inference-engine.json` body from the last
+   *  successful probe. Lets the UI render version/features without an
+   *  extra round-trip. */
+  engineMeta: Record<string, unknown> | null;
+};
+
+export type ApiEngineProbeResult = {
+  reachable: boolean;
+  isOdyssai: boolean;
+  meta?: {
+    name?: string;
+    vendor?: string;
+    version?: string;
+    api_compat?: string[];
+    auth?: { required: boolean };
+    features?: string[];
+  };
+  authRequired: boolean;
+  authProvided: boolean;
+  modelsReachable: boolean;
+  modelsCount?: number;
+  error?: string;
 };
 
 export type ApiInferenceStatus = {
@@ -295,6 +351,8 @@ export const api = {
       inferenceMode: ApiInferenceMode;
       easyModel: string | null;
       namedModels: ApiNamedModels | null;
+      engineUrl: string | null;
+      engineToken: string | null;
     }>,
   ) =>
     request<{ ok: true }>("/api/inference/settings", {
@@ -303,6 +361,11 @@ export const api = {
     }),
   inferenceStatus: () =>
     request<ApiInferenceStatus>("/api/inference/status"),
+  probeInferenceEngine: (body: { url: string; token?: string }) =>
+    request<ApiEngineProbeResult>("/api/inference/engine/probe", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   listConversations: () =>
     request<{ conversations: ApiConversation[] }>("/api/conversations"),

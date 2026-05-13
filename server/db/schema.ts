@@ -22,6 +22,15 @@ export const users = pgTable("users", {
   defaultModel: text("default_model"),
   litellmUrl: text("litellm_url"),
   litellmApiKey: text("litellm_api_key"),
+  // Odyssai capability contract — direct address of an engine that
+  // implements `GET /.well-known/inference-engine.json` and per-model
+  // `x_odyssai` capabilities. Distinct from litellm_url which routes
+  // inference. The engine URL is polled to enrich the model list with
+  // accurate caps (loaded?, context_length, supports_tools, …) instead
+  // of relying on heuristics on model ids.
+  engineUrl: text("engine_url"),
+  engineToken: text("engine_token"),
+  engineMeta: jsonb("engine_meta").$type<Record<string, unknown>>(),
   // Temporal awareness — fed into every inference as a context tag.
   timezone: text("timezone").notNull().default("Europe/Brussels"),
   lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
