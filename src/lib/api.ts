@@ -75,6 +75,9 @@ export type ApiProject = {
   /** Read-only flag for the linked path. Forced true server-side when
    *  the path is a tcai:// link. */
   externalVaultReadOnly: boolean;
+  /** Sharing consent: must be true for other projects (same user) to be
+   *  able to link to this one via tcai://project/<id>. Default false. */
+  sharingEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -548,6 +551,7 @@ export const api = {
     globalMemoryReadOnly?: boolean;
     externalVaultPath?: string | null;
     externalVaultReadOnly?: boolean;
+    sharingEnabled?: boolean;
   }) =>
     request<{ project: ApiProject }>("/api/projects", {
       method: "POST",
@@ -565,6 +569,7 @@ export const api = {
       globalMemoryReadOnly: boolean;
       externalVaultPath: string | null;
       externalVaultReadOnly: boolean;
+      sharingEnabled: boolean;
     }>,
   ) =>
     request<{ project: ApiProject }>(`/api/projects/${id}`, {

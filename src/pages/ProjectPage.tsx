@@ -29,6 +29,7 @@ export default function ProjectPage() {
   const [globalMemoryReadOnly, setGlobalMemoryReadOnly] = useState(false);
   const [externalVaultPath, setExternalVaultPath] = useState("");
   const [externalVaultReadOnly, setExternalVaultReadOnly] = useState(true);
+  const [sharingEnabled, setSharingEnabled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -50,6 +51,7 @@ export default function ProjectPage() {
       setGlobalMemoryReadOnly(false);
       setExternalVaultPath("");
       setExternalVaultReadOnly(true);
+      setSharingEnabled(false);
       return;
     }
     if (!id) return;
@@ -66,6 +68,7 @@ export default function ProjectPage() {
         setGlobalMemoryReadOnly(p.project.globalMemoryReadOnly ?? false);
         setExternalVaultPath(p.project.externalVaultPath ?? "");
         setExternalVaultReadOnly(p.project.externalVaultReadOnly ?? true);
+        setSharingEnabled(p.project.sharingEnabled ?? false);
         setConversations(c.conversations.filter((x) => x.projectId === id));
       })
       .catch((e) => setError((e as Error).message));
@@ -99,6 +102,7 @@ export default function ProjectPage() {
           globalMemoryReadOnly,
           externalVaultPath: externalVaultPath.trim() || null,
           externalVaultReadOnly: externalVaultReadOnly,
+          sharingEnabled: sharingEnabled,
         });
         navigate(`/projects/${project.id}`, { replace: true });
       } else if (id) {
@@ -112,6 +116,7 @@ export default function ProjectPage() {
           globalMemoryReadOnly,
           externalVaultPath: externalVaultPath.trim() || null,
           externalVaultReadOnly: externalVaultReadOnly,
+          sharingEnabled: sharingEnabled,
         });
         setProject(project);
       }
@@ -318,8 +323,10 @@ export default function ProjectPage() {
                 projectId={id}
                 externalVaultPath={externalVaultPath}
                 externalVaultReadOnly={externalVaultReadOnly}
+                sharingEnabled={sharingEnabled}
                 onExternalVaultPathChange={setExternalVaultPath}
                 onExternalVaultReadOnlyChange={setExternalVaultReadOnly}
+                onSharingEnabledChange={setSharingEnabled}
               />
             )}
 
@@ -543,14 +550,18 @@ function ProjectMemoryPanel({
   projectId,
   externalVaultPath,
   externalVaultReadOnly,
+  sharingEnabled,
   onExternalVaultPathChange,
   onExternalVaultReadOnlyChange,
+  onSharingEnabledChange,
 }: {
   projectId: string;
   externalVaultPath: string;
   externalVaultReadOnly: boolean;
+  sharingEnabled: boolean;
   onExternalVaultPathChange: (v: string) => void;
   onExternalVaultReadOnlyChange: (v: boolean) => void;
+  onSharingEnabledChange: (v: boolean) => void;
 }) {
   // Cross-project share path. Copyable string that another project
   // pastes into its own Linked external path to read from this one's
@@ -649,22 +660,42 @@ function ProjectMemoryPanel({
         )}
       </header>
 
-      <div className="flex flex-wrap items-center gap-2 rounded-md bg-gray-50 px-3 py-2 text-[11px]">
-        <span className="text-gray-500">Share path:</span>
-        <code className="flex-1 min-w-0 truncate font-mono text-ink">
-          {sharePath}
-        </code>
-        <button
-          type="button"
-          onClick={copyShare}
-          className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-100"
-        >
-          {copiedShare ? "Copied!" : "Copy"}
-        </button>
-        <span className="basis-full text-[11px] text-gray-400">
-          Paste into another project's Linked external path to share this
-          vault read-only with it.
-        </span>
+      <div className="flex flex-col gap-2 rounded-md bg-gray-50 px-3 py-2 text-[11px]">
+        <label className="flex items-center gap-2 text-[12px] text-ink">
+          <input
+            type="checkbox"
+            checked={sharingEnabled}
+            onChange={(e) => onSharingEnabledChange(e.target.checked)}
+          />
+          <span className="font-medium">Sharing</span>
+          <span className="text-gray-500">
+            — let other projects link to this vault read-only.
+          </span>
+        </label>
+        {sharingEnabled ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-gray-500">Share path:</span>
+            <code className="flex-1 min-w-0 truncate font-mono text-ink">
+              {sharePath}
+            </code>
+            <button
+              type="button"
+              onClick={copyShare}
+              className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-100"
+            >
+              {copiedShare ? "Copied!" : "Copy"}
+            </button>
+            <span className="basis-full text-[11px] text-gray-400">
+              Paste into another project's Linked external path to share
+              this vault read-only with it.
+            </span>
+          </div>
+        ) : (
+          <span className="text-[11px] text-gray-400">
+            Off — no other project can link to this vault. Turn on to
+            expose a share path.
+          </span>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

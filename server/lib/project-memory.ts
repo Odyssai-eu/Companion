@@ -91,11 +91,19 @@ async function readTcaiLink(
   if (!UUID_RE.test(id)) return [];
   if (id === callingProjectId) return [];
   const [target] = await db
-    .select({ id: projects.id, userId: projects.userId })
+    .select({
+      id: projects.id,
+      userId: projects.userId,
+      sharingEnabled: projects.sharingEnabled,
+    })
     .from(projects)
     .where(and(eq(projects.id, id), eq(projects.userId, ownerUserId)))
     .limit(1);
   if (!target) return [];
+  // Source project must have explicitly opted in to being a hub.
+  // Without this consent flag, the tcai:// link silently resolves to
+  // empty — same UX as a non-existent target.
+  if (!target.sharingEnabled) return [];
   // Use the same DB reader to enumerate the target's corpus, then tag
   // every entry as 'shared' so the model sees provenance.
   const rows = await db

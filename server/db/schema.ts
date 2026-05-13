@@ -91,6 +91,11 @@ export const projects = pgTable(
     externalVaultReadOnly: boolean("external_vault_read_only")
       .notNull()
       .default(true),
+    // Consent flag: must be true for this project to be linkable via
+    // tcai://project/<uuid> from another project. Default false —
+    // sharing is explicit. The Share path field in the UI is hidden
+    // (or greyed out) until this is on.
+    sharingEnabled: boolean("sharing_enabled").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
