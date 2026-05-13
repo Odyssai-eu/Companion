@@ -39,8 +39,20 @@ import {
 
 const TCAI_PROJECT_PREFIX = "tcai://project/";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** Cheap, fast summarizer. Override per-deploy via env. */
-const COMPILE_MODEL = process.env.PROJECT_COMPILE_MODEL ?? "Qwen3.6-flash";
+/**
+ * Summarizer model resolution order:
+ *   1. env PROJECT_COMPILE_MODEL (explicit override, deploy-wide)
+ *   2. the project owner's `users.default_model`
+ *      (whatever they picked in Settings → Inference)
+ *   3. hard fallback string
+ *
+ * The fallback is deliberately something safe to use locally — the
+ * previous default (`Qwen3.6-flash`) ambiguously routes to OpenRouter
+ * in some LiteLLM configs. Aliasing through the user's own default
+ * keeps compile on the same model the user trusts for their own work
+ * (and same billing path).
+ */
+const COMPILE_MODEL_FALLBACK = "agent-fast";
 const DEFAULT_LITELLM = process.env.LITELLM_URL ?? "http://192.168.86.44:4000";
 const DEFAULT_KEY = process.env.LITELLM_API_KEY ?? null;
 /** Match the per-file cap in project-memory.ts so a single compile
@@ -182,12 +194,21 @@ async function summarize(
     .select({
       litellmUrl: users.litellmUrl,
       litellmApiKey: users.litellmApiKey,
+      defaultModel: users.defaultModel,
     })
     .from(users)
     .where(eq(users.id, p.userId))
     .limit(1);
   const baseUrl = (user?.litellmUrl ?? DEFAULT_LITELLM).replace(/\/+$/, "");
   const apiKey = user?.litellmApiKey ?? DEFAULT_KEY;
+  // Model resolution: deploy-wide override → user's own default → safe
+  // local fallback. We deliberately avoid Qwen3.6-flash (which routes
+  // to OpenRouter on the user's stack) — the compile must stay on the
+  // local cluster.
+  const compileModel =
+    process.env.PROJECT_COMPILE_MODEL ??
+    user?.defaultModel ??
+    COMPILE_MODEL_FALLBACK;
   // Cap input size — a single project may have a giant day. 60 KB of
   // input is plenty for a summary task.
   const MAX_INPUT_BYTES = 60 * 1024;
@@ -205,7 +226,7 @@ async function summarize(
     method: "POST",
     headers,
     body: JSON.stringify({
-      model: COMPILE_MODEL,
+      model: compileModel,
       stream: false,
       max_tokens: 800,
       temperature: 0.3,
