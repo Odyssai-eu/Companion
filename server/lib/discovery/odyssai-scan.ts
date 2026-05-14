@@ -138,7 +138,18 @@ export type ScanOptions = {
 export async function scanForOdysseusEngines(
   opts: ScanOptions = {},
 ): Promise<FoundEngine[]> {
-  const subnets = opts.subnetsOverride ?? getLocalSubnets();
+  // In Docker bridge mode the container only sees 172.x — useless for
+  // finding engines on the host's LAN. ODYSSAI_SCAN_SUBNETS lets the
+  // operator inject the real subnets (comma-separated CIDRs).
+  const envSubnets = (process.env.ODYSSAI_SCAN_SUBNETS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^\d+\.\d+\.\d+\.\d+\/\d+$/.test(s));
+  const detected = getLocalSubnets();
+  // Merge env-provided + host-detected, dedup. Env wins on placement
+  // so admins can prepend a primary scan target.
+  const merged = [...envSubnets, ...detected.filter((s) => !envSubnets.includes(s))];
+  const subnets = opts.subnetsOverride ?? merged;
   const ports = opts.ports ?? DEFAULT_PORTS;
   const timeoutMs = opts.timeoutPerIpMs ?? DEFAULT_TIMEOUT_MS;
   const concurrency = opts.concurrency ?? DEFAULT_CONCURRENCY;

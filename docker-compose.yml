@@ -13,6 +13,12 @@ services:
       # The memory service is deployed independently (see thecompai-memory
       # repo). Defaults assume it runs on the same host on port 8001.
       MEMORY_SERVICE_URL: ${MEMORY_SERVICE_URL:-http://host.docker.internal:8001}
+      # LAN subnets to scan for Odysseus engines when the user clicks
+      # "Join the Odyssai". The container sits on the Docker bridge
+      # (172.x), so it can't auto-detect the host's LAN — we inject it.
+      # Comma-separated CIDRs. Set to the LAN where Odysseus actually
+      # runs (rpi-dev sits on 192.168.86.0/24 alongside the cluster).
+      ODYSSAI_SCAN_SUBNETS: ${ODYSSAI_SCAN_SUBNETS:-192.168.86.0/24}
     ports:
       - "${HOST_PORT:-3000}:3000"
     extra_hosts:
