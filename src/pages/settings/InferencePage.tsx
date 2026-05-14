@@ -7,7 +7,6 @@ import {
   type ApiNamedModels,
 } from "~/lib/api";
 import { JoinOdyssaiModal } from "~/components/settings/JoinOdyssai";
-import PresetsSection from "~/components/settings/PresetsSection";
 
 const COMMON_TIMEZONES = [
   "Europe/Brussels",
@@ -441,8 +440,6 @@ export default function InferencePage() {
           </button>
         </div>
       </Section>
-
-      <PresetsSection models={models} />
 
       <Section title="Display">
         <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 text-[13px] hover:bg-gray-50">

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { InferenceParams } from "~/hooks/useChat";
+import { api, type ApiInferencePreset } from "~/lib/api";
 import { downloadFile } from "~/lib/file-export";
 import { promptLibrary, type StoredPrompt } from "~/lib/prompt-library";
 
@@ -25,6 +26,8 @@ export default function InferencePanel({ params, onChange, onClose }: Props) {
           ×
         </button>
       </header>
+
+      <InferencePresetsRow params={params} onChange={onChange} />
 
       <div className="flex flex-col gap-6 md:flex-row">
         <Column title="Generation">
@@ -274,6 +277,158 @@ function SystemPromptSection({
       )}
     </div>
   );
+}
+
+/**
+ * Saved inference presets — sampling-param bundles the user names and
+ * reloads. Mirrors the System prompt section's UX (Load saved… dropdown,
+ * Save current button, chip list with delete). Server-backed, scoped to
+ * the current user.
+ *
+ * System prompt is deliberately NOT included in a preset — it lives at
+ * the project / chat level and is saved separately.
+ */
+function InferencePresetsRow({
+  params,
+  onChange,
+}: {
+  params: InferenceParams;
+  onChange: (next: Partial<InferenceParams>) => void;
+}) {
+  const [presets, setPresets] = useState<ApiInferencePreset[]>([]);
+
+  async function reload() {
+    try {
+      const { presets } = await api.listInferencePresets();
+      setPresets(presets);
+    } catch {
+      // ignore — empty list is fine
+    }
+  }
+  useEffect(() => {
+    reload();
+  }, []);
+
+  function applyPreset(p: ApiInferencePreset) {
+    const patch: Partial<InferenceParams> = {};
+    if (p.temperature != null) patch.temperature = p.temperature;
+    if (p.maxTokens != null) patch.maxTokens = p.maxTokens;
+    // Null on a preset means "leave default" (i.e. don't push to upstream),
+    // mapped here to InferenceParams' nullable convention. We DO push null
+    // explicitly so the previous value is cleared — applying a preset is a
+    // full replacement of the sampling section, not a partial overlay.
+    patch.topP = p.topP;
+    patch.topK = p.topK;
+    patch.minP = p.minP;
+    patch.repPenalty = p.repetitionPenalty;
+    patch.seed = p.seed;
+    onChange(patch);
+  }
+
+  async function saveCurrent() {
+    const name = window.prompt("Name this preset:", "")?.trim();
+    if (!name) return;
+    try {
+      await api.createInferencePreset({
+        name,
+        temperature: params.temperature,
+        maxTokens: params.maxTokens,
+        topP: params.topP,
+        topK: params.topK,
+        minP: params.minP,
+        repetitionPenalty: params.repPenalty,
+        seed: params.seed,
+      });
+      await reload();
+    } catch (e) {
+      alert(`Couldn't save: ${(e as Error).message}`);
+    }
+  }
+
+  async function deletePreset(id: string, name: string) {
+    if (!confirm(`Delete saved preset "${name}"?`)) return;
+    try {
+      await api.deleteInferencePreset(id);
+      await reload();
+    } catch (e) {
+      alert(`Couldn't delete: ${(e as Error).message}`);
+    }
+  }
+
+  return (
+    <div className="mb-5 flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <span className="font-sans text-[11px] font-medium tracking-[0.08em] text-gray-400 uppercase">
+          Presets
+        </span>
+        <div className="flex items-center gap-3">
+          <select
+            value=""
+            onChange={(e) => {
+              if (!e.target.value) return;
+              const p = presets.find((x) => x.id === e.target.value);
+              if (p) applyPreset(p);
+              e.target.value = "";
+            }}
+            className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:border-gray-300"
+          >
+            <option value="">Load saved…</option>
+            {presets.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={saveCurrent}
+            className="text-[11px] text-cyan hover:text-navy"
+          >
+            Save current
+          </button>
+        </div>
+      </div>
+      {presets.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {presets.map((p) => (
+            <span
+              key={p.id}
+              className="group inline-flex items-center rounded-full border border-gray-200 bg-white text-[11px] text-gray-600 hover:border-cyan hover:text-navy"
+            >
+              <button
+                type="button"
+                onClick={() => applyPreset(p)}
+                title={summarizePreset(p)}
+                className="rounded-l-full pr-1 pl-2.5 py-0.5"
+              >
+                {p.name}
+              </button>
+              <button
+                type="button"
+                onClick={() => deletePreset(p.id, p.name)}
+                aria-label={`Delete ${p.name}`}
+                className="ml-0.5 rounded-r-full pr-2 pl-1 py-0.5 text-gray-300 hover:text-red-500"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function summarizePreset(p: ApiInferencePreset): string {
+  const parts: string[] = [];
+  if (p.temperature != null) parts.push(`temp ${p.temperature}`);
+  if (p.topP != null) parts.push(`top_p ${p.topP}`);
+  if (p.topK != null) parts.push(`top_k ${p.topK}`);
+  if (p.minP != null) parts.push(`min_p ${p.minP}`);
+  if (p.repetitionPenalty != null) parts.push(`rep ${p.repetitionPenalty}`);
+  if (p.maxTokens != null) parts.push(`max ${p.maxTokens}`);
+  if (p.seed != null) parts.push(`seed ${p.seed}`);
+  return parts.join(" · ") || "(empty preset — no params set)";
 }
 
 function Column({
