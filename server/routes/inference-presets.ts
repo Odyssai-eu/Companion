@@ -32,6 +32,11 @@ const paramSchema = z.object({
   repetitionPenalty: z.number().min(0).max(5).nullable().optional(),
   maxTokens: z.number().int().min(1).max(1_048_576).nullable().optional(),
   seed: z.number().int().nullable().optional(),
+  thinking: z.boolean().nullable().optional(),
+  reasoningEffort: z
+    .enum(["none", "minimal", "low", "medium", "high", "xhigh"])
+    .nullable()
+    .optional(),
 });
 
 const createSchema = paramSchema.extend({
@@ -72,6 +77,8 @@ inferencePresetsRoute.post(
         repetitionPenalty: data.repetitionPenalty ?? null,
         maxTokens: data.maxTokens ?? null,
         seed: data.seed ?? null,
+        thinking: data.thinking ?? null,
+        reasoningEffort: data.reasoningEffort ?? null,
         hfReferenceUrl: data.hfReferenceUrl ?? null,
         notes: data.notes ?? null,
       })
@@ -99,6 +106,9 @@ inferencePresetsRoute.patch(
       patch.repetitionPenalty = data.repetitionPenalty ?? null;
     if (data.maxTokens !== undefined) patch.maxTokens = data.maxTokens ?? null;
     if (data.seed !== undefined) patch.seed = data.seed ?? null;
+    if (data.thinking !== undefined) patch.thinking = data.thinking ?? null;
+    if (data.reasoningEffort !== undefined)
+      patch.reasoningEffort = data.reasoningEffort ?? null;
     if (data.hfReferenceUrl !== undefined)
       patch.hfReferenceUrl = data.hfReferenceUrl ?? null;
     if (data.notes !== undefined) patch.notes = data.notes ?? null;

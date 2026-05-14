@@ -290,13 +290,16 @@ export default function Sidebar({
           )}
         </Section>
 
-        {groups.length > 0 && (
-          <div className="mb-2 flex items-center justify-end px-2">
+        {conversations.length > 0 && (
+          <div className="mb-2 flex items-center justify-between px-2">
+            <span className="font-sans text-[11px] font-medium tracking-[0.08em] text-gray-400 uppercase">
+              Conversations
+            </span>
             {selectionMode ? (
               <button
                 type="button"
                 onClick={exitSelectionMode}
-                className="text-[11px] text-gray-500 hover:text-ink"
+                className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-medium text-ink hover:bg-gray-50"
               >
                 Done
               </button>
@@ -304,9 +307,11 @@ export default function Sidebar({
               <button
                 type="button"
                 onClick={() => setSelectionMode(true)}
-                className="text-[11px] text-gray-500 hover:text-ink"
+                className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50 hover:text-ink"
+                title="Select multiple to delete"
               >
-                Select
+                <CheckSquareIcon />
+                <span>Select</span>
               </button>
             )}
           </div>
@@ -478,6 +483,24 @@ function PlusIcon() {
       strokeLinejoin="round"
     >
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function CheckSquareIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="m9 12 2 2 4-4" />
     </svg>
   );
 }

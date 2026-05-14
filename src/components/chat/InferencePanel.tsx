@@ -322,6 +322,11 @@ function InferencePresetsRow({
     patch.minP = p.minP;
     patch.repPenalty = p.repetitionPenalty;
     patch.seed = p.seed;
+    // Reasoning controls — restore only when the preset saved them.
+    // A preset created before this field existed has `thinking === null`,
+    // we leave the current value untouched in that case.
+    if (p.thinking !== null) patch.thinking = p.thinking;
+    if (p.reasoningEffort !== null) patch.reasoningEffort = p.reasoningEffort;
     onChange(patch);
   }
 
@@ -338,6 +343,8 @@ function InferencePresetsRow({
         minP: params.minP,
         repetitionPenalty: params.repPenalty,
         seed: params.seed,
+        thinking: params.thinking,
+        reasoningEffort: params.reasoningEffort,
       });
       await reload();
     } catch (e) {
@@ -428,6 +435,8 @@ function summarizePreset(p: ApiInferencePreset): string {
   if (p.repetitionPenalty != null) parts.push(`rep ${p.repetitionPenalty}`);
   if (p.maxTokens != null) parts.push(`max ${p.maxTokens}`);
   if (p.seed != null) parts.push(`seed ${p.seed}`);
+  if (p.thinking != null) parts.push(p.thinking ? "thinking" : "no-think");
+  if (p.reasoningEffort != null) parts.push(`effort ${p.reasoningEffort}`);
   return parts.join(" · ") || "(empty preset — no params set)";
 }
 

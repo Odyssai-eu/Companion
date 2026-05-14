@@ -102,6 +102,15 @@ export type ApiInferencePreset = {
   repetitionPenalty: number | null;
   maxTokens: number | null;
   seed: number | null;
+  thinking: boolean | null;
+  reasoningEffort:
+    | "none"
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh"
+    | null;
   hfReferenceUrl: string | null;
   notes: string | null;
   createdAt: string;
@@ -118,6 +127,15 @@ export type ApiInferencePresetInput = {
   repetitionPenalty?: number | null;
   maxTokens?: number | null;
   seed?: number | null;
+  thinking?: boolean | null;
+  reasoningEffort?:
+    | "none"
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh"
+    | null;
   hfReferenceUrl?: string | null;
   notes?: string | null;
 };

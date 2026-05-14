@@ -573,6 +573,11 @@ export const inferencePresets = pgTable(
     // seed can be very large; bigint covers any 64-bit value. Stored as
     // string in TS to dodge JS number precision loss on huge seeds.
     seed: bigint("seed", { mode: "number" }),
+    // Reasoning controls — captured by the preset alongside the
+    // sampling block so loading a preset restores the full thinking
+    // configuration (not just temperature etc.).
+    thinking: boolean("thinking"),
+    reasoningEffort: text("reasoning_effort"),
     hfReferenceUrl: text("hf_reference_url"),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true })
