@@ -30,6 +30,7 @@ import modelsRoute from "./routes/models";
 import profileRoute from "./routes/profile";
 import projectMemoryRoute from "./routes/project-memory";
 import projectsRoute from "./routes/projects";
+import providersRoute from "./routes/providers";
 import ttsRoute from "./routes/tts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -71,6 +72,7 @@ app.use("/api/files/*", licenseGate, requireUser);
 app.use("/api/files", licenseGate, requireUser);
 app.use("/api/tts/*", licenseGate, requireUser);
 app.use("/api/inference/*", licenseGate, guestSessionLoader, requireUserOrGuest);
+app.use("/api/providers/*", licenseGate, requireUser);
 // Resolve bearer-token auth for the Obsidian plugin BEFORE requireUser runs,
 // so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
@@ -100,6 +102,7 @@ app.route("/api/addons/hermes", hermesAddonRoute);
 app.route("/api/addons/voice-live", voiceLiveAddonRoute);
 app.route("/api/models", modelsRoute);
 app.route("/api/inference", inferenceRoute);
+app.route("/api/providers", providersRoute);
 app.route("/api/admin/users", adminUsersRoute);
 app.route("/api/admin/guest-tokens", adminGuestTokensRoute);
 app.route("/api/guest", guestRoute);

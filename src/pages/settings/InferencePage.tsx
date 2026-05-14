@@ -6,6 +6,7 @@ import {
   type ApiInferenceSettings,
   type ApiNamedModels,
 } from "~/lib/api";
+import { JoinOdyssaiModal } from "~/components/settings/JoinOdyssai";
 
 const COMMON_TIMEZONES = [
   "Europe/Brussels",
@@ -28,6 +29,7 @@ export default function InferencePage() {
 
   // Local edits
   const [litellmUrl, setLitellmUrl] = useState("");
+  const [litellmDisabled, setLitellmDisabled] = useState(false);
   const [defaultModel, setDefaultModel] = useState("");
   const [timezone, setTimezone] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -36,29 +38,31 @@ export default function InferencePage() {
     useState<ApiInferenceMode>("expert");
   const [easyModel, setEasyModel] = useState("");
   const [namedModels, setNamedModels] = useState<ApiNamedModels>({});
-  // Odyssai engine — capability contract source. Distinct from LiteLLM.
-  const [engineUrl, setEngineUrl] = useState("");
-  const [engineToken, setEngineToken] = useState("");
-  const [engineTokenDirty, setEngineTokenDirty] = useState(false);
-  const [probing, setProbing] = useState(false);
-  const [probeResult, setProbeResult] = useState<
-    Awaited<ReturnType<typeof api.probeInferenceEngine>> | null
-  >(null);
+
+  // Join the Odyssai flow
+  const [joinOpen, setJoinOpen] = useState(false);
+  const [manualUrl, setManualUrl] = useState("");
+  const [manualToken, setManualToken] = useState("");
+  const [manualBusy, setManualBusy] = useState(false);
+
+  async function reload() {
+    const [s, ms] = await Promise.all([
+      api.inferenceSettings(),
+      api.listAllModels().catch(() => ({ models: [] })),
+    ]);
+    setSettings(s);
+    setModels(ms.models);
+    setLitellmUrl(s.litellmUrl ?? "");
+    setLitellmDisabled(s.litellmDisabled);
+    setDefaultModel(s.defaultModel ?? "");
+    setTimezone(s.timezone);
+    setInferenceMode(s.inferenceMode);
+    setEasyModel(s.easyModel ?? "");
+    setNamedModels(s.namedModels ?? {});
+  }
 
   useEffect(() => {
-    Promise.all([api.inferenceSettings(), api.listAllModels().catch(() => ({ models: [] }))])
-      .then(([s, ms]) => {
-        setSettings(s);
-        setModels(ms.models);
-        setLitellmUrl(s.litellmUrl ?? "");
-        setDefaultModel(s.defaultModel ?? "");
-        setTimezone(s.timezone);
-        setInferenceMode(s.inferenceMode);
-        setEasyModel(s.easyModel ?? "");
-        setNamedModels(s.namedModels ?? {});
-        setEngineUrl(s.engineUrl ?? "");
-      })
-      .catch((e) => setError((e as Error).message));
+    reload().catch((e) => setError((e as Error).message));
   }, []);
 
   async function save() {
@@ -68,6 +72,7 @@ export default function InferencePage() {
     try {
       const patch: Parameters<typeof api.updateInferenceSettings>[0] = {
         litellmUrl: litellmUrl.trim() || null,
+        litellmDisabled,
         defaultModel: defaultModel.trim() || null,
         timezone,
         inferenceMode,
@@ -75,19 +80,13 @@ export default function InferencePage() {
         namedModels: Object.values(namedModels).some((v) => v && v.length > 0)
           ? namedModels
           : null,
-        engineUrl: engineUrl.trim() || null,
       };
       if (keyDirty) patch.litellmApiKey = apiKey.trim() || null;
-      if (engineTokenDirty)
-        patch.engineToken = engineToken.trim() || null;
       await api.updateInferenceSettings(patch);
       setSaved("Saved");
       setKeyDirty(false);
       setApiKey("");
-      setEngineTokenDirty(false);
-      setEngineToken("");
-      const fresh = await api.inferenceSettings();
-      setSettings(fresh);
+      await reload();
       setTimeout(() => setSaved(null), 2000);
     } catch (e) {
       setError((e as Error).message);
@@ -108,28 +107,56 @@ export default function InferencePage() {
     }
   }
 
-  async function runProbe() {
-    const url = engineUrl.trim();
-    if (!url) return;
-    setProbing(true);
-    setProbeResult(null);
+  async function disconnect() {
+    if (
+      !confirm(
+        "Disconnect from Odysseus? Local models stop being available until you re-pair.",
+      )
+    )
+      return;
+    setBusy(true);
     try {
-      const r = await api.probeInferenceEngine({
-        url,
-        token: engineTokenDirty ? engineToken.trim() || undefined : undefined,
-      });
-      setProbeResult(r);
+      await api.disconnectOdyssai();
+      await reload();
     } catch (e) {
-      setProbeResult({
-        reachable: false,
-        isOdyssai: false,
-        authRequired: false,
-        authProvided: false,
-        modelsReachable: false,
-        error: (e as Error).message,
-      });
+      setError((e as Error).message);
     } finally {
-      setProbing(false);
+      setBusy(false);
+    }
+  }
+
+  async function reloadProvider() {
+    setBusy(true);
+    try {
+      await api.reloadOdyssai();
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function manualJoin() {
+    const url = manualUrl.trim();
+    if (!url) return;
+    setManualBusy(true);
+    setError(null);
+    try {
+      // Parse host:port out of the URL — the join endpoint takes them
+      // discretely so the UX matches the scan path (which yields
+      // {host, port}). Anything that fails URL parsing → 400 by zod.
+      const parsed = new URL(url);
+      const host = parsed.hostname;
+      const port = parsed.port ? Number(parsed.port) : 8000;
+      await api.joinOdyssai({ host, port });
+      setManualUrl("");
+      setManualToken("");
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setManualBusy(false);
     }
   }
 
@@ -139,8 +166,8 @@ export default function InferencePage() {
     );
   }
 
-  const litellmAdminUrl =
-    (litellmUrl || settings.envDefaultUrl).replace(/\/+$/, "") + "/ui";
+  const paired = !!settings.engineUrl;
+  const engineMeta = settings.engineMeta ?? {};
 
   return (
     <div className="flex flex-col gap-10">
@@ -152,116 +179,130 @@ export default function InferencePage() {
           Inference.
         </h1>
         <p className="max-w-[640px] text-[15px] leading-[24px] text-gray-600">
-          Companion talks to your models through a single LiteLLM proxy. Point
-          it at your home cluster, your team's shared instance, or a hosted
-          one. The admin curates the model list (locals, cloud providers,
-          fallbacks) by editing the proxy's config — Companion just shows you
-          what it offers.
+          Companion talks to your models through a provider — either an
+          Odysseus engine paired with "Join the Odyssai" (recommended), or a
+          LiteLLM proxy (legacy / power users). Pick what you want, or
+          combine both.
         </p>
       </header>
 
-      <Section title="LiteLLM connection">
-        <Field label="Proxy URL" hint={`Default: ${settings.envDefaultUrl}`}>
-          <input
-            type="url"
-            value={litellmUrl}
-            onChange={(e) => setLitellmUrl(e.target.value)}
-            placeholder={settings.envDefaultUrl}
-            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
+      {/* ── Provider: Odyssai gateway / pair ────────────────────────── */}
+      <Section title="Provider">
+        {paired ? (
+          <PairedCard
+            url={settings.engineUrl ?? ""}
+            mode={settings.engineMode}
+            meta={engineMeta}
+            onReload={reloadProvider}
+            onDisconnect={disconnect}
+            busy={busy}
           />
-        </Field>
-        <Field
-          label="API key (optional)"
-          hint={
-            settings.hasApiKey
-              ? "A key is set. Leave blank to keep it; clear to remove; type a new one to replace."
-              : "Only needed if your LiteLLM proxy enforces an API key."
-          }
-        >
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => {
-              setApiKey(e.target.value);
-              setKeyDirty(true);
-            }}
-            placeholder={settings.hasApiKey ? "•••• (set)" : "sk-…"}
-            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
-          />
-        </Field>
-        <div className="flex flex-wrap items-center gap-2">
-          <a
-            href={litellmAdminUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-600 hover:bg-gray-50 hover:text-ink"
-          >
-            Open LiteLLM admin UI ↗
-          </a>
-          <button
-            type="button"
-            onClick={refreshModels}
-            disabled={busy}
-            className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-600 hover:bg-gray-50 hover:text-ink disabled:opacity-50"
-          >
-            Refresh model list
-          </button>
-        </div>
+        ) : (
+          <NotPaired onJoin={() => setJoinOpen(true)} />
+        )}
+        <details className="flex flex-col gap-2 text-[12px] text-gray-500">
+          <summary className="cursor-pointer text-[12px] text-gray-600 hover:text-ink">
+            Manual engine URL (fallback)
+          </summary>
+          <p>
+            If the LAN scan didn't find your engine (unusual subnet, port, or
+            Cloudflare-tunnelled), enter the URL directly. Auth is handled
+            via the engine's discovery gate just like a scan-based join.
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              type="url"
+              value={manualUrl}
+              onChange={(e) => setManualUrl(e.target.value)}
+              placeholder="http://192.168.86.141:8000"
+              className="flex-1 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
+            <button
+              type="button"
+              onClick={manualJoin}
+              disabled={manualBusy || !manualUrl.trim() || paired}
+              className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {manualBusy ? "Joining…" : "Join via URL"}
+            </button>
+          </div>
+          {manualToken /* reserved for future admin-token flow */ && null}
+        </details>
       </Section>
 
-      <Section title="Engine capabilities (optional)">
+      {/* ── LiteLLM (optional rail) ─────────────────────────────────── */}
+      <Section title="LiteLLM (optional)">
         <p className="text-[13px] text-gray-600">
-          Direct URL to an Odyssai-compatible engine (e.g. Odysseus). When
-          set, Companion polls the engine's capability contract instead of
-          guessing per-model features (vision, tools, context length, loaded
-          state). Inference still routes through LiteLLM above — this is
-          purely for accurate capability info.
+          A standalone LiteLLM proxy stays useful for cascade fallback,
+          budget tracking, or the Anthropic protocol bridge. In gateway
+          mode (recommended) Odysseus already proxies cloud providers, so
+          you can turn LiteLLM off and run the simpler chain.
         </p>
-        <Field label="Engine URL" hint="Empty disables the contract; we fall back to heuristics.">
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 text-[13px] hover:bg-gray-50">
           <input
-            type="url"
-            value={engineUrl}
-            onChange={(e) => setEngineUrl(e.target.value)}
-            placeholder="http://192.168.86.141:8000"
-            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            type="checkbox"
+            checked={litellmDisabled}
+            onChange={(e) => setLitellmDisabled(e.target.checked)}
+            className="mt-0.5"
           />
-        </Field>
-        <Field
-          label="Admin token (optional)"
-          hint="Only needed for /admin/* on the engine. Public /v1/* and the contract itself don't require auth."
-        >
-          <input
-            type="password"
-            value={engineTokenDirty ? engineToken : settings.hasEngineToken ? "•••••••• (saved)" : ""}
-            onChange={(e) => {
-              setEngineToken(e.target.value);
-              setEngineTokenDirty(true);
-            }}
-            placeholder={settings.hasEngineToken ? "•••••••• (saved)" : "Bearer token"}
-            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-          />
-        </Field>
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={runProbe}
-            disabled={probing || !engineUrl.trim()}
-            className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            {probing ? "Probing…" : "Test"}
-          </button>
-          {probeResult && <ProbeBadge result={probeResult} />}
-        </div>
-        {settings.engineMeta && !probeResult && (
-          <p className="font-mono text-[11px] text-gray-500">
-            Saved engine:{" "}
-            <strong>{String(settings.engineMeta.name ?? "—")}</strong>{" "}
-            v{String(settings.engineMeta.version ?? "—")} · vendor{" "}
-            {String(settings.engineMeta.vendor ?? "—")}
-          </p>
+          <div className="flex flex-col gap-0.5">
+            <span className="font-medium text-ink">
+              Disable LiteLLM
+            </span>
+            <span className="text-[12px] text-gray-500">
+              When checked, Companion never calls LiteLLM. Requires a paired
+              Odysseus engine — otherwise chat has no rail at all.
+            </span>
+          </div>
+        </label>
+        {!litellmDisabled && (
+          <>
+            <Field label="Proxy URL" hint={`Default: ${settings.envDefaultUrl}`}>
+              <input
+                type="url"
+                value={litellmUrl}
+                onChange={(e) => setLitellmUrl(e.target.value)}
+                placeholder={settings.envDefaultUrl}
+                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
+              />
+            </Field>
+            <Field
+              label="API key (optional)"
+              hint={
+                settings.hasApiKey
+                  ? "A key is set. Leave blank to keep it; clear to remove; type a new one to replace."
+                  : "Only needed if your LiteLLM proxy enforces an API key."
+              }
+            >
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  setKeyDirty(true);
+                }}
+                placeholder={settings.hasApiKey ? "•••• (set)" : "sk-…"}
+                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
+              />
+            </Field>
+            <div className="flex flex-wrap items-center gap-2">
+              <a
+                href={
+                  (litellmUrl || settings.envDefaultUrl).replace(/\/+$/, "") +
+                  "/ui"
+                }
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-600 hover:bg-gray-50 hover:text-ink"
+              >
+                Open LiteLLM admin UI ↗
+              </a>
+            </div>
+          </>
         )}
       </Section>
 
+      {/* ── Inference mode ──────────────────────────────────────────── */}
       <Section title="Inference mode">
         <p className="text-[13px] text-gray-600">
           How models are exposed in the chat picker. Pick what fits the user
@@ -278,12 +319,12 @@ export default function InferencePage() {
               {
                 v: "advanced" as const,
                 title: "Advanced — 4 named slots",
-                desc: "User picks among Conversation / Analyse / Engineer / Expert. Each maps to a LiteLLM alias you set below.",
+                desc: "User picks among Conversation / Analyse / Engineer / Expert. Each maps to a model alias you set below.",
               },
               {
                 v: "expert" as const,
-                title: "Expert — full LiteLLM list",
-                desc: "User picks any model from the LiteLLM catalog. Power-user mode.",
+                title: "Expert — full list available",
+                desc: "User picks any model in the provider's catalog. Power-user mode.",
               },
             ]
           ).map((opt) => (
@@ -382,10 +423,19 @@ export default function InferencePage() {
             </option>
           ))}
         </select>
-        <p className="font-mono text-[11px] text-gray-400">
-          {models.length} model{models.length === 1 ? "" : "s"} exposed by your
-          LiteLLM proxy.
-        </p>
+        <div className="flex items-center gap-3">
+          <p className="font-mono text-[11px] text-gray-400">
+            {models.length} model{models.length === 1 ? "" : "s"} available.
+          </p>
+          <button
+            type="button"
+            onClick={refreshModels}
+            disabled={busy}
+            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Refresh
+          </button>
+        </div>
       </Section>
 
       <Section title="Timezone">
@@ -431,6 +481,102 @@ export default function InferencePage() {
           </span>
         )}
       </div>
+
+      {joinOpen && (
+        <JoinOdyssaiModal
+          onClose={() => setJoinOpen(false)}
+          onDone={() => {
+            reload().catch(() => undefined);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function NotPaired({ onJoin }: { onJoin: () => void }) {
+  return (
+    <div className="flex flex-col items-start gap-3 rounded-lg border border-gray-200 bg-white p-5">
+      <span className="text-[13px] text-gray-600">
+        No Odysseus engine paired. Click below — Companion scans your network
+        for engines whose operator has opened the discovery gate.
+      </span>
+      <button
+        type="button"
+        onClick={onJoin}
+        className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95"
+      >
+        Join the Odyssai
+      </button>
+    </div>
+  );
+}
+
+function PairedCard({
+  url,
+  mode,
+  meta,
+  onReload,
+  onDisconnect,
+  busy,
+}: {
+  url: string;
+  mode: "gateway" | "hybrid" | "legacy";
+  meta: Record<string, unknown>;
+  onReload: () => void;
+  onDisconnect: () => void;
+  busy: boolean;
+}) {
+  const name = (meta.name as string) ?? "Odysseus";
+  const version = (meta.version as string) ?? "?";
+  const vendor = (meta.vendor as string) ?? "?";
+  let host: string;
+  try {
+    host = new URL(url).host;
+  } catch {
+    host = url;
+  }
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[13px] font-medium text-ink">
+            {name} @ {host}
+          </span>
+          <span className="font-mono text-[11px] text-gray-500">
+            vendor {vendor} · v{version} · mode {mode}
+          </span>
+        </div>
+        <span
+          className={`rounded-md px-2 py-1 font-mono text-[10px] uppercase tracking-wider ${
+            mode === "gateway"
+              ? "bg-emerald-100 text-emerald-800"
+              : mode === "hybrid"
+                ? "bg-amber-100 text-amber-800"
+                : "bg-gray-100 text-gray-600"
+          }`}
+        >
+          {mode}
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onReload}
+          disabled={busy}
+          className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          Reload config
+        </button>
+        <button
+          type="button"
+          onClick={onDisconnect}
+          disabled={busy}
+          className="rounded-md border border-rose-200 bg-white px-3 py-1.5 text-[12px] text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+        >
+          Disconnect
+        </button>
+      </div>
     </div>
   );
 }
@@ -469,54 +615,5 @@ function Field({
         <span className="font-mono text-[11px] text-gray-400">{hint}</span>
       )}
     </div>
-  );
-}
-
-/**
- * Renders the probe result as a single badge line. Three states:
- *   ✓ Odyssai detected — green, when vendor matches
- *   ⓘ Reachable, generic OpenAI-compat — cyan, /v1/models works but no contract
- *   ⨯ Unreachable — red, neither endpoint answered
- */
-function ProbeBadge({
-  result,
-}: {
-  result: NonNullable<
-    Awaited<ReturnType<typeof api.probeInferenceEngine>>
-  >;
-}) {
-  if (!result.reachable) {
-    return (
-      <span className="rounded-md bg-rose-100 px-2 py-1 font-mono text-[11px] text-rose-700">
-        ⨯ Unreachable
-        {result.error && <span className="ml-2 opacity-70">— {result.error}</span>}
-      </span>
-    );
-  }
-  if (result.isOdyssai) {
-    return (
-      <span className="rounded-md bg-emerald-100 px-2 py-1 font-mono text-[11px] text-emerald-800">
-        ✓ Odyssai detected
-        {result.meta?.version && (
-          <span className="ml-2 opacity-80">v{result.meta.version}</span>
-        )}
-        {typeof result.modelsCount === "number" && (
-          <span className="ml-2 opacity-80">· {result.modelsCount} models</span>
-        )}
-        {result.authRequired && !result.authProvided && (
-          <span className="ml-2 text-amber-700">
-            · admin token required for /admin/*
-          </span>
-        )}
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-md bg-cyan/15 px-2 py-1 font-mono text-[11px] text-cyan">
-      ⓘ Generic OpenAI-compatible endpoint
-      {typeof result.modelsCount === "number" && (
-        <span className="ml-2 opacity-80">· {result.modelsCount} models</span>
-      )}
-    </span>
   );
 }

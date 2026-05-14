@@ -866,6 +866,7 @@ function ModelRow({
         )}
       </span>
       <span className="flex shrink-0 items-center gap-1">
+        {o && <PoolBadge caps={o} />}
         {o && <LoadStateBadge caps={o} />}
         {model.capabilities.vision && (
           <span
@@ -925,6 +926,39 @@ function LoadStateBadge({
     );
   }
   return null;
+}
+
+/**
+ * Cloud vs local origin pill. Driven by `caps.backend`: `http-proxy`
+ * means the engine is proxying an external cloud provider (OpenRouter,
+ * Anthropic…), anything else is a local pool (jaccl, mlx, …). The
+ * brand convention is ☁ for cloud, ⚙ for local.
+ */
+function PoolBadge({
+  caps,
+}: {
+  caps: NonNullable<ApiGlobalModel["odyssai"]>;
+}) {
+  if (!caps.pool && !caps.backend) return null;
+  const isCloud = caps.backend === "http-proxy";
+  const label = caps.pool ?? (isCloud ? "cloud" : "local");
+  return (
+    <span
+      title={
+        isCloud
+          ? `Cloud pool — proxied through the engine (${caps.backend})`
+          : `Local pool — ${caps.backend ?? "engine-native"}`
+      }
+      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-mono text-[10px] ${
+        isCloud
+          ? "bg-slate-100 text-slate-700"
+          : "bg-cyan/15 text-cyan-700"
+      }`}
+    >
+      <span>{isCloud ? "☁" : "⚙"}</span>
+      <span>{label}</span>
+    </span>
+  );
 }
 
 /**

@@ -1,9 +1,19 @@
 /**
- * Models — pure proxy on LiteLLM /v1/models.
+ * Models — resolves the model list per provider mode.
  *
- * Whatever LiteLLM exposes, the user sees. The admin curates the model list
- * by editing ~/litellm/config.yaml on the proxy host. Tags & metadata flow
- * through if LiteLLM publishes them via model_info.
+ *   gateway → single GET on engine /v1/models, every entry already
+ *             carries x_odyssai. No LiteLLM call. Cloud aliases (backend
+ *             "http-proxy") appear side-by-side with local pools.
+ *   hybrid  → LiteLLM /model/info is the source of truth for ids and
+ *             tags, engine /v1/models is merged in for caps. Used when
+ *             the engine doesn't declare cloud-passthrough or when the
+ *             admin keeps LiteLLM for budget / cascade fallback.
+ *   legacy  → LiteLLM only. Caps come from explicit model_info flags
+ *             + a name-pattern heuristic. No engine paired.
+ *
+ * When `litellm_disabled` is true the user has explicitly turned off
+ * the LiteLLM rail — hybrid degrades to gateway-style listing if an
+ * engine is paired, otherwise we return an empty list with an error.
  */
 
 import { eq } from "drizzle-orm";
@@ -12,51 +22,78 @@ import { db } from "../db/index";
 import { users } from "../db/schema";
 import { authHeaders, resolveLiteLLM } from "../lib/litellm";
 import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
-import type { OdyssaiModelCapabilities } from "../lib/odyssai-contract";
+import type {
+  OdyssaiModelCapabilities,
+  OdyssaiModelList,
+} from "../lib/odyssai-contract";
 
 type Env = { Variables: { userId: string } };
 const modelsRoute = new Hono<Env>();
 
 export type GlobalModel = {
   id: string;
-  /** Optional human label — falls back to `id` when LiteLLM doesn't provide one. */
   name: string;
-  /** Optional grouping tag(s) the admin can set in litellm/config.yaml under
-   *  model_info.tags. Useful to render "Local" / "Cloud" / "Reasoning" groups. */
   tags: string[];
-  /** Coarse capability flags — backwards-compat with existing client. The
-   *  full Odyssai capability block (when available) lives in `odyssai`. */
   capabilities: {
     vision: boolean;
     tools: boolean;
   };
-  /** Set when the user has an engine URL configured AND the engine
-   *  returned an `x_odyssai` block for this model. Carries the rich
-   *  contract: loaded?, pool, backend, context_length, etc. */
   odyssai?: OdyssaiModelCapabilities;
 };
 
 modelsRoute.get("/", async (c) => {
   const userId = c.get("userId");
-  const target = await resolveLiteLLM(userId);
 
-  // Engine capability map — populated only when the user configured an
-  // Odyssai-compatible engine URL. Empty Map when not set (or unreachable),
-  // which makes the merge below a no-op without branching.
   const [me] = await db
-    .select({ engineUrl: users.engineUrl, engineToken: users.engineToken })
+    .select({
+      engineUrl: users.engineUrl,
+      engineToken: users.engineToken,
+      engineMode: users.engineMode,
+      litellmDisabled: users.litellmDisabled,
+    })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
-  const odyssaiCaps = me?.engineUrl
-    ? await fetchEngineCapabilities(me.engineUrl, me.engineToken)
-    : new Map<string, OdyssaiModelCapabilities>();
+  if (!me) return c.json({ error: "user_not_found", models: [] }, 404);
 
-  // Use LiteLLM's /model/info — richer than /v1/models, returns per-model
-  // litellm_params (the underlying upstream model id) and model_info flags.
-  // We need litellm_params.model so the heuristic can detect capabilities
-  // from the actual backend model name (e.g. `gemma-4-26b-a4b`) rather than
-  // just the user-facing alias (e.g. `agent-fast`).
+  const effectiveMode: "gateway" | "hybrid" | "legacy" = (() => {
+    // If LiteLLM is off and we have an engine, force gateway-style
+    // listing regardless of whether the engine declared
+    // cloud-passthrough. The user explicitly said "go direct".
+    if (me.litellmDisabled && me.engineUrl) return "gateway";
+    return (me.engineMode ?? "legacy") as "gateway" | "hybrid" | "legacy";
+  })();
+
+  if (effectiveMode === "gateway") {
+    if (!me.engineUrl) {
+      return c.json(
+        { error: "no_engine_configured", models: [] },
+        400,
+      );
+    }
+    return c.json({ models: await listGateway(me.engineUrl, me.engineToken) });
+  }
+
+  if (effectiveMode === "legacy" && me.litellmDisabled) {
+    return c.json(
+      {
+        error: "no_provider",
+        detail:
+          "LiteLLM is disabled and no Odyssai engine is paired. Join the Odyssai or re-enable LiteLLM.",
+        models: [],
+      },
+      400,
+    );
+  }
+
+  // Hybrid + legacy both go through LiteLLM. Hybrid layers Odyssai
+  // capabilities on top when an engine_url is set.
+  const target = await resolveLiteLLM(userId);
+  const odyssaiCaps =
+    effectiveMode === "hybrid" && me.engineUrl
+      ? await fetchEngineCapabilities(me.engineUrl, me.engineToken)
+      : new Map<string, OdyssaiModelCapabilities>();
+
   let upstream: Response;
   try {
     upstream = await fetch(`${target.baseUrl}/model/info`, {
@@ -71,7 +108,12 @@ modelsRoute.get("/", async (c) => {
   if (!upstream.ok) {
     const text = await upstream.text().catch(() => "");
     return c.json(
-      { error: "litellm_error", status: upstream.status, body: text, models: [] },
+      {
+        error: "litellm_error",
+        status: upstream.status,
+        body: text,
+        models: [],
+      },
       upstream.status as 401 | 500 | 502,
     );
   }
@@ -97,18 +139,8 @@ modelsRoute.get("/", async (c) => {
       seen.add(id);
       const info = m.model_info ?? {};
       const upstreamModel = m.litellm_params?.model ?? "";
-      // 1. Honour explicit LiteLLM flags when present.
-      // 2. Fallback to heuristic on alias + upstream model path together —
-      //    the upstream path (e.g. ".../gemma-4-26b...") is much more
-      //    reliable than the alias ("agent-fast") for capability detection.
       const heuristic = heuristicCaps(`${id} ${upstreamModel}`);
-      // Case-insensitive match handles the LiteLLM "Argo" vs Odysseus
-      // "argo" skew documented in the contract brief.
       const odyssai = odyssaiCaps.get(id.toLowerCase());
-      // When the engine declares caps, they win over LiteLLM model_info
-      // AND the heuristic. The engine knows the truth about its own
-      // models (vision, tools, context length) — that's the whole point
-      // of the contract.
       const visionFinal =
         odyssai?.supports_vision ??
         info.supports_vision ??
@@ -130,8 +162,6 @@ modelsRoute.get("/", async (c) => {
     })
     .filter((m): m is GlobalModel => m !== null);
 
-  // (EXO Direct removed in v0.2 — all inference goes through LiteLLM now.)
-  // Stable sort: tags grouped, then alpha.
   models.sort((a, b) => {
     const at = a.tags[0] ?? "~";
     const bt = b.tags[0] ?? "~";
@@ -142,20 +172,72 @@ modelsRoute.get("/", async (c) => {
   return c.json({ models });
 });
 
-/** Cheap heuristic: flag vision / tools by name patterns. We test against
- *  alias + underlying upstream model path together — the alias may be
- *  uninformative ("agent-fast") but the upstream typically reveals the
- *  actual family ("gemma-4-26b-a4b" → vision-capable). LiteLLM admin can
- *  also set explicit `supports_vision` / `supports_function_calling` flags
- *  in model_info to short-circuit this. */
+/**
+ * Gateway listing — single source of truth, single round-trip. Every
+ * model in the response already carries x_odyssai, which we copy into
+ * the GlobalModel.odyssai field and use to derive the coarse capability
+ * flags (vision/tools). No heuristic fallback needed — if the engine
+ * doesn't declare a flag, we treat it as false, deliberately.
+ */
+async function listGateway(
+  engineUrl: string,
+  engineToken: string | null,
+): Promise<GlobalModel[]> {
+  const url = engineUrl.replace(/\/+$/, "");
+  const headers: Record<string, string> = {};
+  if (engineToken) headers.authorization = `Bearer ${engineToken}`;
+
+  let r: Response;
+  try {
+    r = await fetch(`${url}/v1/models`, {
+      headers,
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch {
+    return [];
+  }
+  if (!r.ok) return [];
+
+  const list = (await r.json().catch(() => null)) as OdyssaiModelList | null;
+  if (!list?.data) return [];
+
+  const models: GlobalModel[] = list.data.map((m) => {
+    const caps = m.x_odyssai;
+    // pool buckets the engine itself uses are local; everything else
+    // (http-proxy backend) is a cloud alias. The picker decides badge
+    // colour based on backend, not pool name.
+    const tag = caps?.backend === "http-proxy" ? "cloud" : caps?.pool ?? "local";
+    return {
+      id: m.id,
+      name: m.id,
+      tags: [tag],
+      capabilities: {
+        vision: caps?.supports_vision ?? false,
+        tools: caps?.supports_tools ?? false,
+      },
+      ...(caps ? { odyssai: caps } : {}),
+    };
+  });
+
+  models.sort((a, b) => {
+    const at = a.tags[0] ?? "~";
+    const bt = b.tags[0] ?? "~";
+    if (at !== bt) return at.localeCompare(bt);
+    return a.id.localeCompare(b.id);
+  });
+
+  return models;
+}
+
 function heuristicCaps(s: string): { vision: boolean; tools: boolean } {
   const lower = s.toLowerCase();
   const vision =
     /(?:vl|vision|gemma-?3|gemma-?4|qwen-?vl|qwen-?3\.6|qwen3_5_moe|llava|claude|gpt-4o|gpt-4-?turbo|minimax-m2)/.test(
       lower,
     );
-  const tools =
-    /(?:claude|gpt-4|gpt-3\.5|qwen|llama-?3|hermes|tool)/.test(lower);
+  const tools = /(?:claude|gpt-4|gpt-3\.5|qwen|llama-?3|hermes|tool)/.test(
+    lower,
+  );
   return { vision, tools };
 }
 

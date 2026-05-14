@@ -509,6 +509,10 @@ conversationsRoute.post(
         timezone: users.timezone,
         litellmUrl: users.litellmUrl,
         litellmApiKey: users.litellmApiKey,
+        engineUrl: users.engineUrl,
+        engineToken: users.engineToken,
+        engineMode: users.engineMode,
+        litellmDisabled: users.litellmDisabled,
       })
       .from(users)
       .where(eq(users.id, userId))
@@ -591,13 +595,35 @@ conversationsRoute.post(
         ? [{ role: "system" as const, content: composedSystem }, ...tagged]
         : tagged;
 
-    // Single inference path through LiteLLM since v0.2 (EXO Direct removed).
-    const target = {
-      baseUrl: (
-        user.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
-      ).replace(/\/+$/, ""),
-      apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-    };
+    // Target the same rail chat.ts uses: gateway → engine, otherwise
+    // LiteLLM. Mirror the routing logic so the prewarm hits the cache
+    // slot the real chat will fill.
+    const prewarmMode: "gateway" | "hybrid" | "legacy" =
+      user.litellmDisabled && user.engineUrl
+        ? "gateway"
+        : ((user.engineMode ?? "legacy") as
+            | "gateway"
+            | "hybrid"
+            | "legacy");
+    if (prewarmMode === "legacy" && user.litellmDisabled) {
+      // No rail available — skip prewarm rather than 503'ing the UI.
+      return c.json({ ok: false, reason: "no_provider" });
+    }
+    const target =
+      prewarmMode === "gateway" && user.engineUrl
+        ? {
+            baseUrl: user.engineUrl.replace(/\/+$/, ""),
+            apiKey: user.engineToken,
+          }
+        : {
+            baseUrl: (
+              user.litellmUrl ??
+              process.env.LITELLM_URL ??
+              "http://192.168.86.44:4000"
+            ).replace(/\/+$/, ""),
+            apiKey:
+              user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+          };
 
     const upstreamBody: Record<string, unknown> = {
       model: opts.model,

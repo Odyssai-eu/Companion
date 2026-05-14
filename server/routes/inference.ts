@@ -32,6 +32,8 @@ inferenceRoute.get("/settings", async (c) => {
       engineUrl: users.engineUrl,
       engineToken: users.engineToken,
       engineMeta: users.engineMeta,
+      engineMode: users.engineMode,
+      litellmDisabled: users.litellmDisabled,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -49,6 +51,8 @@ inferenceRoute.get("/settings", async (c) => {
     engineUrl: u.engineUrl,
     hasEngineToken: Boolean(u.engineToken),
     engineMeta: u.engineMeta,
+    engineMode: u.engineMode as "gateway" | "hybrid" | "legacy",
+    litellmDisabled: u.litellmDisabled,
   });
 });
 
@@ -71,6 +75,8 @@ const patchSchema = z.object({
   namedModels: namedModelsSchema,
   engineUrl: z.string().url().max(400).nullish(),
   engineToken: z.string().max(400).nullish(),
+  engineMode: z.enum(["gateway", "hybrid", "legacy"]).optional(),
+  litellmDisabled: z.boolean().optional(),
 });
 
 inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => {
@@ -92,6 +98,12 @@ inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => 
   }
   if (data.engineToken !== undefined) {
     patch.engineToken = data.engineToken ?? null;
+  }
+  if (data.engineMode !== undefined) {
+    patch.engineMode = data.engineMode;
+  }
+  if (data.litellmDisabled !== undefined) {
+    patch.litellmDisabled = data.litellmDisabled;
   }
   if (Object.keys(patch).length === 0) {
     return c.json({ error: "no_fields_to_update" }, 400);

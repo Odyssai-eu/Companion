@@ -112,6 +112,10 @@ chatRoute.post("/completions", async (c) => {
         lastInteractionAt: users.lastInteractionAt,
         litellmUrl: users.litellmUrl,
         litellmApiKey: users.litellmApiKey,
+        engineUrl: users.engineUrl,
+        engineToken: users.engineToken,
+        engineMode: users.engineMode,
+        litellmDisabled: users.litellmDisabled,
       })
       .from(users)
       .where(eq(users.id, userId))
@@ -124,21 +128,49 @@ chatRoute.post("/completions", async (c) => {
     return row;
   });
 
-  // ── 2. Resolve target — LiteLLM is the single inference path.
-  //   Earlier versions had an "EXO Direct" addon that bypassed LiteLLM via
-  //   an `exo-direct/<endpointId>/<modelId>` model prefix. That addon was
-  //   removed in v0.2 — the consolidation of all inference behind LiteLLM
-  //   simplifies routing, observability and tool support. EXO instances are
-  //   still reachable as regular LiteLLM aliases.
-  // The chat route normally targets LiteLLM. For kind='hermes' conversations
-  // we swap to the Hermes Agent gateway (set after the conv lookup below)
-  // and skip the tool layer — Hermes handles its own tool routing natively.
-  let target = {
-    baseUrl: (
-      userRow.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
-    ).replace(/\/+$/, ""),
-    apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-  };
+  // ── 2. Resolve target per provider mode.
+  //   gateway  → engine_url directly. LiteLLM bypassed entirely.
+  //              Crew token (engine_token) on every request.
+  //   hybrid   → LiteLLM for inference, engine only used for caps merge.
+  //   legacy   → LiteLLM only. If litellm_disabled, we 503 — the user
+  //              turned off the only rail and didn't pair an engine.
+  //
+  // For kind='hermes' conversations we swap to the Hermes Agent gateway
+  // (set after the conv lookup below) and skip the tool layer — Hermes
+  // handles its own tool routing natively.
+  const effectiveMode: "gateway" | "hybrid" | "legacy" =
+    userRow.litellmDisabled && userRow.engineUrl
+      ? "gateway"
+      : ((userRow.engineMode ?? "legacy") as
+          | "gateway"
+          | "hybrid"
+          | "legacy");
+
+  if (effectiveMode === "legacy" && userRow.litellmDisabled) {
+    return c.json(
+      {
+        error: "no_provider",
+        detail:
+          "LiteLLM is disabled and no Odyssai engine is paired. Join the Odyssai or re-enable LiteLLM.",
+      },
+      503,
+    );
+  }
+
+  let target =
+    effectiveMode === "gateway" && userRow.engineUrl
+      ? {
+          baseUrl: userRow.engineUrl.replace(/\/+$/, ""),
+          apiKey: userRow.engineToken,
+        }
+      : {
+          baseUrl: (
+            userRow.litellmUrl ??
+            process.env.LITELLM_URL ??
+            "http://192.168.86.44:4000"
+          ).replace(/\/+$/, ""),
+          apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+        };
   let hermesModelOverride: string | null = null;
 
   // ── 3. Resolve project + memory snapshot (frozen per-conversation) ────

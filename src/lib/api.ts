@@ -61,6 +61,12 @@ export type ApiInferenceSettings = {
    *  successful probe. Lets the UI render version/features without an
    *  extra round-trip. */
   engineMeta: Record<string, unknown> | null;
+  /** Provider mode — auto-derived from features.cloud-passthrough at pair
+   *  time. Drives chat routing + model listing. */
+  engineMode: "gateway" | "hybrid" | "legacy";
+  /** Master switch to turn LiteLLM off. When true, /api/models and
+   *  /api/chat refuse to use litellmUrl even if set. */
+  litellmDisabled: boolean;
 };
 
 export type ApiEngineProbeResult = {
@@ -353,6 +359,8 @@ export const api = {
       namedModels: ApiNamedModels | null;
       engineUrl: string | null;
       engineToken: string | null;
+      engineMode: "gateway" | "hybrid" | "legacy";
+      litellmDisabled: boolean;
     }>,
   ) =>
     request<{ ok: true }>("/api/inference/settings", {
@@ -366,6 +374,55 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // ── Join the Odyssai (Odysseus gateway pairing) ───────────────────────
+  // Server-side LAN scan returns the engines reachable from the backend's
+  // network. In dev this is rpi-dev's LAN — same as Sophie's home LAN —
+  // so it finds Odysseus on .141. Multi-tenant cloud users on other
+  // networks need the manual URL fallback (or the future Tauri desktop).
+  searchOdyssai: (body?: { subnets?: string[]; timeoutMs?: number }) =>
+    request<{
+      engines: Array<{
+        host: string;
+        port: number;
+        url: string;
+        meta: {
+          name?: string;
+          vendor?: string;
+          version?: string;
+          features?: string[];
+        };
+      }>;
+    }>("/api/providers/search-odyssai", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
+  joinOdyssai: (body: {
+    host: string;
+    port: number;
+    user_label?: string;
+  }) =>
+    request<{
+      ok: true;
+      summary: {
+        version?: string;
+        modelsCount: number;
+        cloudAliasesCount: number;
+        gateway: boolean;
+        mode: "gateway" | "hybrid";
+      };
+    }>("/api/providers/join-odyssai", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  disconnectOdyssai: () =>
+    request<{ ok: true }>("/api/providers/disconnect", { method: "POST" }),
+  reloadOdyssai: () =>
+    request<{
+      ok: true;
+      meta: Record<string, unknown>;
+      supportsGateway: boolean;
+    }>("/api/providers/reload", { method: "POST" }),
 
   listConversations: () =>
     request<{ conversations: ApiConversation[] }>("/api/conversations"),

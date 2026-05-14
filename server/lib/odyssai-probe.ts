@@ -22,6 +22,10 @@ export type ProbeResult = {
   authProvided: boolean;
   modelsReachable: boolean;
   modelsCount?: number;
+  /** True iff features includes "cloud-passthrough" — gateway mode possible. */
+  supportsGateway: boolean;
+  /** Count of model entries with backend === "http-proxy" (cloud aliases). */
+  cloudAliasesCount: number;
   /** First error encountered, for surfacing in the UI when reachable=false. */
   error?: string;
 };
@@ -57,6 +61,7 @@ export async function probeEngine(
   // public routes on Odysseus ignore it anyway.
   const headers: Record<string, string> = {};
   if (capabilityToken) headers.authorization = `Bearer ${capabilityToken}`;
+  let cloudAliasesCount = 0;
   try {
     const r = await fetch(`${url}/v1/models`, {
       headers,
@@ -66,6 +71,9 @@ export async function probeEngine(
     if (r.ok) {
       const list = (await r.json()) as OdyssaiModelList;
       modelsCount = Array.isArray(list.data) ? list.data.length : 0;
+      cloudAliasesCount = (list.data || []).filter(
+        (m) => m.x_odyssai?.backend === "http-proxy",
+      ).length;
     } else if (!firstError) {
       firstError = `models ${r.status}`;
     }
@@ -81,6 +89,9 @@ export async function probeEngine(
     authProvided: !!capabilityToken,
     modelsReachable,
     modelsCount,
+    supportsGateway:
+      isOdyssai && !!meta?.features?.includes("cloud-passthrough"),
+    cloudAliasesCount,
     error: firstError,
   };
 }
