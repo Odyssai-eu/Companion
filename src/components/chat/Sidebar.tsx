@@ -307,11 +307,11 @@ export default function Sidebar({
               <button
                 type="button"
                 onClick={() => setSelectionMode(true)}
-                className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50 hover:text-ink"
+                aria-label="Select multiple to delete"
                 title="Select multiple to delete"
+                className="inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1 text-gray-700 hover:bg-gray-50 hover:text-ink"
               >
                 <CheckSquareIcon />
-                <span>Select</span>
               </button>
             )}
           </div>
