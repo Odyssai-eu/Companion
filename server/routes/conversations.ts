@@ -1,5 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
@@ -346,6 +346,48 @@ conversationsRoute.get("/:id/export.md", async (c) => {
   c.header("Content-Disposition", `attachment; filename="${filename}"`);
   return c.body(md);
 });
+
+// Batch delete — POST body { ids: [...] }. We could overload DELETE
+// with a body, but POST keeps proxies and middleware predictable. Only
+// ids belonging to the caller are deleted; bad ids are reported in
+// `notFound` so the UI can surface a partial-success message instead
+// of failing the whole batch.
+const batchDeleteSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(200),
+});
+conversationsRoute.post(
+  "/delete-many",
+  zValidator("json", batchDeleteSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const { ids } = c.req.valid("json");
+
+    // Verify ownership before deleting — never delete someone else's
+    // conv even if a uuid happens to collide. We do this in one query
+    // and then delete in a second, so half-completed batches don't
+    // leave dangling refs (the ORM's ON DELETE CASCADE handles
+    // messages / attachments / stats).
+    const owned = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(eq(conversations.userId, userId), inArray(conversations.id, ids)),
+      );
+    const ownedIds = new Set(owned.map((r) => r.id));
+    const missing = ids.filter((id) => !ownedIds.has(id));
+
+    if (ownedIds.size > 0) {
+      await db
+        .delete(conversations)
+        .where(inArray(conversations.id, Array.from(ownedIds)));
+    }
+
+    return c.json({
+      deleted: Array.from(ownedIds),
+      notFound: missing,
+    });
+  },
+);
 
 conversationsRoute.delete("/:id", async (c) => {
   const userId = c.get("userId");

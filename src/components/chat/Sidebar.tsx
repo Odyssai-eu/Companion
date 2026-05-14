@@ -32,6 +32,43 @@ export default function Sidebar({
   const [projectsList, setProjectsList] = useState<ApiProject[]>([]);
   const [search, setSearch] = useState("");
   const navigate = useNavigate();
+  // Multi-select mode (mode A — explicit toggle). When on, rows show a
+  // checkbox and clicking the row toggles selection instead of opening
+  // it. The action bar at the bottom of the sidebar exposes "Delete
+  // selected".
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function exitSelectionMode() {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }
+  async function deleteSelected() {
+    if (selectedIds.size === 0) return;
+    const n = selectedIds.size;
+    if (!confirm(`Delete ${n} conversation${n === 1 ? "" : "s"}?`)) return;
+    const ids = Array.from(selectedIds);
+    try {
+      await api.deleteConversationsBatch(ids);
+      // Optimistic local update mirrors the single-delete pattern below.
+      setConversations((prev) => prev.filter((c) => !selectedIds.has(c.id)));
+      // If the active conversation was in the batch, bounce home.
+      if (activeConversationId && selectedIds.has(activeConversationId)) {
+        navigate("/");
+      }
+      exitSelectionMode();
+    } catch (err) {
+      alert(`Delete failed: ${(err as Error).message ?? err}`);
+    }
+  }
 
   const refresh = async () => {
     try {
@@ -253,6 +290,27 @@ export default function Sidebar({
           )}
         </Section>
 
+        {groups.length > 0 && (
+          <div className="mb-2 flex items-center justify-end px-2">
+            {selectionMode ? (
+              <button
+                type="button"
+                onClick={exitSelectionMode}
+                className="text-[11px] text-gray-500 hover:text-ink"
+              >
+                Done
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSelectionMode(true)}
+                className="text-[11px] text-gray-500 hover:text-ink"
+              >
+                Select
+              </button>
+            )}
+          </div>
+        )}
         {groups.map((g) => (
           <Section key={g.title} title={g.title}>
             {g.items.map((c) => (
@@ -266,6 +324,9 @@ export default function Sidebar({
                   setConversations((prev) => prev.filter((x) => x.id !== id))
                 }
                 onChange={refresh}
+                selectionMode={selectionMode}
+                selected={selectedIds.has(c.id)}
+                onToggleSelected={() => toggleSelected(c.id)}
               />
             ))}
           </Section>
@@ -277,6 +338,31 @@ export default function Sidebar({
           </div>
         )}
       </nav>
+
+      {selectionMode && (
+        <div className="flex items-center justify-between gap-2 border-t border-gray-200 bg-gray-50 px-3 py-2">
+          <span className="text-[12px] text-gray-600">
+            {selectedIds.size} selected
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={exitSelectionMode}
+              className="rounded-md px-2 py-1 text-[12px] text-gray-600 hover:bg-white"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={deleteSelected}
+              disabled={selectedIds.size === 0}
+              className="rounded-md bg-red-500 px-3 py-1 text-[12px] font-medium text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
 
       <UserFooter />
     </aside>
@@ -421,6 +507,9 @@ function ConversationRow({
   projects,
   onRemove,
   onChange,
+  selectionMode = false,
+  selected = false,
+  onToggleSelected,
 }: {
   conversation: ApiConversation;
   active: boolean;
@@ -431,6 +520,11 @@ function ConversationRow({
    *  re-fetch (ExoScopy pattern). */
   onRemove: (id: string) => void;
   onChange: () => void;
+  /** Multi-select mode wires the row click to toggle a checkbox instead
+   *  of navigating, and renders the checkbox at the leading edge. */
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelected?: () => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const [draftTitle, setDraftTitle] = useState(conversation.title);
@@ -493,15 +587,30 @@ function ConversationRow({
       onClick={(e) => {
         if (renaming) return;
         if ((e.target as HTMLElement).closest("button,select,a,input")) return;
+        if (selectionMode) {
+          onToggleSelected?.();
+          return;
+        }
         navigate(`/c/${conversation.id}`);
       }}
       className={`group flex flex-col gap-1 rounded-lg px-3 py-2 transition-colors ${
-        active
-          ? "bg-[rgba(79,179,217,0.12)] text-navy"
-          : "text-ink hover:bg-gray-50"
+        selectionMode && selected
+          ? "bg-[rgba(79,179,217,0.18)] text-navy"
+          : active
+            ? "bg-[rgba(79,179,217,0.12)] text-navy"
+            : "text-ink hover:bg-gray-50"
       } cursor-pointer`}
     >
       <div className="flex items-start justify-between gap-2">
+        {selectionMode && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelected?.()}
+            onClick={(e) => e.stopPropagation()}
+            className="mt-1 flex-shrink-0"
+          />
+        )}
         {renaming ? (
           <input
             autoFocus

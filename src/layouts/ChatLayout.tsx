@@ -243,6 +243,7 @@ export default function ChatLayout() {
           error={chat.error}
           onRegenerate={chat.regenerate}
           onEdit={chat.editAndResend}
+          showMetrics={chat.showMetrics}
         />
         {chat.conversation?.kind === "talk" ? (
           <TalkInput

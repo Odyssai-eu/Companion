@@ -7,6 +7,7 @@ import {
   type ApiNamedModels,
 } from "~/lib/api";
 import { JoinOdyssaiModal } from "~/components/settings/JoinOdyssai";
+import PresetsSection from "~/components/settings/PresetsSection";
 
 const COMMON_TIMEZONES = [
   "Europe/Brussels",
@@ -30,6 +31,7 @@ export default function InferencePage() {
   // Local edits
   const [litellmUrl, setLitellmUrl] = useState("");
   const [litellmDisabled, setLitellmDisabled] = useState(false);
+  const [showMetrics, setShowMetrics] = useState(false);
   const [defaultModel, setDefaultModel] = useState("");
   const [timezone, setTimezone] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -54,6 +56,7 @@ export default function InferencePage() {
     setModels(ms.models);
     setLitellmUrl(s.litellmUrl ?? "");
     setLitellmDisabled(s.litellmDisabled);
+    setShowMetrics(s.showMetrics);
     setDefaultModel(s.defaultModel ?? "");
     setTimezone(s.timezone);
     setInferenceMode(s.inferenceMode);
@@ -73,6 +76,7 @@ export default function InferencePage() {
       const patch: Parameters<typeof api.updateInferenceSettings>[0] = {
         litellmUrl: litellmUrl.trim() || null,
         litellmDisabled,
+        showMetrics,
         defaultModel: defaultModel.trim() || null,
         timezone,
         inferenceMode,
@@ -436,6 +440,27 @@ export default function InferencePage() {
             Refresh
           </button>
         </div>
+      </Section>
+
+      <PresetsSection models={models} />
+
+      <Section title="Display">
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 text-[13px] hover:bg-gray-50">
+          <input
+            type="checkbox"
+            checked={showMetrics}
+            onChange={(e) => setShowMetrics(e.target.checked)}
+            className="mt-0.5"
+          />
+          <div className="flex flex-col gap-0.5">
+            <span className="font-medium text-ink">Show metrics</span>
+            <span className="text-[12px] text-gray-500">
+              Render the per-message stats box (TTFT, duration, prompt /
+              completion tokens, tok/s) under each assistant reply. Off by
+              default to keep the conversation visually clean.
+            </span>
+          </div>
+        </label>
       </Section>
 
       <Section title="Timezone">

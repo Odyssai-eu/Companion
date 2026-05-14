@@ -34,6 +34,7 @@ inferenceRoute.get("/settings", async (c) => {
       engineMeta: users.engineMeta,
       engineMode: users.engineMode,
       litellmDisabled: users.litellmDisabled,
+      showMetrics: users.showMetrics,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -53,6 +54,7 @@ inferenceRoute.get("/settings", async (c) => {
     engineMeta: u.engineMeta,
     engineMode: u.engineMode as "gateway" | "hybrid" | "legacy",
     litellmDisabled: u.litellmDisabled,
+    showMetrics: u.showMetrics,
   });
 });
 
@@ -77,6 +79,7 @@ const patchSchema = z.object({
   engineToken: z.string().max(400).nullish(),
   engineMode: z.enum(["gateway", "hybrid", "legacy"]).optional(),
   litellmDisabled: z.boolean().optional(),
+  showMetrics: z.boolean().optional(),
 });
 
 inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => {
@@ -104,6 +107,9 @@ inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => 
   }
   if (data.litellmDisabled !== undefined) {
     patch.litellmDisabled = data.litellmDisabled;
+  }
+  if (data.showMetrics !== undefined) {
+    patch.showMetrics = data.showMetrics;
   }
   if (Object.keys(patch).length === 0) {
     return c.json({ error: "no_fields_to_update" }, 400);

@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -41,6 +43,10 @@ export const users = pgTable("users", {
   // and chat routing both refuse to use litellm_url even if set. Used by
   // pure-gateway setups that want to drop LiteLLM from the chain.
   litellmDisabled: boolean("litellm_disabled").notNull().default(false),
+  // Per-user toggle for the per-message metrics box (TTFT, tok/s, …).
+  // Off by default — the bar feels like clutter once you've stopped
+  // tuning latency. Power users flip it on in Settings.
+  showMetrics: boolean("show_metrics").notNull().default(false),
   // Temporal awareness — fed into every inference as a context tag.
   timezone: text("timezone").notNull().default("Europe/Brussels"),
   lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
@@ -544,3 +550,42 @@ export const workspaceFiles = pgTable(
 
 export type WorkspaceFileRow = typeof workspaceFiles.$inferSelect;
 export type NewWorkspaceFileRow = typeof workspaceFiles.$inferInsert;
+
+// Inference presets — named bundles of LLM sampling params the user
+// can save and reload. System prompt lives elsewhere (project / chat).
+// Each preset can optionally bind to a model id; applying it then
+// switches the picker too.
+export const inferencePresets = pgTable(
+  "inference_presets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    modelId: text("model_id"),
+    temperature: doublePrecision("temperature"),
+    topP: doublePrecision("top_p"),
+    topK: integer("top_k"),
+    minP: doublePrecision("min_p"),
+    repetitionPenalty: doublePrecision("repetition_penalty"),
+    maxTokens: integer("max_tokens"),
+    // seed can be very large; bigint covers any 64-bit value. Stored as
+    // string in TS to dodge JS number precision loss on huge seeds.
+    seed: bigint("seed", { mode: "number" }),
+    hfReferenceUrl: text("hf_reference_url"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userIdx: index("inference_presets_user_id_idx").on(t.userId),
+  }),
+);
+
+export type InferencePresetRow = typeof inferencePresets.$inferSelect;
+export type NewInferencePresetRow = typeof inferencePresets.$inferInsert;

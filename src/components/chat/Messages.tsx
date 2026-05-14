@@ -18,11 +18,15 @@ export default function Messages({
   error,
   onRegenerate,
   onEdit,
+  showMetrics = false,
 }: {
   messages: UIMessage[];
   error: string | null;
   onRegenerate?: (assistantId: string) => void;
   onEdit?: (messageId: string, newText: string) => void;
+  /** Per-user toggle for the per-message stats box. Defaults off when
+   *  parent doesn't pass — the box used to render unconditionally. */
+  showMetrics?: boolean;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const voice = useVoiceMode();
@@ -114,6 +118,7 @@ export default function Messages({
               onRegenerate={
                 onRegenerate ? () => onRegenerate(m.id) : undefined
               }
+              showMetrics={showMetrics}
             />
           ),
         )}
@@ -222,9 +227,11 @@ function UserBubble({
 function AssistantMessage({
   message,
   onRegenerate,
+  showMetrics = false,
 }: {
   message: UIMessage;
   onRegenerate?: () => void;
+  showMetrics?: boolean;
 }) {
   const thinking = !message.content && (message.streaming || !!message.reasoning);
   return (
@@ -258,7 +265,9 @@ function AssistantMessage({
             <span className="inline-block h-4 w-0.5 animate-pulse bg-cyan align-middle" />
           )}
         </div>
-        {message.stats && !message.streaming && <StatsRow stats={message.stats} />}
+        {showMetrics && message.stats && !message.streaming && (
+          <StatsRow stats={message.stats} />
+        )}
         {!message.streaming && message.content && (
           <>
             <ActionsRow message={message} onRegenerate={onRegenerate} />

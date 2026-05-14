@@ -25,8 +25,7 @@ export default function Wordmark({ size = "md" }: { size?: "sm" | "md" }) {
       />
       <span className={`${textSize} font-mono tracking-tight`}>
         <span className="font-medium text-cyan">&gt;</span>
-        <span className="font-light">the comp</span>
-        <span className="font-medium text-cyan">.ai</span>
+        <span className="font-light">Companion</span>
       </span>
       {version && (
         <span

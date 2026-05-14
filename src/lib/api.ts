@@ -67,6 +67,9 @@ export type ApiInferenceSettings = {
   /** Master switch to turn LiteLLM off. When true, /api/models and
    *  /api/chat refuse to use litellmUrl even if set. */
   litellmDisabled: boolean;
+  /** Per-user toggle for the per-assistant-message stats box. Off by
+   *  default. Power users flip it on in Settings → Inference. */
+  showMetrics: boolean;
 };
 
 export type ApiEngineProbeResult = {
@@ -85,6 +88,38 @@ export type ApiEngineProbeResult = {
   modelsReachable: boolean;
   modelsCount?: number;
   error?: string;
+};
+
+export type ApiInferencePreset = {
+  id: string;
+  userId: string;
+  name: string;
+  modelId: string | null;
+  temperature: number | null;
+  topP: number | null;
+  topK: number | null;
+  minP: number | null;
+  repetitionPenalty: number | null;
+  maxTokens: number | null;
+  seed: number | null;
+  hfReferenceUrl: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ApiInferencePresetInput = {
+  name: string;
+  modelId?: string | null;
+  temperature?: number | null;
+  topP?: number | null;
+  topK?: number | null;
+  minP?: number | null;
+  repetitionPenalty?: number | null;
+  maxTokens?: number | null;
+  seed?: number | null;
+  hfReferenceUrl?: string | null;
+  notes?: string | null;
 };
 
 export type ApiInferenceStatus = {
@@ -361,6 +396,7 @@ export const api = {
       engineToken: string | null;
       engineMode: "gateway" | "hybrid" | "legacy";
       litellmDisabled: boolean;
+      showMetrics: boolean;
     }>,
   ) =>
     request<{ ok: true }>("/api/inference/settings", {
@@ -369,6 +405,25 @@ export const api = {
     }),
   inferenceStatus: () =>
     request<ApiInferenceStatus>("/api/inference/status"),
+  // ── Inference presets ────────────────────────────────────────────────
+  listInferencePresets: () =>
+    request<{ presets: ApiInferencePreset[] }>("/api/inference/presets"),
+  createInferencePreset: (body: ApiInferencePresetInput) =>
+    request<{ preset: ApiInferencePreset }>("/api/inference/presets", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateInferencePreset: (
+    id: string,
+    body: Partial<ApiInferencePresetInput>,
+  ) =>
+    request<{ preset: ApiInferencePreset }>(`/api/inference/presets/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteInferencePreset: (id: string) =>
+    request<void>(`/api/inference/presets/${id}`, { method: "DELETE" }),
+
   probeInferenceEngine: (body: { url: string; token?: string }) =>
     request<ApiEngineProbeResult>("/api/inference/engine/probe", {
       method: "POST",
@@ -529,6 +584,11 @@ export const api = {
     }),
   deleteConversation: (id: string) =>
     request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
+  deleteConversationsBatch: (ids: string[]) =>
+    request<{ deleted: string[]; notFound: string[] }>(
+      "/api/conversations/delete-many",
+      { method: "POST", body: JSON.stringify({ ids }) },
+    ),
   appendMessage: (
     conversationId: string,
     body: {

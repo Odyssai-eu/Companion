@@ -122,6 +122,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     engineer?: string;
     expert?: string;
   }>({});
+  const [showMetrics, setShowMetrics] = useState(false);
   const [conversation, setConversation] = useState<ApiConversation | null>(
     null,
   );
@@ -165,6 +166,33 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     });
   }, []);
 
+  // Listen for "Apply preset" events from Settings → Inference. The
+  // settings page writes the new values into localStorage and dispatches
+  // the event so any open chat re-reads its sampling params (and the
+  // model picker, when the preset is model-bound) without a full reload.
+  useEffect(() => {
+    function onPresetApplied() {
+      try {
+        const raw = window.localStorage.getItem("thecompai:inference");
+        if (raw) {
+          const parsed = JSON.parse(raw) as Partial<InferenceParams>;
+          setInference((prev) => ({ ...prev, ...parsed }));
+        }
+        const m = window.localStorage.getItem(MODEL_LS_KEY);
+        if (m) setModel(m);
+      } catch {
+        // ignore — bad LS payload, leave current state
+      }
+    }
+    window.addEventListener("thecompai:inference-changed", onPresetApplied);
+    return () => {
+      window.removeEventListener(
+        "thecompai:inference-changed",
+        onPresetApplied,
+      );
+    };
+  }, []);
+
   const loadedIdRef = useRef<string | null>(null);
   const sendMessageRef = useRef<
     ((text: string, attachments?: Attachment[]) => Promise<void>) | null
@@ -182,6 +210,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         setInferenceMode(settings.inferenceMode);
         setEasyModel(settings.easyModel);
         setNamedModels(settings.namedModels ?? {});
+        setShowMetrics(settings.showMetrics);
 
         // Choose a default model that respects the active mode.
         if (settings.inferenceMode === "easy") {
@@ -636,6 +665,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     inferenceMode,
     easyModel,
     namedModels,
+    showMetrics,
     inference,
     setInference: updateInference,
     activeModelCapabilities,
