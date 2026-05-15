@@ -369,8 +369,24 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       if (entry.done && entry.startedAt !== lastHandledStart) {
         lastHandledStart = entry.startedAt;
         if (entry.error) setError(entry.error);
+        // Capture the stream identity we're tearing down. Between this
+        // setTimeout being armed and firing, the user may have sent the
+        // next turn — which replaces the entry under the same convId
+        // with a fresh startedAt. If we naively reload from DB at that
+        // point we'd overwrite the new turn's LIVE_ID placeholder with
+        // a DB snapshot that doesn't yet contain the new assistant
+        // message — content disappears mid-stream from the user's POV.
+        // So: before doing anything destructive, confirm we're still
+        // tearing down the same stream.
+        const teardownStart = entry.startedAt;
         // Tiny delay so any final notify lands before we tear down.
         setTimeout(async () => {
+          const current = StreamManager.get(cid);
+          if (current && current.startedAt !== teardownStart) {
+            // A new stream has taken over — skip the teardown so the
+            // new stream's live placeholder + sending state survive.
+            return;
+          }
           try {
             const fresh = await api.getConversation(cid);
             if (loadedIdRef.current === cid) {
