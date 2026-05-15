@@ -371,7 +371,7 @@ function buildServer(opts: {
     "companion_send_message",
     {
       description:
-        "Submit a user message and wait for the full assistant response (consumes the SSE stream internally). Both messages are persisted in Companion. Fetch the conversation afterwards to get message ids.",
+        "Submit a user message and wait for the full assistant response (consumes the SSE stream internally). Both messages are persisted in Companion. Fetch the conversation afterwards to get message ids. `max_tokens` defaults to 32768 — Odysseus / EXO default to 512 when unset, which truncates almost every response, so we force a sane ceiling here unless the caller overrides.",
       inputSchema: {
         conversationId: z.string().uuid(),
         content: z.string().min(1),
@@ -392,7 +392,12 @@ function buildServer(opts: {
         userMessage: args.content,
         model: args.model,
         temperature: args.temperature,
-        max_tokens: args.max_tokens,
+        // Default to 32k. Odysseus' OpenAI-compat layer defaults to 512
+        // when unset (cf. MLX Distributed scripts/api.py), which cuts
+        // virtually every useful response short. The chat route still
+        // clamps for Anthropic (64k) / OpenAI (16k) hosted models, so
+        // 32k is safe across the board.
+        max_tokens: args.max_tokens ?? 32_768,
         top_p: args.top_p,
         thinking: args.thinking,
         reasoning_effort: args.reasoning_effort,
