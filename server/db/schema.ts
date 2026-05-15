@@ -594,3 +594,41 @@ export const inferencePresets = pgTable(
 
 export type InferencePresetRow = typeof inferencePresets.$inferSelect;
 export type NewInferencePresetRow = typeof inferencePresets.$inferInsert;
+
+// Hermes tokens — bearer credentials used by the Hermes Agent and Cowork
+// dispatch (via the thecompai-mcp MCP server) to call back into Companion
+// on behalf of a user. Scope is per-user (large). Plain token shown once
+// at mint, only the sha256 hash is persisted.
+export const hermesTokens = pgTable(
+  "hermes_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    label: text("label"),
+    convId: uuid("conv_id").references(() => conversations.id, {
+      onDelete: "set null",
+    }),
+    source: text("source", { enum: ["hermes", "cowork"] })
+      .notNull()
+      .default("hermes"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    tokenHashIdx: index("hermes_tokens_token_hash_idx").on(t.tokenHash),
+    userCreatedIdx: index("hermes_tokens_user_created_idx").on(
+      t.userId,
+      t.createdAt.desc(),
+    ),
+  }),
+);
+
+export type HermesToken = typeof hermesTokens.$inferSelect;
+export type NewHermesToken = typeof hermesTokens.$inferInsert;

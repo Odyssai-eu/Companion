@@ -8,6 +8,13 @@
  *   GET  /api/hermes-bridge/health
  *   GET  /api/hermes-bridge/git/status?repoPath=…
  *   GET  /api/hermes-bridge/git/diff?repoPath=…&staged=…&path=…
+ *
+ * Also hosts the hermes-token lifecycle endpoints used by the user (UI /
+ * curl) to mint long-lived tokens for Cowork dispatch and to list/revoke:
+ *
+ *   POST   /api/hermes-bridge/tokens          { label?, ttlMs?, source? }
+ *   GET    /api/hermes-bridge/tokens
+ *   DELETE /api/hermes-bridge/tokens/:id
  */
 
 import { Hono } from "hono";
@@ -16,6 +23,11 @@ import {
   bridgeGitStatus,
   bridgeHealth,
 } from "../lib/hermes-bridge";
+import {
+  listHermesTokens,
+  mintHermesToken,
+  revokeHermesToken,
+} from "../lib/hermes-token";
 
 type Env = { Variables: { userId: string } };
 const hermesBridgeRoute = new Hono<Env>();
@@ -57,6 +69,47 @@ hermesBridgeRoute.get("/git/diff", async (c) => {
       502,
     );
   }
+});
+
+// ── Hermes-token lifecycle ─────────────────────────────────────────────
+// Manual mint path. Auto-mint for live Hermes turns happens server-side in
+// addon-hermes / hermes-bridge (Phase 2), not here.
+
+hermesBridgeRoute.post("/tokens", async (c) => {
+  const userId = c.get("userId");
+  const body = (await c.req.json().catch(() => ({}))) as {
+    label?: string;
+    ttlMs?: number;
+    source?: "hermes" | "cowork";
+  };
+  const { token, row } = await mintHermesToken({
+    userId,
+    label: body.label ?? null,
+    ttlMs: body.ttlMs ?? null,
+    source: body.source ?? "cowork",
+  });
+  return c.json({
+    token,
+    id: row.id,
+    label: row.label,
+    source: row.source,
+    expiresAt: row.expiresAt,
+    createdAt: row.createdAt,
+  });
+});
+
+hermesBridgeRoute.get("/tokens", async (c) => {
+  const userId = c.get("userId");
+  const rows = await listHermesTokens(userId);
+  return c.json(rows);
+});
+
+hermesBridgeRoute.delete("/tokens/:id", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const r = await revokeHermesToken(id, userId);
+  if (!r.ok) return c.json({ error: "not_found" }, 404);
+  return c.json({ ok: true });
 });
 
 export default hermesBridgeRoute;

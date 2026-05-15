@@ -10,6 +10,7 @@ import { ensureAdminExists, seedIfEmpty } from "./db/seed";
 import { startMemoryScheduler } from "./lib/memory-scheduler";
 import { requireUser, sessionLoader } from "./middleware/auth";
 import { guestSessionLoader, requireUserOrGuest } from "./middleware/guest";
+import { hermesBearerLoader } from "./middleware/hermes-token";
 import { licenseGate } from "./middleware/license";
 import addonsRoute from "./routes/addons";
 import hermesAddonRoute from "./routes/addon-hermes";
@@ -60,27 +61,54 @@ app.get("/api/health", (c) =>
 app.route("/api/auth", authRoute);
 app.route("/api/license", licenseRoute);
 
-// License gate + user gate on everything else
-app.use("/api/conversations/*", licenseGate, requireUser);
+// License gate + user gate on everything else.
+// hermesBearerLoader resolves `Authorization: Bearer hms_<…>` into a real
+// userId BEFORE requireUser runs, so the thecompai-mcp MCP server (Hermes
+// Agent on .50, Cowork dispatch) can hit these routes without a cookie.
+app.use("/api/conversations/*", licenseGate, hermesBearerLoader, requireUser);
 // Chat, models, and inference accept guest tokens (Bearer / ?g= / cookie)
 // in addition to regular sessions. License still applies — guests count
 // against the inviting admin's license.
-app.use("/api/chat/*", licenseGate, guestSessionLoader, requireUserOrGuest);
-app.use("/api/projects/*", licenseGate, requireUser);
+app.use(
+  "/api/chat/*",
+  licenseGate,
+  hermesBearerLoader,
+  guestSessionLoader,
+  requireUserOrGuest,
+);
+app.use("/api/projects/*", licenseGate, hermesBearerLoader, requireUser);
 app.use("/api/profile/*", licenseGate, requireUser);
 app.use("/api/profile", licenseGate, requireUser);
-app.use("/api/files/*", licenseGate, requireUser);
-app.use("/api/files", licenseGate, requireUser);
+app.use("/api/files/*", licenseGate, hermesBearerLoader, requireUser);
+app.use("/api/files", licenseGate, hermesBearerLoader, requireUser);
 app.use("/api/tts/*", licenseGate, requireUser);
-app.use("/api/inference/*", licenseGate, guestSessionLoader, requireUserOrGuest);
+app.use(
+  "/api/inference/*",
+  licenseGate,
+  hermesBearerLoader,
+  guestSessionLoader,
+  requireUserOrGuest,
+);
 app.use("/api/providers/*", licenseGate, requireUser);
 // Resolve bearer-token auth for the Obsidian plugin BEFORE requireUser runs,
 // so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
 app.use("/api/addons/*", licenseGate, requireUser);
-app.use("/api/hermes-bridge/*", licenseGate, requireUser);
-app.use("/api/models/*", licenseGate, guestSessionLoader, requireUserOrGuest);
-app.use("/api/models", licenseGate, guestSessionLoader, requireUserOrGuest);
+app.use("/api/hermes-bridge/*", licenseGate, hermesBearerLoader, requireUser);
+app.use(
+  "/api/models/*",
+  licenseGate,
+  hermesBearerLoader,
+  guestSessionLoader,
+  requireUserOrGuest,
+);
+app.use(
+  "/api/models",
+  licenseGate,
+  hermesBearerLoader,
+  guestSessionLoader,
+  requireUserOrGuest,
+);
 // /api/guest/session is the public snapshot endpoint — gated inside the route.
 app.use("/api/guest/*", licenseGate, guestSessionLoader);
 app.use("/api/admin/*", licenseGate, requireUser);
