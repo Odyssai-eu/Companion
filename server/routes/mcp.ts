@@ -476,10 +476,17 @@ mcpRoute.all("/", async (c) => {
   if (!userId) {
     return c.json({ error: "unauthenticated" }, 401);
   }
-  const authHeader = c.req.header("authorization");
+  // Internal sub-fetches (chat/completions, export.md, models) need a
+  // Bearer header. The incoming request may carry one — but it may also
+  // have authenticated via `?token=hms_…` query param (for MCP clients
+  // that don't expose a custom-headers field, e.g. Claude Desktop). In
+  // that case we reconstruct the header from the query.
+  let authHeader = c.req.header("authorization");
   if (!authHeader) {
-    // Should be impossible: hermesBearerLoader sets userId iff auth is
-    // present and valid. Guard anyway.
+    const t = c.req.query("token");
+    if (t) authHeader = `Bearer ${t}`;
+  }
+  if (!authHeader) {
     return c.json({ error: "missing_auth" }, 401);
   }
   const origin = new URL(c.req.url).origin;
