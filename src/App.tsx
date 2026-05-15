@@ -13,6 +13,7 @@ import AdminPage from "./pages/settings/AdminPage";
 import AppearancePage from "./pages/settings/AppearancePage";
 import ComingSoonPage from "./pages/settings/ComingSoonPage";
 import DevicesPage from "./pages/settings/DevicesPage";
+import ExternalAgentsPage from "./pages/settings/ExternalAgentsPage";
 import HelpPage from "./pages/settings/HelpPage";
 import InferencePage from "./pages/settings/InferencePage";
 import LearningCenterPage from "./pages/settings/LearningCenterPage";
@@ -86,6 +87,7 @@ export default function App() {
         <Route path="accessibility" element={<AccessibilityPage />} />
         <Route path="shortcuts" element={<ShortcutsPage />} />
         <Route path="add-ons" element={<AddonsPage />} />
+        <Route path="external-agents" element={<ExternalAgentsPage />} />
         <Route path="admin" element={<AdminPage />} />
         <Route path="help" element={<HelpPage />} />
       </Route>

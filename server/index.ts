@@ -15,6 +15,7 @@ import { licenseGate } from "./middleware/license";
 import addonsRoute from "./routes/addons";
 import hermesAddonRoute from "./routes/addon-hermes";
 import hermesBridgeRoute from "./routes/hermes-bridge";
+import mcpRoute from "./routes/mcp";
 import voiceLiveAddonRoute from "./routes/addon-voice-live";
 import obsidianRoute, { obsidianBearerLoader } from "./routes/addon-obsidian";
 import tavilyRoute from "./routes/addon-tavily";
@@ -95,6 +96,12 @@ app.use("/api/providers/*", licenseGate, requireUser);
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
 app.use("/api/addons/*", licenseGate, requireUser);
 app.use("/api/hermes-bridge/*", licenseGate, hermesBearerLoader, requireUser);
+// MCP endpoint — Streamable HTTP, stateless. Auth is bearer-token only
+// (Cowork dispatch, Hermes Agent, third-party MCP clients hit this with
+// `Authorization: Bearer hms_…`). Cookie sessions are not expected here
+// so we don't add the standard requireUser — we use a dedicated gate.
+app.use("/api/mcp", licenseGate, hermesBearerLoader, requireUser);
+app.use("/api/mcp/*", licenseGate, hermesBearerLoader, requireUser);
 app.use(
   "/api/models/*",
   licenseGate,
@@ -125,6 +132,7 @@ app.route("/api/files", filesRoute);
 app.route("/api/tts", ttsRoute);
 app.route("/api/addons", addonsRoute);
 app.route("/api/hermes-bridge", hermesBridgeRoute);
+app.route("/api/mcp", mcpRoute);
 app.route("/api/addons/obsidian", obsidianRoute);
 app.route("/api/addons/tavily", tavilyRoute);
 app.route("/api/addons/hermes", hermesAddonRoute);

@@ -25,7 +25,6 @@ import { db } from "../db/index";
 import { conversations, messages, projects, users } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { incrementGuestUsage } from "../lib/guest-token";
-import { mintHermesToken } from "../lib/hermes-token";
 import { authHeaders } from "../lib/litellm";
 import { getMemoryContext, triggerCompile } from "../lib/memory";
 import { getProjectMemoryContext } from "../lib/project-memory";
@@ -173,11 +172,6 @@ chatRoute.post("/completions", async (c) => {
           apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
         };
   let hermesModelOverride: string | null = null;
-  // Per-turn auto-minted token for kind='hermes' convs. Forwarded as
-  // `X-Companion-Token` to the Hermes Agent gateway; the gateway hands it
-  // to the thecompai-mcp MCP server (env var on spawn or refresh endpoint)
-  // so MCP tools can call back into Companion on behalf of this user.
-  let companionToken: string | null = null;
 
   // ── 3. Resolve project + memory snapshot (frozen per-conversation) ────
   // The memory wiki is snapshot at conversation creation (or on explicit
@@ -329,18 +323,6 @@ chatRoute.post("/completions", async (c) => {
     }
     target = { baseUrl: hermes.baseUrl, apiKey: hermes.apiKey };
     hermesModelOverride = hermes.model;
-    // Auto-mint a 2h token scoped to this user. Source='hermes' marks it
-    // as auto-rotating (vs 'cowork' tokens which are long-lived and minted
-    // manually by the user). The plain token is shipped to Hermes Agent
-    // in the upstream headers — never logged, never persisted plaintext.
-    const minted = await mintHermesToken({
-      userId,
-      convId: body.conversationId ?? null,
-      source: "hermes",
-      ttlMs: 2 * 60 * 60 * 1000,
-      label: `auto: conv ${body.conversationId?.slice(0, 8) ?? "?"}`,
-    });
-    companionToken = minted.token;
   }
 
   // ── 4. Inject time tags into user messages ────────────────────────────
@@ -478,14 +460,6 @@ chatRoute.post("/completions", async (c) => {
     "Content-Type": "application/json",
     ...authHeaders(target),
   };
-  if (companionToken) {
-    headers["X-Companion-Token"] = companionToken;
-    // Also expose Companion's base URL so the Hermes Agent gateway can
-    // pass it to the MCP server without hard-coding. On LAN deployments
-    // it's the internal http://rpi-dev:3100, in dev/prod the public URL.
-    headers["X-Companion-Base-URL"] =
-      process.env.PUBLIC_BASE_URL ?? "http://rpi-dev:3100";
-  }
 
   // ── 7. Stream with a heartbeat keep-alive ──────────────────────────────
   //

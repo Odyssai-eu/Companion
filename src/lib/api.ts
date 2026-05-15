@@ -1146,6 +1146,42 @@ export const api = {
       { method: "POST", body: JSON.stringify({ days }) },
     ),
 
+  // External-agent tokens (MCP) — used by Cowork dispatch, Hermes Agent,
+  // any MCP-capable client to call back into Companion as this user.
+  listHermesTokens: () =>
+    request<
+      Array<{
+        id: string;
+        label: string | null;
+        convId: string | null;
+        source: "hermes" | "cowork";
+        expiresAt: string | null;
+        revokedAt: string | null;
+        lastUsedAt: string | null;
+        createdAt: string;
+      }>
+    >("/api/hermes-bridge/tokens"),
+  mintHermesToken: (body: {
+    label?: string;
+    ttlMs?: number | null;
+    source?: "hermes" | "cowork";
+  }) =>
+    request<{
+      token: string;
+      id: string;
+      label: string | null;
+      source: "hermes" | "cowork";
+      expiresAt: string | null;
+      createdAt: string;
+    }>("/api/hermes-bridge/tokens", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  revokeHermesToken: (id: string) =>
+    request<{ ok: true }>(`/api/hermes-bridge/tokens/${id}`, {
+      method: "DELETE",
+    }),
+
   // Guest session (snapshot of current guest token's budget + expiry)
   guestSession: () =>
     request<{
