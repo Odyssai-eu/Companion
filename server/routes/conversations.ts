@@ -650,30 +650,32 @@ conversationsRoute.post(
       // No rail available — skip prewarm rather than 503'ing the UI.
       return c.json({ ok: false, reason: "no_provider" });
     }
-    // Skip prewarm in gateway mode. Prewarm was designed for EXO whose
-    // 1-token completion populated its prefix cache as a side effect.
-    // Odysseus' prefix cache is keyed on session_id (not yet plumbed
-    // here), so a max_tokens=1 prewarm pays the FULL prefill on a 3-node
-    // cluster (95s on a 19k-token conversation) without caching anything
-    // useful for the next turn — pure waste of compute. Re-enable once
-    // we plumb session_id end-to-end.
-    if (prewarmMode === "gateway") {
-      return c.json({ ok: false, reason: "skipped_gateway_no_prefix_cache" });
-    }
-    const target = {
-      baseUrl: (
-        user.litellmUrl ??
-        process.env.LITELLM_URL ??
-        "http://192.168.86.44:4000"
-      ).replace(/\/+$/, ""),
-      apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-    };
+    const target =
+      prewarmMode === "gateway" && user.engineUrl
+        ? {
+            baseUrl: user.engineUrl.replace(/\/+$/, ""),
+            apiKey: user.engineToken,
+          }
+        : {
+            baseUrl: (
+              user.litellmUrl ??
+              process.env.LITELLM_URL ??
+              "http://192.168.86.44:4000"
+            ).replace(/\/+$/, ""),
+            apiKey:
+              user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+          };
 
     const upstreamBody: Record<string, unknown> = {
       model: opts.model,
       stream: false,
       max_tokens: 1,
       messages: finalMessages,
+      // Pin the prefix-cache slot to this conversation id so the real
+      // chat turn that follows reuses the KV cache populated here.
+      // Odysseus reads `session_id` from the body; LiteLLM ignores
+      // unknown fields, so it's safe to send unconditionally.
+      session_id: id,
     };
 
     // Fire-and-forget. Don't block the response; the frontend doesn't care

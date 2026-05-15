@@ -411,6 +411,18 @@ chatRoute.post("/completions", async (c) => {
   if (body.thinking && body.reasoning_effort)
     baseBody.reasoning_effort = body.reasoning_effort;
 
+  // Prefix-cache key for Odysseus (gateway mode). Odysseus reads
+  // `session_id` from the body (or X-Session-Id header) and reuses the
+  // KV cache across turns when prompts share a prefix. Using the
+  // conversation id is exactly right: every turn of a conv shares the
+  // system prompt + memory snapshot + prior messages, so the cache hit
+  // rate is high. Hybrid/legacy paths through LiteLLM also tolerate
+  // unknown body fields (they're ignored), so we send unconditionally
+  // when conversationId is present.
+  if (body.conversationId) {
+    baseBody.session_id = body.conversationId;
+  }
+
   // Anthropic API rejects requests that set both `temperature` and `top_p`.
   // We always honour temperature and drop top_p for any model that LiteLLM
   // routes to Anthropic (anthropic/* alias or claude-* default name).
