@@ -1315,6 +1315,20 @@ function summarizeResult(
   r: ToolResult,
 ): { ok: boolean; summary: string; sources?: Array<{ title: string; url: string }> } {
   if (!r.ok) return { ok: false, summary: r.error };
+  // MCP tools (mcp-as-client) hand back r.data as a plain string —
+  // the textual content concatenated from the tool's MCP response.
+  // Show its length so the UI has something meaningful, but skip the
+  // object-shape branches below (they'd crash with TypeError on `in`).
+  if (typeof r.data === "string") {
+    const len = r.data.length;
+    return {
+      ok: true,
+      summary: `${len.toLocaleString()} chars`,
+    };
+  }
+  if (!r.data || typeof r.data !== "object") {
+    return { ok: true, summary: "" };
+  }
   const data = r.data as
     | { results?: Array<{ title: string; url: string }>; query?: string }
     | { url?: string; content?: string }
