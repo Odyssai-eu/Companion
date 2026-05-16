@@ -595,6 +595,60 @@ export const inferencePresets = pgTable(
 export type InferencePresetRow = typeof inferencePresets.$inferSelect;
 export type NewInferencePresetRow = typeof inferencePresets.$inferInsert;
 
+// External MCP servers — Companion is the client. Each row points at
+// an MCP-compatible HTTP endpoint the user wants Companion to expose
+// as tools to the LLM. The slug namespaces the tool names so a Notion
+// `search` doesn't collide with a Qdrant `search`.
+export const mcpServers = pgTable(
+  "mcp_servers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** Lowercased ascii, unique per user. Used to prefix tool names
+     *  (`mcp_<slug>_<tool>`) so they don't collide with built-in tools
+     *  or with each other. */
+    slug: text("slug").notNull(),
+    /** 'streamable_http' (modern) | 'sse' (legacy). stdio deliberately
+     *  unsupported — child-process spawning inside Docker is painful
+     *  and every hosted MCP server exposes an HTTP variant. */
+    transport: text("transport").notNull(),
+    url: text("url").notNull(),
+    /** Full header value verbatim, e.g. "Bearer sk_test_…". Optional. */
+    authHeader: text("auth_header"),
+    enabled: boolean("enabled").notNull().default(true),
+    /** Last `tools/list` snapshot. Refreshed lazily (5 min TTL) or on
+     *  explicit POST /refresh. Avoids a round-trip per chat turn. */
+    toolsCache: jsonb("tools_cache").$type<
+      Array<{
+        name: string;
+        description?: string;
+        inputSchema?: Record<string, unknown>;
+      }>
+    >(),
+    toolsCacheAt: timestamp("tools_cache_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userIdx: index("mcp_servers_user_id_idx").on(t.userId),
+    slugUnique: uniqueIndex("mcp_servers_user_slug_unique").on(
+      t.userId,
+      t.slug,
+    ),
+  }),
+);
+
+export type McpServerRow = typeof mcpServers.$inferSelect;
+export type NewMcpServerRow = typeof mcpServers.$inferInsert;
+
 // Hermes tokens — bearer credentials used by the Hermes Agent and Cowork
 // dispatch (via the thecompai-mcp MCP server) to call back into Companion
 // on behalf of a user. Scope is per-user (large). Plain token shown once
