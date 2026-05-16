@@ -28,7 +28,7 @@ import filesRoute from "./routes/files";
 import guestRoute from "./routes/guest";
 import inferenceRoute from "./routes/inference";
 import inferencePresetsRoute from "./routes/inference-presets";
-import mcpServersRoute from "./routes/mcp-servers";
+import mcpServersRoute, { handleOauthCallback } from "./routes/mcp-servers";
 import skillsRoute from "./routes/skills";
 import licenseRoute from "./routes/license";
 import modelsRoute from "./routes/models";
@@ -148,6 +148,10 @@ app.route("/api/inference", inferenceRoute);
 app.route("/api/inference/presets", inferencePresetsRoute);
 app.route("/api/providers", providersRoute);
 app.route("/api/mcp-servers", mcpServersRoute);
+// Public OAuth callback — gated only by `state` (PKCE + 10-min TTL).
+// Notion's redirect lands here as a cross-origin top-level navigation
+// without our session cookie, so it can't sit under /api/mcp-servers/*.
+app.get("/api/mcp-oauth/callback", handleOauthCallback);
 app.route("/api/skills", skillsRoute);
 app.route("/api/admin/users", adminUsersRoute);
 app.route("/api/admin/guest-tokens", adminGuestTokensRoute);
