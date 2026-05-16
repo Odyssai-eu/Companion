@@ -134,6 +134,21 @@ conversationsRoute.post(
   },
 );
 
+/**
+ * Active streams across all the user's conversations. Drives the
+ * sidebar / NavBar parallel-stream indicator. **Must be declared
+ * before `/:id`** — Hono's router matches in declaration order, and
+ * `/:id` is greedy enough to capture the literal "active" otherwise,
+ * which then hits the DB as `id='active'` → "invalid uuid syntax" 500s.
+ * Each failing /active fetch from the sidebar made the frontend think
+ * the active stream list was gone and rolled back the optimistic
+ * assistant message — symptom: "the response appears then disappears".
+ */
+conversationsRoute.get("/active", async (c) => {
+  const userId = c.get("userId");
+  return c.json({ active: listActiveForUser(userId) });
+});
+
 conversationsRoute.get("/:id", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");
@@ -155,16 +170,6 @@ conversationsRoute.get("/:id", async (c) => {
   // still running server-side. Missing or finished → { active: false }.
   const inference = getInferenceStatus(id, userId);
   return c.json({ conversation, messages: msgs, inference });
-});
-
-/**
- * Active streams across all the user's conversations. Drives the
- * sidebar / NavBar parallel-stream indicator. Mounted before /:id so
- * Hono's path-match doesn't capture "active" as a conv id.
- */
-conversationsRoute.get("/active", async (c) => {
-  const userId = c.get("userId");
-  return c.json({ active: listActiveForUser(userId) });
 });
 
 /**
