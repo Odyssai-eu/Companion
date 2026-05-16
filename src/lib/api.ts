@@ -146,7 +146,11 @@ export type ApiMcpServer = {
   slug: string;
   transport: "streamable_http" | "sse";
   url: string;
+  authKind: "bearer" | "oauth" | "none";
   hasAuthHeader: boolean;
+  oauthConnected: boolean;
+  oauthExpiresAt: string | null;
+  oauthScopes: string[] | null;
   enabled: boolean;
   toolsCount: number;
   toolsCacheAt: string | null;
@@ -160,6 +164,7 @@ export type ApiMcpServerInput = {
   slug?: string;
   transport: "streamable_http" | "sse";
   url: string;
+  authKind?: "bearer" | "oauth" | "none";
   authHeader?: string | null;
   enabled?: boolean;
 };
@@ -523,6 +528,16 @@ export const api = {
     }),
   deleteMcpServer: (id: string) =>
     request<void>(`/api/mcp-servers/${id}`, { method: "DELETE" }),
+  startMcpOauth: (id: string) =>
+    request<{ authorizationUrl: string; state: string }>(
+      `/api/mcp-servers/${id}/oauth/start`,
+      { method: "POST" },
+    ),
+  disconnectMcpOauth: (id: string) =>
+    request<{ ok: true }>(`/api/mcp-servers/${id}/oauth/disconnect`, {
+      method: "POST",
+    }),
+
   refreshMcpServer: (id: string) =>
     request<{ ok: true; tools: ApiMcpToolSpec[] }>(
       `/api/mcp-servers/${id}/refresh`,

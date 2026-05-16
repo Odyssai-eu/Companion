@@ -27,6 +27,7 @@ type Draft = {
   slug: string;
   transport: "streamable_http" | "sse";
   url: string;
+  authKind: "bearer" | "oauth" | "none";
   authHeader: string;
   authHeaderDirty: boolean;
   enabled: boolean;
@@ -37,6 +38,7 @@ const EMPTY_DRAFT: Draft = {
   slug: "",
   transport: "streamable_http",
   url: "",
+  authKind: "bearer",
   authHeader: "",
   authHeaderDirty: false,
   enabled: true,
@@ -71,10 +73,56 @@ export default function McpServersPage() {
       slug: s.slug,
       transport: s.transport,
       url: s.url,
+      authKind: s.authKind,
       authHeader: "",
       authHeaderDirty: false,
       enabled: s.enabled,
     });
+  }
+
+  async function connectOauth(s: ApiMcpServer) {
+    try {
+      const { authorizationUrl } = await api.startMcpOauth(s.id);
+      // Open the auth URL in a popup. The callback page postMessages
+      // back to us on completion; we then refresh the list to show
+      // the connected status.
+      const popup = window.open(
+        authorizationUrl,
+        `mcp-oauth-${s.id}`,
+        "width=600,height=720,popup=yes",
+      );
+      if (!popup) {
+        setError(
+          "Popup was blocked. Allow popups for this site and try again.",
+        );
+        return;
+      }
+      // Listen for the callback's postMessage. The popup self-closes
+      // after a short delay, so we just need to know it succeeded.
+      function onMessage(e: MessageEvent) {
+        if (!e.data || e.data.type !== "mcp-oauth") return;
+        window.removeEventListener("message", onMessage);
+        if (e.data.ok) {
+          reload();
+        } else {
+          setError(`OAuth failed: ${e.data.message ?? "unknown"}`);
+        }
+      }
+      window.addEventListener("message", onMessage);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function disconnectOauth(s: ApiMcpServer) {
+    if (!confirm(`Disconnect ${s.name}? You'll need to re-authorize to use it again.`))
+      return;
+    try {
+      await api.disconnectMcpOauth(s.id);
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   async function remove(s: ApiMcpServer) {
@@ -161,6 +209,8 @@ export default function McpServersPage() {
               onDelete={() => remove(s)}
               onRefresh={() => refresh(s)}
               onToggle={() => toggleEnabled(s)}
+              onOauthConnect={() => connectOauth(s)}
+              onOauthDisconnect={() => disconnectOauth(s)}
             />
           ))}
         </div>
@@ -193,13 +243,19 @@ function ServerCard({
   onDelete,
   onRefresh,
   onToggle,
+  onOauthConnect,
+  onOauthDisconnect,
 }: {
   server: ApiMcpServer;
   onEdit: () => void;
   onDelete: () => void;
   onRefresh: () => void;
   onToggle: () => void;
+  onOauthConnect: () => void;
+  onOauthDisconnect: () => void;
 }) {
+  const isOauth = server.authKind === "oauth";
+  const oauthNeedsAuth = isOauth && !server.oauthConnected;
   return (
     <div
       className={`flex flex-col gap-2 rounded-lg border bg-white p-4 ${
@@ -234,10 +290,31 @@ function ServerCard({
             {server.toolsCount} tool{server.toolsCount === 1 ? "" : "s"}
             {server.toolsCacheAt &&
               ` · refreshed ${new Date(server.toolsCacheAt).toLocaleString()}`}
-            {server.hasAuthHeader && " · auth set"}
+            {server.authKind === "bearer" && server.hasAuthHeader && " · auth set"}
+            {isOauth &&
+              (server.oauthConnected ? " · OAuth connected" : " · OAuth — needs authorization")}
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {oauthNeedsAuth && (
+            <button
+              type="button"
+              onClick={onOauthConnect}
+              className="rounded-md bg-cyan px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90"
+            >
+              Connect
+            </button>
+          )}
+          {isOauth && server.oauthConnected && (
+            <button
+              type="button"
+              onClick={onOauthDisconnect}
+              className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
+              title="Sign out from this MCP server"
+            >
+              Sign out
+            </button>
+          )}
           <button
             type="button"
             onClick={onToggle}
@@ -314,6 +391,7 @@ function EditModal({
           name: draft.name.trim(),
           transport: draft.transport,
           url: draft.url.trim(),
+          authKind: draft.authKind,
           enabled: draft.enabled,
         };
         if (draft.authHeaderDirty) {
@@ -325,10 +403,13 @@ function EditModal({
           name: draft.name.trim(),
           transport: draft.transport,
           url: draft.url.trim(),
+          authKind: draft.authKind,
           enabled: draft.enabled,
         };
         if (draft.slug.trim()) body.slug = draft.slug.trim();
-        if (draft.authHeader.trim()) body.authHeader = draft.authHeader.trim();
+        if (draft.authKind === "bearer" && draft.authHeader.trim()) {
+          body.authHeader = draft.authHeader.trim();
+        }
         await api.createMcpServer(body);
       }
       await onSaved();
@@ -442,28 +523,53 @@ function EditModal({
         </Field>
 
         <Field
-          label={
-            draft.id && !draft.authHeaderDirty
-              ? "Auth header (leave blank to keep existing)"
-              : "Auth header"
+          label="Authentication"
+          hint={
+            draft.authKind === "oauth"
+              ? "Use OAuth 2.1 with PKCE — appropriate for Notion, Linear, GitHub, etc. After saving, click 'Connect' on the server card to authorize."
+              : draft.authKind === "bearer"
+                ? "Static bearer token, set once."
+                : "No authentication — for local / unauthenticated servers."
           }
-          hint='Examples: "Bearer sk_test_…" · "X-API-Key: abc123". Stored as plain text in DB.'
         >
-          <input
-            type="password"
-            value={draft.authHeader}
-            onChange={(e) => {
-              set("authHeader", e.target.value);
-              set("authHeaderDirty", true);
-            }}
-            placeholder={
-              draft.id && !draft.authHeaderDirty
-                ? "•••••••• (saved)"
-                : "Bearer sk_…"
+          <select
+            value={draft.authKind}
+            onChange={(e) =>
+              set("authKind", e.target.value as Draft["authKind"])
             }
-            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] outline-none focus:border-cyan"
-          />
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-[13px] outline-none focus:border-cyan"
+          >
+            <option value="bearer">Bearer token (static)</option>
+            <option value="oauth">OAuth 2.1 (Notion, Linear, …)</option>
+            <option value="none">None</option>
+          </select>
         </Field>
+
+        {draft.authKind === "bearer" && (
+          <Field
+            label={
+              draft.id && !draft.authHeaderDirty
+                ? "Auth header (leave blank to keep existing)"
+                : "Auth header"
+            }
+            hint='Examples: "Bearer sk_test_…" · "X-API-Key: abc123". Stored as plain text in DB.'
+          >
+            <input
+              type="password"
+              value={draft.authHeader}
+              onChange={(e) => {
+                set("authHeader", e.target.value);
+                set("authHeaderDirty", true);
+              }}
+              placeholder={
+                draft.id && !draft.authHeaderDirty
+                  ? "•••••••• (saved)"
+                  : "Bearer sk_…"
+              }
+              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] outline-none focus:border-cyan"
+            />
+          </Field>
+        )}
 
         <label className="flex cursor-pointer items-center gap-2 text-[13px] text-gray-700">
           <input
