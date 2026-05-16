@@ -17,7 +17,13 @@
 
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/index";
-import { addons } from "../db/schema";
+import { addons, mcpServers } from "../db/schema";
+import {
+  callTool as callMcpTool,
+  fetchTools as fetchMcpTools,
+  parseMcpToolName,
+  type McpToolSpec,
+} from "./mcp-client";
 import { fsEdit, fsList, fsRead, fsWrite, WorkspaceError } from "./workspace";
 
 const ADDON_NAME = "Web Search";
@@ -217,7 +223,97 @@ export async function toolsForUser(userId: string): Promise<unknown[]> {
   // runs its own native tool layer. This avoids the double-orchestration
   // (chat model deciding when to call cluster_action vs. talking to
   // Hermes directly) which empirically gave mediocre results.
+
+  // MCP tools — third-party servers the user registered. Read the cache
+  // and refresh entries older than the TTL in the background; the cached
+  // shape is good enough for the immediate response. New servers (no
+  // cache yet) get a synchronous fetch — first chat after adding a
+  // server pays the round-trip, subsequent turns are instant.
+  out.push(...(await collectMcpTools(userId)));
+
   return out;
+}
+
+const MCP_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function collectMcpTools(userId: string): Promise<unknown[]> {
+  const rows = await db
+    .select()
+    .from(mcpServers)
+    .where(and(eq(mcpServers.userId, userId), eq(mcpServers.enabled, true)));
+  const out: unknown[] = [];
+  for (const row of rows) {
+    let tools = row.toolsCache;
+    const stale =
+      !row.toolsCacheAt ||
+      Date.now() - new Date(row.toolsCacheAt).getTime() > MCP_CACHE_TTL_MS;
+    // Synchronous refresh only when we have nothing at all to show.
+    // Stale caches get returned now and refreshed in the background so
+    // the chat turn doesn't wait on a 3rd-party server.
+    if (!tools || tools.length === 0) {
+      try {
+        tools = await fetchMcpTools(row);
+        await db
+          .update(mcpServers)
+          .set({
+            toolsCache: tools,
+            toolsCacheAt: new Date(),
+            lastError: null,
+          })
+          .where(eq(mcpServers.id, row.id));
+      } catch (e) {
+        await db
+          .update(mcpServers)
+          .set({ lastError: (e as Error).message })
+          .where(eq(mcpServers.id, row.id));
+        continue;
+      }
+    } else if (stale) {
+      // Fire-and-forget refresh. Don't block the chat turn.
+      void fetchMcpTools(row)
+        .then((fresh) =>
+          db
+            .update(mcpServers)
+            .set({
+              toolsCache: fresh,
+              toolsCacheAt: new Date(),
+              lastError: null,
+            })
+            .where(eq(mcpServers.id, row.id)),
+        )
+        .catch((e) =>
+          db
+            .update(mcpServers)
+            .set({ lastError: (e as Error).message })
+            .where(eq(mcpServers.id, row.id)),
+        );
+    }
+    for (const t of tools) {
+      out.push(toOpenAiTool(row.slug, t));
+    }
+  }
+  return out;
+}
+
+/**
+ * Wrap an MCP tool spec into the OpenAI tool format the chat loop
+ * expects. Tool name is namespaced `mcp_<slug>_<tool>` so the same
+ * underlying name can come from multiple servers without collision.
+ *
+ * The MCP `inputSchema` is a JSON Schema, which is exactly what
+ * OpenAI's `parameters` field wants — pass through verbatim. When the
+ * server didn't ship a schema, fall back to a permissive "any object"
+ * shape so the model can still pass arbitrary args.
+ */
+function toOpenAiTool(serverSlug: string, t: McpToolSpec): unknown {
+  return {
+    type: "function" as const,
+    function: {
+      name: `mcp_${serverSlug}_${t.name}`,
+      description: t.description ?? `${t.name} (via ${serverSlug})`,
+      parameters: t.inputSchema ?? { type: "object", properties: {} },
+    },
+  };
 }
 
 // ── Tavily client ────────────────────────────────────────────────────────
@@ -646,7 +742,45 @@ export async function executeTool(
   if (name === "cluster_action" || name === "hermes_agent") {
     return hermesRun(userId, args);
   }
+  if (name.startsWith("mcp_")) {
+    return executeMcpTool(name, args, userId);
+  }
   return { ok: false, error: `unknown tool: ${name}` };
+}
+
+async function executeMcpTool(
+  name: string,
+  args: ToolArgs,
+  userId: string,
+): Promise<ToolResult> {
+  const parsed = parseMcpToolName(name);
+  if (!parsed) return { ok: false, error: `bad MCP tool name: ${name}` };
+  const [row] = await db
+    .select()
+    .from(mcpServers)
+    .where(
+      and(eq(mcpServers.userId, userId), eq(mcpServers.slug, parsed.slug)),
+    )
+    .limit(1);
+  if (!row) return { ok: false, error: `MCP server not found: ${parsed.slug}` };
+  if (!row.enabled) {
+    return { ok: false, error: `MCP server disabled: ${parsed.slug}` };
+  }
+  const res = await callMcpTool(row, parsed.tool, args);
+  if (!res.ok) {
+    // Persist last_error so the Settings UI surfaces the failure.
+    await db
+      .update(mcpServers)
+      .set({ lastError: res.error ?? "unknown" })
+      .where(eq(mcpServers.id, row.id))
+      .catch(() => undefined);
+    return { ok: false, error: res.error ?? "mcp_tool_failed" };
+  }
+  // Cap at 4k chars — the LLM only needs enough to react. MCP servers
+  // (especially RAG-style ones like Qdrant) can return enormous blobs;
+  // we let the model ask for more via a follow-up tool call instead of
+  // dumping everything into context.
+  return { ok: true, data: res.content.slice(0, 4000) };
 }
 
 function clamp(n: number, lo: number, hi: number): number {
