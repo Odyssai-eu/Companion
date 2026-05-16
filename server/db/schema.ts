@@ -47,6 +47,12 @@ export const users = pgTable("users", {
   // Off by default — the bar feels like clutter once you've stopped
   // tuning latency. Power users flip it on in Settings.
   showMetrics: boolean("show_metrics").notNull().default(false),
+  // Per-user toggle for verbose debug logging. When true, chat.ts logs
+  // the upstream request body (with `[chat:upstream]` prefix) before
+  // every `/v1/chat/completions` POST. Useful for diagnosing tool calling
+  // shape issues, model id resolution, etc. Off by default — produces
+  // a lot of stdout. Server-only sink (console.log → docker logs).
+  debugVerbose: boolean("debug_verbose").notNull().default(false),
   // Temporal awareness — fed into every inference as a context tag.
   timezone: text("timezone").notNull().default("Europe/Brussels"),
   lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),

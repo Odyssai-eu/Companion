@@ -10,7 +10,7 @@ import {
   listActiveForUser,
 } from "../lib/inference-state";
 import { authHeaders } from "../lib/litellm";
-import { compileNow, getMemoryContext } from "../lib/memory";
+import { capMarkdown, compileNow, getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
 
 const conversationsRoute = new Hono();
@@ -564,11 +564,14 @@ conversationsRoute.post(
     // Memory snapshot — read frozen value, lazy-backfill if missing. When
     // the conversation has memory disabled, skip injection entirely (must
     // match chat.ts behaviour or the prewarm prefix differs from the real
-    // chat's, defeating the whole point).
+    // chat's, defeating the whole point). Apply the byte cap consistently
+    // with chat.ts: existing snapshots may be larger than the current
+    // MEMORY_MAX_BYTES limit and must be trimmed at read time too.
     let memoryBlock = "";
     if (conv.memoryEnabled !== false) {
-      memoryBlock = conv.memorySnapshot ?? "";
-      if (conv.memorySnapshot == null) {
+      if (conv.memorySnapshot != null) {
+        memoryBlock = capMarkdown(conv.memorySnapshot);
+      } else {
         memoryBlock = await getMemoryContext(userId, conv.projectId);
         await db
           .update(conversations)
@@ -614,31 +617,32 @@ conversationsRoute.post(
       lastUserAt = stamp;
     }
 
-    // Append a tiny dummy user msg to satisfy "user-last" requirement and
-    // make the upstream prefill the entire conversation prefix. Its tag
-    // will differ from the next real user msg's tag (different now/previous),
-    // but that only affects the LAST few tokens — the cacheable prefix
-    // (sys + memory + tagged history) is byte-identical to what chat.ts
-    // will send next.
-    const dummyAt = new Date();
-    const dummyTag = buildTag({
-      now: dummyAt,
-      previous: lastUserAt,
-      timezone: tz,
-    });
-    tagged.push({
-      role: "user",
-      content: `${dummyTag} .`,
-      createdAt: dummyAt.toISOString(),
-    });
+    // Whether to append a synthetic dummy user message. LiteLLM (and most
+    // upstream engines) require messages to end with `user`. Odysseus'
+    // runner does NOT — it just renders via apply_chat_template with
+    // add_generation_prompt=True, which works whether the last message is
+    // user or assistant. We decide AFTER computing prewarmMode below.
+    const needsDummyUser = (mode: "gateway" | "hybrid" | "legacy") =>
+      mode !== "gateway";
 
-    const finalMessages =
-      composedSystem.length > 0
-        ? [{ role: "system" as const, content: composedSystem }, ...tagged]
-        : tagged;
+    function withDummy(): WireMsg[] {
+      const out = [...tagged];
+      const dummyAt = new Date();
+      const dummyTag = buildTag({
+        now: dummyAt,
+        previous: lastUserAt,
+        timezone: tz,
+      });
+      out.push({
+        role: "user",
+        content: `${dummyTag} .`,
+        createdAt: dummyAt.toISOString(),
+      });
+      return out;
+    }
 
     // Target the same rail chat.ts uses: gateway → engine, otherwise
-    // LiteLLM.
+    // LiteLLM. (Hybrid uses LiteLLM for inference, engine only for caps.)
     const prewarmMode: "gateway" | "hybrid" | "legacy" =
       user.litellmDisabled && user.engineUrl
         ? "gateway"
@@ -650,31 +654,44 @@ conversationsRoute.post(
       // No rail available — skip prewarm rather than 503'ing the UI.
       return c.json({ ok: false, reason: "no_provider" });
     }
-    // Skip prewarm in gateway mode. Odysseus' session cache already
-    // makes turn N+1 reuse turn N's stored KV state under the same
-    // session_id, so the prewarm's TTFT benefit no longer exists. Worse,
-    // the prewarm appends a synthetic dummy_user message (with a fresh
-    // timestamp tag, unmatchable by the real next turn) that POLLUTES
-    // the session slot — every real chat turn following a prewarm gets
-    // `fp16·divergent` on Odysseus and pays the full prefill again
-    // (94s on 19k tokens observed). The fix is just: don't prewarm.
-    // The real session-cache plumbing in chat.ts gives the win on its
-    // own. See BRIEF-companion-prefix-cache-and-probes.md for the
-    // upstream-side diagnostic.
-    if (prewarmMode === "gateway") {
-      return c.json({ ok: false, reason: "skipped_gateway_session_cache" });
-    }
-    // hybrid + legacy fall through to LiteLLM. (Gateway-mode early
-    // returned above — Odysseus' session cache makes prewarm both
-    // useless and actively harmful there; see the comment above.)
-    const target = {
-      baseUrl: (
-        user.litellmUrl ??
-        process.env.LITELLM_URL ??
-        "http://192.168.86.44:4000"
-      ).replace(/\/+$/, ""),
-      apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-    };
+    // History note: prewarm was previously disabled in gateway mode because
+    // appending a synthetic dummy_user message with a fresh timestamp tag
+    // caused `fp16·divergent` on Odysseus (the dummy's tag never matched
+    // the real next user's tag, polluting the session slot). Re-enabled
+    // 2026-05-16 along with two safeguards:
+    //   1. The MEMORY_MAX_BYTES cap on the memory block — keeps prewarm +
+    //      chat in sync as the wiki grows
+    //   2. Don't append a dummy_user at all when targeting gateway —
+    //      Odysseus' runner accepts assistant-last messages (templates
+    //      with add_generation_prompt=True), so the prewarm tokens are
+    //      a strict prefix of the real next chat's tokens.
+    //
+    // If divergence shows up again, the runner's new fine-grained labels
+    // (fp16·cold|model-changed|divergent|hit-truncated) will pinpoint it.
+    const target =
+      prewarmMode === "gateway" && user.engineUrl
+        ? {
+            baseUrl: user.engineUrl.replace(/\/+$/, ""),
+            apiKey: user.engineToken,
+          }
+        : {
+            baseUrl: (
+              user.litellmUrl ??
+              process.env.LITELLM_URL ??
+              "http://192.168.86.44:4000"
+            ).replace(/\/+$/, ""),
+            apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+          };
+
+    // In gateway mode we can send assistant-last (Odysseus templates with
+    // add_generation_prompt=True). In hybrid/legacy we must end with user
+    // (LiteLLM passthrough enforces it for most upstream engines).
+    const finalMessages = (() => {
+      const msgs = needsDummyUser(prewarmMode) ? withDummy() : tagged;
+      return composedSystem.length > 0
+        ? [{ role: "system" as const, content: composedSystem }, ...msgs]
+        : msgs;
+    })();
 
     const upstreamBody: Record<string, unknown> = {
       model: opts.model,

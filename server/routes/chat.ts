@@ -26,7 +26,7 @@ import { conversations, messages, projects, users } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { incrementGuestUsage } from "../lib/guest-token";
 import { authHeaders } from "../lib/litellm";
-import { getMemoryContext, triggerCompile } from "../lib/memory";
+import { capMarkdown, getMemoryContext, triggerCompile } from "../lib/memory";
 import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
 import { getProjectMemoryContext } from "../lib/project-memory";
 import { buildTag } from "../lib/timetag";
@@ -94,6 +94,7 @@ chatRoute.post("/completions", async (c) => {
     return c.json({ error: "missing_model" }, 400);
   }
 
+
   const userId = c.get("userId");
   const guest: GuestTokenContext | undefined = c.get("guest");
 
@@ -102,6 +103,9 @@ chatRoute.post("/completions", async (c) => {
   if (guest && guest.tokenBudget > 0 && guest.tokensUsed >= guest.tokenBudget) {
     return c.json({ error: "guest_budget_exceeded" }, 429);
   }
+
+  // (Prewarm uses /api/conversations/:id/prewarm, not this route. That
+  // path composes the same prefix without any persistence side effects.)
 
   // ── 1. Atomic last-interaction swap ────────────────────────────────────
   // SELECT … FOR UPDATE locks the user row for the duration of the tx.
@@ -119,6 +123,7 @@ chatRoute.post("/completions", async (c) => {
         engineToken: users.engineToken,
         engineMode: users.engineMode,
         litellmDisabled: users.litellmDisabled,
+        debugVerbose: users.debugVerbose,
       })
       .from(users)
       .where(eq(users.id, userId))
@@ -261,7 +266,10 @@ chatRoute.post("/completions", async (c) => {
         let globalBlock = "";
         if (conv.memoryEnabled !== false) {
           if (conv.memorySnapshot != null) {
-            globalBlock = conv.memorySnapshot;
+            // Apply the cap on cached snapshots too — existing convs were
+            // frozen before the cap existed and would otherwise inject the
+            // full ~140 KB wiki on every turn forever.
+            globalBlock = capMarkdown(conv.memorySnapshot);
           } else {
             globalBlock = await getMemoryContext(userId, projectId);
             await db
@@ -633,6 +641,19 @@ chatRoute.post("/completions", async (c) => {
         // second reveals if any non-message field (params, headers, body
         // ordering, tools schema) is breaking the EXO-side cache key.
         const bodyJson = JSON.stringify(requestBody);
+        // Per-user verbose request log. Off by default. Flip via Settings →
+        // Inference → Debug. Logs the full upstream body before each POST so
+        // we can diagnose tool-call shape, model id resolution, streaming
+        // weirdness, etc. Truncated at 8 KiB to keep docker logs sane.
+        if (userRow.debugVerbose || process.env.DEBUG_VERBOSE === "1") {
+          const preview = bodyJson.length > 8192
+            ? bodyJson.slice(0, 8192) + `…[+${bodyJson.length - 8192}B]`
+            : bodyJson;
+          console.log(
+            `[chat:upstream] iter=${iter} target=${target.baseUrl} ` +
+            `bytes=${bodyJson.length} body=${preview}`,
+          );
+        }
         if (process.env.DEBUG_PROMPT_HASH === "1") {
           const { createHash } = await import("node:crypto");
           const parts: string[] = [];

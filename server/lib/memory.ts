@@ -14,6 +14,33 @@
 const MEMORY_BASE_URL =
   process.env.MEMORY_SERVICE_URL ?? "http://127.0.0.1:8001";
 const MEMORY_TIMEOUT_MS = Number(process.env.MEMORY_TIMEOUT_MS ?? 1500);
+// Hard cap on the wiki dump size we inject into the system prompt. The
+// Python service returns the whole Obsidian corpus unbounded; at 35 k+
+// tokens (~140 KB) it dominates prefill cost (cf. Hy3 TTFT 280s on
+// 38 k-tok prompt). 50 KB ≈ 12 k tokens is a reasonable budget that
+// still gives the model meaningful context without nuking latency.
+// Set MEMORY_MAX_BYTES=0 to disable the cap.
+const MEMORY_MAX_BYTES = Number(process.env.MEMORY_MAX_BYTES ?? 50_000);
+
+/** The memory budget we enforce. Exported so other code paths (e.g.
+ *  re-reading a frozen snapshot from the DB) can apply the same cap. */
+export const MEMORY_CAP_BYTES = MEMORY_MAX_BYTES;
+
+/** Truncate a markdown block at a byte boundary that doesn't split a
+ *  paragraph (we cut at the last `\n\n` before the limit, so the model
+ *  never sees a half-sentence). Appends a visible marker so the model
+ *  knows context was elided. */
+export function capMarkdown(md: string, maxBytes: number = MEMORY_MAX_BYTES): string {
+  if (maxBytes <= 0 || md.length <= maxBytes) return md;
+  const slice = md.slice(0, maxBytes);
+  const lastBreak = slice.lastIndexOf("\n\n");
+  const cut = lastBreak > maxBytes * 0.5 ? lastBreak : maxBytes;
+  return (
+    md.slice(0, cut).trimEnd() +
+    `\n\n---\n_[memory truncated: ${md.length - cut} bytes elided of ${md.length} total. ` +
+    `Raise MEMORY_MAX_BYTES if you need more context here.]_\n`
+  );
+}
 
 /** Returns the Markdown block to prepend to the system prompt, or "" on failure. */
 export async function getMemoryContext(
@@ -30,7 +57,8 @@ export async function getMemoryContext(
     clearTimeout(timer);
     if (!res.ok) return "";
     const data = (await res.json()) as { markdown?: string };
-    return stripWikilinks(data.markdown ?? "");
+    const stripped = stripWikilinks(data.markdown ?? "");
+    return capMarkdown(stripped, MEMORY_MAX_BYTES);
   } catch (err) {
     console.warn("[memory] getMemoryContext failed:", (err as Error).message);
     return "";

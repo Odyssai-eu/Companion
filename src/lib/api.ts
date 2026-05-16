@@ -70,6 +70,9 @@ export type ApiInferenceSettings = {
   /** Per-user toggle for the per-assistant-message stats box. Off by
    *  default. Power users flip it on in Settings → Inference. */
   showMetrics: boolean;
+  /** Per-user toggle for verbose debug logging on chat.ts (logs upstream
+   *  request bodies to docker logs). Off by default. */
+  debugVerbose: boolean;
 };
 
 export type ApiEngineProbeResult = {
@@ -468,6 +471,7 @@ export const api = {
       engineMode: "gateway" | "hybrid" | "legacy";
       litellmDisabled: boolean;
       showMetrics: boolean;
+      debugVerbose: boolean;
     }>,
   ) =>
     request<{ ok: true }>("/api/inference/settings", {

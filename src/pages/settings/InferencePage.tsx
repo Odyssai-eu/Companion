@@ -31,6 +31,7 @@ export default function InferencePage() {
   const [litellmUrl, setLitellmUrl] = useState("");
   const [litellmDisabled, setLitellmDisabled] = useState(false);
   const [showMetrics, setShowMetrics] = useState(false);
+  const [debugVerbose, setDebugVerbose] = useState(false);
   const [defaultModel, setDefaultModel] = useState("");
   const [timezone, setTimezone] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -56,6 +57,7 @@ export default function InferencePage() {
     setLitellmUrl(s.litellmUrl ?? "");
     setLitellmDisabled(s.litellmDisabled);
     setShowMetrics(s.showMetrics);
+    setDebugVerbose(s.debugVerbose);
     setDefaultModel(s.defaultModel ?? "");
     setTimezone(s.timezone);
     setInferenceMode(s.inferenceMode);
@@ -76,6 +78,7 @@ export default function InferencePage() {
         litellmUrl: litellmUrl.trim() || null,
         litellmDisabled,
         showMetrics,
+        debugVerbose,
         defaultModel: defaultModel.trim() || null,
         timezone,
         inferenceMode,
@@ -455,6 +458,30 @@ export default function InferencePage() {
               Render the per-message stats box (TTFT, duration, prompt /
               completion tokens, tok/s) under each assistant reply. Off by
               default to keep the conversation visually clean.
+            </span>
+          </div>
+        </label>
+      </Section>
+
+      <Section title="Debug">
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 text-[13px] hover:bg-gray-50">
+          <input
+            type="checkbox"
+            checked={debugVerbose}
+            onChange={(e) => setDebugVerbose(e.target.checked)}
+            className="mt-0.5"
+          />
+          <div className="flex flex-col gap-0.5">
+            <span className="font-medium text-ink">Verbose request logging</span>
+            <span className="text-[12px] text-gray-500">
+              Log the exact upstream request body (tagged{" "}
+              <code className="rounded bg-gray-100 px-1 text-[11px]">
+                [chat:upstream]
+              </code>
+              ) before every <code>POST /v1/chat/completions</code>. Useful for
+              diagnosing tool-call shape issues, model id resolution, or
+              streaming weirdness. Off by default — produces a lot of output
+              in <code>docker logs</code>.
             </span>
           </div>
         </label>
