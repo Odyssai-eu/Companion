@@ -40,8 +40,6 @@ import {
 } from "../lib/inference-state";
 import {
   executeTool,
-  isHermesEnabled,
-  isWebSearchEnabled,
   resolveHermesTarget,
   toolsForUser,
   type ToolResult,
@@ -466,11 +464,19 @@ chatRoute.post("/completions", async (c) => {
   //  - Hermes chats (kind='hermes') do NOT use our tool layer — Hermes
   //    runs its own native skills inside the gateway. We just pipe the
   //    messages through and let Hermes do its thing.
-  const anyToolEnabled =
-    convKind !== "hermes" &&
-    ((await isWebSearchEnabled(userId)) || (await isHermesEnabled(userId))) &&
-    modelSupportsTools(body.model);
-  const tools = anyToolEnabled ? await toolsForUser(userId) : [];
+  // Resolve tools whenever the model supports the OpenAI tools field
+  // and the conv isn't a Hermes one (Hermes runs its own native tool
+  // layer). toolsForUser() reads from every source (fs_*, RAG, web
+  // search, MCP servers, …) and returns an empty array when nothing
+  // is enabled — so the call is cheap when there's nothing to expose.
+  //
+  // (Earlier versions gated this on web-search OR hermes being on;
+  // that left MCP-only users with no tools at all, which is wrong now
+  // that MCP-as-client is a first-class source.)
+  const tools =
+    convKind !== "hermes" && modelSupportsTools(body.model)
+      ? await toolsForUser(userId)
+      : [];
   const toolsEnabled = tools.length > 0;
 
   // Probe routing — gateway mode only. If this request looks like a
