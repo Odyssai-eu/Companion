@@ -140,6 +140,36 @@ export type ApiInferencePresetInput = {
   notes?: string | null;
 };
 
+export type ApiMcpServer = {
+  id: string;
+  name: string;
+  slug: string;
+  transport: "streamable_http" | "sse";
+  url: string;
+  hasAuthHeader: boolean;
+  enabled: boolean;
+  toolsCount: number;
+  toolsCacheAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ApiMcpServerInput = {
+  name: string;
+  slug?: string;
+  transport: "streamable_http" | "sse";
+  url: string;
+  authHeader?: string | null;
+  enabled?: boolean;
+};
+
+export type ApiMcpToolSpec = {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+};
+
 export type ApiInferenceStatus = {
   lastInteractionAt: string | null;
   serverTime: string;
@@ -441,6 +471,38 @@ export const api = {
     }),
   deleteInferencePreset: (id: string) =>
     request<void>(`/api/inference/presets/${id}`, { method: "DELETE" }),
+
+  // MCP servers — Companion as a client of remote MCP endpoints
+  listMcpServers: () =>
+    request<{ servers: ApiMcpServer[] }>("/api/mcp-servers"),
+  createMcpServer: (body: ApiMcpServerInput) =>
+    request<{ server: ApiMcpServer }>("/api/mcp-servers", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateMcpServer: (
+    id: string,
+    body: Partial<Omit<ApiMcpServerInput, "slug">>,
+  ) =>
+    request<{ server: ApiMcpServer }>(`/api/mcp-servers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteMcpServer: (id: string) =>
+    request<void>(`/api/mcp-servers/${id}`, { method: "DELETE" }),
+  refreshMcpServer: (id: string) =>
+    request<{ ok: true; tools: ApiMcpToolSpec[] }>(
+      `/api/mcp-servers/${id}/refresh`,
+      { method: "POST" },
+    ),
+  testMcpServer: (body: ApiMcpServerInput) =>
+    request<
+      | { ok: true; toolsCount: number; tools: ApiMcpToolSpec[] }
+      | { ok: false; error: string }
+    >("/api/mcp-servers/test", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   probeInferenceEngine: (body: { url: string; token?: string }) =>
     request<ApiEngineProbeResult>("/api/inference/engine/probe", {
