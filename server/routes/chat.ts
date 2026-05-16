@@ -27,6 +27,7 @@ import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { incrementGuestUsage } from "../lib/guest-token";
 import { authHeaders } from "../lib/litellm";
 import { getMemoryContext, triggerCompile } from "../lib/memory";
+import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
 import { getProjectMemoryContext } from "../lib/project-memory";
 import { buildTag } from "../lib/timetag";
 import type { GuestTokenContext } from "../lib/guest-token";
@@ -469,12 +470,13 @@ chatRoute.post("/completions", async (c) => {
   // layer). toolsForUser() reads from every source (fs_*, RAG, web
   // search, MCP servers, …) and returns an empty array when nothing
   // is enabled — so the call is cheap when there's nothing to expose.
-  //
-  // (Earlier versions gated this on web-search OR hermes being on;
-  // that left MCP-only users with no tools at all, which is wrong now
-  // that MCP-as-client is a first-class source.)
+  const supportsTools = await modelHasToolsCapability(
+    userRow.engineUrl,
+    userRow.engineToken,
+    body.model,
+  );
   const tools =
-    convKind !== "hermes" && modelSupportsTools(body.model)
+    convKind !== "hermes" && supportsTools
       ? await toolsForUser(userId)
       : [];
   const toolsEnabled = tools.length > 0;
@@ -1217,6 +1219,36 @@ function modelSupportsTools(model: string): boolean {
   // here (EXO Direct uses its own dispatch).
   if (m.startsWith("agent-")) return true;
   return false;
+}
+
+/**
+ * Authoritative tools-capability check.
+ *
+ * Prefers the Odyssai capability contract's `supports_tools` field
+ * when the user has an engine paired (gateway / hybrid mode). Odyssai
+ * publishes the truth per-model (e.g. argo, hades, mimo, glm-5.1,
+ * kimi-k2 all declare supports_tools=true even though their names
+ * don't match our legacy whitelist). Falls back to the name heuristic
+ * for hosted / legacy providers (LiteLLM aliases for Anthropic /
+ * OpenAI / local agent-* setups).
+ */
+async function modelHasToolsCapability(
+  engineUrl: string | null,
+  engineToken: string | null,
+  model: string,
+): Promise<boolean> {
+  if (engineUrl) {
+    try {
+      const caps = await fetchEngineCapabilities(engineUrl, engineToken);
+      const entry = caps.get(model.toLowerCase());
+      if (entry && typeof entry.supports_tools === "boolean") {
+        return entry.supports_tools;
+      }
+    } catch {
+      // Engine unreachable / list missing — fall through to heuristic.
+    }
+  }
+  return modelSupportsTools(model);
 }
 
 /**
