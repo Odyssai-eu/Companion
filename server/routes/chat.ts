@@ -473,6 +473,32 @@ chatRoute.post("/completions", async (c) => {
   const tools = anyToolEnabled ? await toolsForUser(userId) : [];
   const toolsEnabled = tools.length > 0;
 
+  // Probe routing — gateway mode only. If this request looks like a
+  // probe (small max_tokens, no tools), route it to Odysseus' `probe`
+  // alias (Qwen2.5-Coder-1.5B on max-64) instead of letting it hit
+  // Argo / Hades 3-node MLX which is wildly overprovisioned for 1-20
+  // tokens of output. ~4× faster, frees the heavy cluster for real
+  // responses. See BRIEF-companion-prefix-cache-and-probes.md.
+  //
+  // Skipped for kind='hermes' (Hermes has its own model) and for
+  // hybrid/legacy modes (the `probe` alias is published by Odysseus
+  // only — LiteLLM won't know it).
+  if (
+    effectiveMode === "gateway" &&
+    convKind !== "hermes" &&
+    !toolsEnabled &&
+    typeof baseBody.max_tokens === "number" &&
+    baseBody.max_tokens <= 20 &&
+    body.model !== "probe"
+  ) {
+    console.log(
+      "[chat] routing probe → 'probe' (max_tokens=%d, original=%s)",
+      baseBody.max_tokens,
+      body.model,
+    );
+    baseBody.model = "probe";
+  }
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...authHeaders(target),
