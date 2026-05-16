@@ -1191,6 +1191,23 @@ async function collectNonStream(
     argumentsRaw: tc.function?.arguments ?? "",
   })).filter((tc) => tc.name);
 
+  // Temporary instrumentation for "réponse évaporée" diagnosis. When
+  // the upstream returns no useful content AND no tool calls, log the
+  // raw body (truncated) so we can see exactly what came back. Remove
+  // once the root cause is identified.
+  if (!assistantContent.trim() && toolCalls.length === 0) {
+    console.warn(
+      "[chat:empty-upstream]",
+      JSON.stringify({
+        convId: convId ?? null,
+        finishReason,
+        rawCallsCount: rawCalls.length,
+        bodyLen: text.length,
+        bodyPreview: text.slice(0, 2000),
+      }),
+    );
+  }
+
   const usage = parsed.usage
     ? {
         promptTokens:
