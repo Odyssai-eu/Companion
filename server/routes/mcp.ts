@@ -153,16 +153,31 @@ async function deleteMessagesFrom(
   return { ok: true as const };
 }
 
-// SSE consumer for the internal chat completion call. Parses the OAI
-// stream that /api/chat/completions emits, accumulates content +
-// reasoning, returns the final blob.
-interface ChatStreamResult {
-  content: string;
-  reasoning: string;
-  finishReason: string | null;
-}
-
-async function runChatCompletion(opts: {
+/**
+ * Fire a chat completion against Companion's own /api/chat/completions
+ * and **detach** — we don't consume the SSE body, we just confirm the
+ * server accepted the request, then return.
+ *
+ * Why non-blocking: MCP clients (Claude Cowork, Hermes, Continue.dev)
+ * impose a per-tool-call timeout (~45s in Cowork). Long generations
+ * (HY3 reasoner on argo: 78-120s on rich contexts) blow past that, the
+ * client errors out and discards the tool result. But Companion's chat
+ * route keeps generating server-side and persists the result — it just
+ * becomes unreachable from the original tool call.
+ *
+ * Standard async pattern: send → poll → fetch. The MCP tool surface:
+ *   companion_send_message            → fires + returns immediately
+ *   companion_get_inference_status    → polls server-side buffer
+ *   companion_get_conversation        → reads persisted messages once done
+ *
+ * Implementation: we await the response headers (so we know the server
+ * accepted the body and started its worker), then cancel our reader.
+ * Companion's chat route writes to a TransformStream wrapped in
+ * `writer.write(...).catch(() => undefined)` — so our client-side
+ * disconnect is invisible to the server worker, which keeps running,
+ * persists the assistant message, and refreshes memory.
+ */
+async function startChatCompletion(opts: {
   authHeader: string;
   origin: string;
   conversationId: string;
@@ -171,10 +186,15 @@ async function runChatCompletion(opts: {
   temperature?: number;
   max_tokens?: number;
   top_p?: number;
+  top_k?: number;
+  min_p?: number;
+  repetition_penalty?: number;
+  seed?: number;
+  stop?: string | string[];
   thinking?: boolean;
   reasoning_effort?: string;
   system_prompt?: string;
-}): Promise<ChatStreamResult> {
+}): Promise<{ ok: true; startedAt: string } | { ok: false; error: string }> {
   const url = `${opts.origin}/api/chat/completions`;
   const body = {
     conversationId: opts.conversationId,
@@ -189,69 +209,43 @@ async function runChatCompletion(opts: {
     temperature: opts.temperature,
     max_tokens: opts.max_tokens,
     top_p: opts.top_p,
+    top_k: opts.top_k,
+    min_p: opts.min_p,
+    repetition_penalty: opts.repetition_penalty,
+    seed: opts.seed,
+    stop: opts.stop,
     thinking: opts.thinking,
     reasoning_effort: opts.reasoning_effort,
     system_prompt: opts.system_prompt,
   };
-  const r = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      Authorization: opts.authHeader,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok || !r.body) {
+  let r: Response;
+  try {
+    r = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        Authorization: opts.authHeader,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    return { ok: false, error: `network error: ${(e as Error).message}` };
+  }
+  if (!r.ok) {
     const txt = await r.text().catch(() => "");
-    throw new Error(`chat completion failed: ${r.status} ${txt}`);
+    return { ok: false, error: `${r.status} ${r.statusText}: ${txt}` };
   }
-  const reader = r.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  let content = "";
-  let reasoning = "";
-  let finishReason: string | null = null;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let sep: number;
-    while ((sep = buf.indexOf("\n\n")) !== -1) {
-      const frame = buf.slice(0, sep);
-      buf = buf.slice(sep + 2);
-      const dataLines: string[] = [];
-      for (const line of frame.split("\n")) {
-        if (line.startsWith(":")) continue;
-        if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
-      }
-      if (dataLines.length === 0) continue;
-      const payload = dataLines.join("\n");
-      if (payload === "[DONE]") return { content, reasoning, finishReason };
-      let chunk: {
-        choices?: Array<{
-          delta?: {
-            content?: string;
-            reasoning?: string;
-            reasoning_content?: string;
-          };
-          finish_reason?: string | null;
-        }>;
-      };
-      try {
-        chunk = JSON.parse(payload);
-      } catch {
-        continue;
-      }
-      const choice = chunk.choices?.[0];
-      const delta = choice?.delta;
-      if (delta?.content) content += delta.content;
-      const r = delta?.reasoning ?? delta?.reasoning_content;
-      if (r) reasoning += r;
-      if (choice?.finish_reason) finishReason = choice.finish_reason;
-    }
+  // Headers received: the server accepted the request, opened the SSE
+  // pipe, and the inference-state buffer for this conversation has been
+  // started (startInference() is called before the first byte hits the
+  // wire). Cancel our reader so we don't hold the connection.
+  try {
+    await r.body?.cancel();
+  } catch {
+    // ignore — best effort detach
   }
-  return { content, reasoning, finishReason };
+  return { ok: true, startedAt: new Date().toISOString() };
 }
 
 // ── MCP server factory (per-request, stateless) ────────────────────────
@@ -267,7 +261,7 @@ function buildServer(opts: {
 }): McpServer {
   const server = new McpServer({
     name: "companion-mcp",
-    version: "0.2.0",
+    version: "0.3.0",
   });
 
   server.registerTool(
@@ -371,7 +365,7 @@ function buildServer(opts: {
     "companion_send_message",
     {
       description:
-        "Submit a user message and wait for the full assistant response (consumes the SSE stream internally). Both messages are persisted in Companion. Fetch the conversation afterwards to get message ids. `max_tokens` defaults to 32768 — Odysseus / EXO default to 512 when unset, which truncates almost every response, so we force a sane ceiling here unless the caller overrides.",
+        "Submit a user message to a conversation. NON-BLOCKING: returns immediately with `{ status: 'started' }` as soon as the server accepts the request. Companion keeps generating server-side and persists the assistant message when done. To get the response: poll `companion_get_inference_status(conversationId)` until `done:true`, then call `companion_get_conversation(id)` to read the persisted assistant message and its id. `max_tokens` defaults to 32768 — Odysseus / EXO default to 512 when unset, which truncates almost every response. Tuning knobs useful for prose / long-form: `repetition_penalty` ~1.1-1.15 breaks syntactic recycling; `seed` makes a regenerate reproducible; `stop` halts on a marker (e.g. `['***','---']`) instead of letting the model decide.",
       inputSchema: {
         conversationId: z.string().uuid(),
         content: z.string().min(1),
@@ -379,13 +373,18 @@ function buildServer(opts: {
         temperature: z.number().optional(),
         max_tokens: z.number().int().optional(),
         top_p: z.number().optional(),
+        top_k: z.number().int().optional(),
+        min_p: z.number().optional(),
+        repetition_penalty: z.number().optional(),
+        seed: z.number().int().optional(),
+        stop: z.union([z.string(), z.array(z.string())]).optional(),
         thinking: z.boolean().optional(),
         reasoning_effort: z.string().optional(),
         system_prompt: z.string().optional(),
       },
     },
     async (args) => {
-      const result = await runChatCompletion({
+      const result = await startChatCompletion({
         authHeader: opts.authHeader,
         origin: opts.origin,
         conversationId: args.conversationId,
@@ -399,13 +398,63 @@ function buildServer(opts: {
         // 32k is safe across the board.
         max_tokens: args.max_tokens ?? 32_768,
         top_p: args.top_p,
+        top_k: args.top_k,
+        min_p: args.min_p,
+        repetition_penalty: args.repetition_penalty,
+        seed: args.seed,
+        stop: args.stop,
         thinking: args.thinking,
         reasoning_effort: args.reasoning_effort,
         system_prompt: args.system_prompt,
       });
+      if (!result.ok) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: result.error }],
+        };
+      }
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                status: "started",
+                conversationId: args.conversationId,
+                startedAt: result.startedAt,
+                hint: "Poll companion_get_inference_status until done:true, then companion_get_conversation to read the assistant message.",
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
+    },
+  );
+
+  server.registerTool(
+    "companion_get_inference_status",
+    {
+      description:
+        "Check the live inference buffer for a conversation. Returns `{ active, done, content, reasoning, error }`. `active:false` means no inference is running (either never started, or the buffer was already cleared). `done:true` means generation finished — the message is persisted; call `companion_get_conversation` to fetch it with its id. While `done:false` and `active:true`, `content` and `reasoning` are partial accumulations.",
+      inputSchema: {
+        conversationId: z.string().uuid(),
+      },
+    },
+    async ({ conversationId }) => {
+      const r = await fetch(
+        `${opts.origin}/api/conversations/${conversationId}/inference`,
+        { headers: { Authorization: opts.authHeader } },
+      );
+      const txt = await r.text();
+      if (!r.ok) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `${r.status}: ${txt}` }],
+        };
+      }
+      return { content: [{ type: "text", text: txt }] };
     },
   );
 

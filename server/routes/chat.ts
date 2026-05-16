@@ -78,6 +78,10 @@ type ChatBody = {
   thinking?: boolean;
   reasoning_effort?: string;
   system_prompt?: string;
+  /** Stop sequences — generation halts when any of these strings is
+   *  emitted. OpenAI-compatible engines (LiteLLM, vLLM, EXO, Odysseus)
+   *  all accept either a single string or an array. */
+  stop?: string | string[];
 };
 
 // ── Route ────────────────────────────────────────────────────────────────
@@ -403,6 +407,7 @@ chatRoute.post("/completions", async (c) => {
     "min_p",
     "repetition_penalty",
     "seed",
+    "stop",
   ] as const) {
     const v = body[k];
     if (v !== undefined) baseBody[k] = v;
