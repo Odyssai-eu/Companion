@@ -571,6 +571,13 @@ chatRoute.post("/completions", async (c) => {
       return true;
     }
 
+    // Track whether the loop ended via natural break (model produced
+    // a final answer or no tools) vs. exhausting MAX_TOOL_ITERATIONS.
+    // The latter signals a "tool-call loop" — model keeps emitting
+    // tool_calls without ever writing a user-facing summary. We
+    // surface a helpful message in that case so the user sees what
+    // happened instead of "..." silently disappearing.
+    let exitedNaturally = false;
     try {
       for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
         const useNonStream = shouldUseNonStream();
@@ -726,7 +733,40 @@ chatRoute.post("/completions", async (c) => {
           continue;
         }
         // Either no tools requested, or finish_reason !== "tool_calls" → done.
+        exitedNaturally = true;
         break;
+      }
+      // Tool-call loop: the model kept emitting tool_calls without ever
+      // producing a final user-facing summary. Observed with Qwen3.6 on
+      // mlx-vlm when the second iteration's prompt grows large (tool
+      // results stuffed in). Without this fallback the user sees only
+      // the model's intro line ("I'll search...") then silence.
+      if (!exitedNaturally && body.conversationId) {
+        const note =
+          "\n\n_(The model kept asking to call tools without writing a final " +
+          "answer — likely the result context is too large for it to " +
+          "summarize. Try a hosted tool-trained model like `or:claude-haiku`, " +
+          "or disable some MCP servers to shrink the context.)_";
+        for (let i = 0; i < note.length; i += 32) {
+          const piece = note.slice(i, i + 32);
+          await writer.write(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                choices: [
+                  { index: 0, delta: { content: piece }, finish_reason: null },
+                ],
+              })}\n\n`,
+            ),
+          );
+          appendInferenceContent(body.conversationId, piece);
+        }
+        await writer.write(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+            })}\n\n`,
+          ),
+        );
       }
       // End-of-stream marker for the client parser
       await writer.write(encoder.encode("data: [DONE]\n\n"));
