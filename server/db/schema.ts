@@ -649,6 +649,37 @@ export const mcpServers = pgTable(
 export type McpServerRow = typeof mcpServers.$inferSelect;
 export type NewMcpServerRow = typeof mcpServers.$inferInsert;
 
+// Prompt skills — named system-prompt fragments the user saves and
+// reloads from the chat's InferencePanel. Different shape from
+// inference_presets (prose, no params) and different lifecycle
+// (model-agnostic), so kept separate.
+export const promptSkills = pgTable(
+  "prompt_skills",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    body: text("body").notNull(),
+    /** Free-text categories for filtering — "writing", "code-review", … */
+    tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userIdx: index("prompt_skills_user_id_idx").on(t.userId),
+  }),
+);
+
+export type PromptSkillRow = typeof promptSkills.$inferSelect;
+export type NewPromptSkillRow = typeof promptSkills.$inferInsert;
+
 // Hermes tokens — bearer credentials used by the Hermes Agent and Cowork
 // dispatch (via the thecompai-mcp MCP server) to call back into Companion
 // on behalf of a user. Scope is per-user (large). Plain token shown once
