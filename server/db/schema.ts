@@ -616,8 +616,28 @@ export const mcpServers = pgTable(
      *  and every hosted MCP server exposes an HTTP variant. */
     transport: text("transport").notNull(),
     url: text("url").notNull(),
-    /** Full header value verbatim, e.g. "Bearer sk_test_…". Optional. */
+    /** 'bearer' (static authHeader) | 'oauth' (OAuth fields) | 'none'. */
+    authKind: text("auth_kind").notNull().default("bearer"),
+    /** Full header value verbatim, e.g. "Bearer sk_test_…". Used when
+     *  authKind = 'bearer'. */
     authHeader: text("auth_header"),
+    /** Cached `.well-known/oauth-authorization-server` document. */
+    oauthMetadata: jsonb("oauth_metadata").$type<{
+      issuer?: string;
+      authorization_endpoint?: string;
+      token_endpoint?: string;
+      registration_endpoint?: string;
+      revocation_endpoint?: string;
+      scopes_supported?: string[];
+      code_challenge_methods_supported?: string[];
+      [k: string]: unknown;
+    }>(),
+    oauthClientId: text("oauth_client_id"),
+    oauthClientSecret: text("oauth_client_secret"),
+    oauthAccessToken: text("oauth_access_token"),
+    oauthRefreshToken: text("oauth_refresh_token"),
+    oauthExpiresAt: timestamp("oauth_expires_at", { withTimezone: true }),
+    oauthScopes: text("oauth_scopes").array(),
     enabled: boolean("enabled").notNull().default(true),
     /** Last `tools/list` snapshot. Refreshed lazily (5 min TTL) or on
      *  explicit POST /refresh. Avoids a round-trip per chat turn. */
@@ -648,6 +668,40 @@ export const mcpServers = pgTable(
 
 export type McpServerRow = typeof mcpServers.$inferSelect;
 export type NewMcpServerRow = typeof mcpServers.$inferInsert;
+
+// In-flight OAuth authorization-code → token exchanges. Created at
+// /oauth/start, consumed at /oauth/callback. Single-use, 10-min TTL.
+// PKCE code_verifier stays server-side (never exposed to the browser).
+export const mcpOauthPending = pgTable(
+  "mcp_oauth_pending",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    /** Random opaque token returned to the auth server in the `state`
+     *  param, echoed back in the callback, used to find this row. */
+    state: text("state").notNull().unique(),
+    /** PKCE verifier — kept server-side, sent only to the token
+     *  endpoint at exchange time. */
+    codeVerifier: text("code_verifier").notNull(),
+    redirectUri: text("redirect_uri").notNull(),
+    scopes: text("scopes").array(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    stateIdx: index("mcp_oauth_pending_state_idx").on(t.state),
+    createdAtIdx: index("mcp_oauth_pending_created_at_idx").on(t.createdAt),
+  }),
+);
+
+export type McpOauthPendingRow = typeof mcpOauthPending.$inferSelect;
+export type NewMcpOauthPendingRow = typeof mcpOauthPending.$inferInsert;
 
 // Prompt skills — named system-prompt fragments the user saves and
 // reloads from the chat's InferencePanel. Different shape from
