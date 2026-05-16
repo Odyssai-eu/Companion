@@ -1125,18 +1125,30 @@ async function collectNonStream(
     : null;
   if (convId && parsed.usage) recordInferenceUsage(convId, parsed.usage);
 
-  // Synthesise content as a series of small streamed chunks so the client
-  // gets a typewriter effect even though we awaited the full upstream
-  // response. Mlx-vlm in non-stream returns everything in one shot — without
-  // this loop, the user sees the answer pop in as a single block. We emit
-  // ~30-character slices with a tiny delay; total wall-time stays close to
-  // raw non-stream because the inference has already finished.
-  if (assistantContent) {
+  // Fallback for models that "give up" silently. Observed with
+  // Qwen3.6-35B served via mlx-vlm when 20+ tools schemas are passed:
+  // the model returns content="" + tool_calls=[] + finish_reason="stop".
+  // Without this guard, the SSE stream closes with nothing visible and
+  // finishInference skips persist (it requires inf.content truthy), so
+  // the user sees the typing dots disappear with no response or error.
+  let effectiveContent = assistantContent;
+  if (
+    !effectiveContent &&
+    toolCalls.length === 0 &&
+    (finishReason === "stop" || finishReason === null)
+  ) {
+    effectiveContent =
+      "_(The model returned an empty response. This often happens with " +
+      "local models when many tools are exposed at once. Try rephrasing, " +
+      "disabling some MCP servers, or switching to a hosted model like " +
+      "`or:claude-haiku`.)_";
+  }
+  if (effectiveContent) {
     const SLICE = 32;
     const DELAY_MS = 8;
     let chunkCount = 0;
-    for (let i = 0; i < assistantContent.length; i += SLICE) {
-      const piece = assistantContent.slice(i, i + SLICE);
+    for (let i = 0; i < effectiveContent.length; i += SLICE) {
+      const piece = effectiveContent.slice(i, i + SLICE);
       const synthChunk = {
         choices: [
           {
@@ -1153,7 +1165,7 @@ async function collectNonStream(
       chunkCount++;
       // Skip the delay on the last slice — no need to add latency before
       // the finish chunk.
-      if (i + SLICE < assistantContent.length) {
+      if (i + SLICE < effectiveContent.length) {
         await new Promise((r) => setTimeout(r, DELAY_MS));
       }
     }
