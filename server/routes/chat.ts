@@ -470,11 +470,17 @@ chatRoute.post("/completions", async (c) => {
   // layer). toolsForUser() reads from every source (fs_*, RAG, web
   // search, MCP servers, …) and returns an empty array when nothing
   // is enabled — so the call is cheap when there's nothing to expose.
-  const supportsTools = await modelHasToolsCapability(
+  // Pull the model's Odyssai capability snapshot once — we need
+  // supports_tools (gating tool resolution) AND backend/pool (gating
+  // the stream vs. non-stream upstream decision below).
+  const modelCaps = await getModelCaps(
     userRow.engineUrl,
     userRow.engineToken,
     body.model,
   );
+  const supportsTools = modelCaps
+    ? modelCaps.supports_tools !== false
+    : modelSupportsTools(body.model);
   const tools =
     convKind !== "hermes" && supportsTools
       ? await toolsForUser(userId)
@@ -562,12 +568,46 @@ chatRoute.post("/completions", async (c) => {
     // SSE chunk for the client. Subsequent iterations re-evaluate (e.g.
     // the post-tool reply doesn't always need tools).
     const modelLower = (body.model ?? "").toLowerCase();
+    /**
+     * Decide stream vs. non-stream for the upstream call when tools
+     * are enabled. The Odyssai x_odyssai contract tells the truth:
+     *
+     *   backend=jaccl                            → local distributed MLX
+     *                                              (argo, hades, …) — many
+     *                                              chat templates leak the
+     *                                              model's native tool-call
+     *                                              syntax into content when
+     *                                              streaming. Non-stream
+     *                                              forces an atomic JSON
+     *                                              response that the
+     *                                              backend's parser can
+     *                                              normalise into
+     *                                              tool_calls correctly.
+     *   backend=http-proxy + pool=openrouter     → cloud, stream OK
+     *   backend=http-proxy + other pool          → local mlx-vlm/mlx-coder
+     *                                              proxy, same issue as
+     *                                              jaccl, force non-stream
+     *   backend=null / no caps                   → fall back to the legacy
+     *                                              name heuristic
+     */
     function shouldUseNonStream(): boolean {
       if (!toolsEnabled) return false;
-      // Cloud providers stream tools fine — keep typewriter UX there.
+      if (modelCaps) {
+        const backend = modelCaps.backend;
+        const pool = modelCaps.pool;
+        if (backend === "jaccl") return true;
+        if (backend === "http-proxy") {
+          // Cloud passthrough (OpenRouter) handles stream+tools natively
+          if (pool === "openrouter" || pool === "or") return false;
+          // Other http-proxy pools are local (mlx-vlm, mlx-coder, …)
+          return true;
+        }
+        // Unknown backend with caps — be conservative, force non-stream
+        return true;
+      }
+      // No caps published — fall back to name heuristic.
       if (modelLower.includes("claude") || modelLower.startsWith("anthropic/")) return false;
       if (modelLower.startsWith("gpt-") || modelLower.startsWith("openai/")) return false;
-      // Local backend → non-stream so LiteLLM normalises tool_calls JSON.
       return true;
     }
 
@@ -1282,33 +1322,23 @@ function modelSupportsTools(model: string): boolean {
 }
 
 /**
- * Authoritative tools-capability check.
- *
- * Prefers the Odyssai capability contract's `supports_tools` field
- * when the user has an engine paired (gateway / hybrid mode). Odyssai
- * publishes the truth per-model (e.g. argo, hades, mimo, glm-5.1,
- * kimi-k2 all declare supports_tools=true even though their names
- * don't match our legacy whitelist). Falls back to the name heuristic
- * for hosted / legacy providers (LiteLLM aliases for Anthropic /
- * OpenAI / local agent-* setups).
+ * Pull the Odyssai capability snapshot for a model — `null` when the
+ * engine doesn't publish caps for this id (LiteLLM-only aliases, or
+ * the engine is unreachable). The caller falls back to a name
+ * heuristic in that case.
  */
-async function modelHasToolsCapability(
+async function getModelCaps(
   engineUrl: string | null,
   engineToken: string | null,
   model: string,
-): Promise<boolean> {
-  if (engineUrl) {
-    try {
-      const caps = await fetchEngineCapabilities(engineUrl, engineToken);
-      const entry = caps.get(model.toLowerCase());
-      if (entry && typeof entry.supports_tools === "boolean") {
-        return entry.supports_tools;
-      }
-    } catch {
-      // Engine unreachable / list missing — fall through to heuristic.
-    }
+): Promise<import("../lib/odyssai-contract").OdyssaiModelCapabilities | null> {
+  if (!engineUrl) return null;
+  try {
+    const caps = await fetchEngineCapabilities(engineUrl, engineToken);
+    return caps.get(model.toLowerCase()) ?? null;
+  } catch {
+    return null;
   }
-  return modelSupportsTools(model);
 }
 
 /**
