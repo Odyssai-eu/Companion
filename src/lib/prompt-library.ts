@@ -96,4 +96,19 @@ export const promptLibrary = {
     save(merged);
     return incoming.length;
   },
+
+  /**
+   * Skills v1 (DB-backed) deprecates this client-only store. After the
+   * one-shot migration (InferencePanel runs it on first mount) we wipe
+   * the localStorage entry so the legacy library doesn't shadow the
+   * server-side state if the user adds prompts on another device.
+   */
+  markMigrated() {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.removeItem(KEY);
+    } catch {
+      // ignore — quota / private mode
+    }
+  },
 };

@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { InferenceParams } from "~/hooks/useChat";
-import { api, type ApiInferencePreset } from "~/lib/api";
+import {
+  api,
+  type ApiInferencePreset,
+  type ApiSkill,
+} from "~/lib/api";
 import { downloadFile } from "~/lib/file-export";
-import { promptLibrary, type StoredPrompt } from "~/lib/prompt-library";
+import { promptLibrary } from "~/lib/prompt-library";
 
 type Props = {
   params: InferenceParams;
@@ -127,41 +131,86 @@ function SystemPromptSection({
   params: InferenceParams;
   onChange: (next: Partial<InferenceParams>) => void;
 }) {
-  const [library, setLibrary] = useState<StoredPrompt[]>([]);
+  // Server-side "skills" library. Replaces the localStorage prompt-library
+  // (kept around for a one-shot migration import on first load).
+  const [library, setLibrary] = useState<ApiSkill[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setLibrary(promptLibrary.list());
-  }, []);
-
-  function refresh() {
-    setLibrary(promptLibrary.list());
+  async function refresh() {
+    try {
+      const { skills } = await api.listSkills();
+      setLibrary(skills);
+    } catch {
+      // ignore — empty list is fine
+    }
   }
 
-  function onSaveCurrent() {
-    const name = window.prompt("Name this prompt:", "")?.trim();
+  useEffect(() => {
+    void (async () => {
+      await refresh();
+      // One-shot migration of the legacy localStorage prompt-library.
+      // We import any local entries that don't already exist on the
+      // server (by name), then clear the local store so the migration
+      // doesn't re-run. Silent — no UI prompt, by design: the prompts
+      // were the user's, they want them back, no friction.
+      const local = promptLibrary.list();
+      if (local.length === 0) return;
+      const { skills } = await api.listSkills().catch(() => ({
+        skills: [] as ApiSkill[],
+      }));
+      const taken = new Set(skills.map((s) => s.name));
+      const toImport = local.filter((p) => !taken.has(p.name));
+      for (const p of toImport) {
+        await api
+          .createSkill({ name: p.name, body: p.content })
+          .catch(() => undefined);
+      }
+      if (toImport.length > 0) {
+        await refresh();
+      }
+      // Mark migration done so we don't retry on every panel open. The
+      // legacy library stays exportable until the user explicitly
+      // clears it via the existing migration utility.
+      promptLibrary.markMigrated?.();
+    })();
+  }, []);
+
+  async function onSaveCurrent() {
+    const name = window.prompt("Name this skill:", "")?.trim();
     if (!name) return;
     if (!params.systemPrompt.trim()) return;
-    promptLibrary.add(name, params.systemPrompt);
-    refresh();
+    try {
+      await api.createSkill({ name, body: params.systemPrompt });
+      await refresh();
+    } catch (e) {
+      alert(`Couldn't save: ${(e as Error).message}`);
+    }
   }
 
   function onLoad(id: string) {
     const found = library.find((p) => p.id === id);
     if (!found) return;
-    onChange({ systemPrompt: found.content, systemPromptEnabled: true });
+    onChange({ systemPrompt: found.body, systemPromptEnabled: true });
   }
 
-  function onDelete(id: string) {
-    if (!confirm("Delete this saved prompt?")) return;
-    promptLibrary.remove(id);
-    refresh();
+  async function onDelete(id: string) {
+    try {
+      await api.deleteSkill(id);
+      await refresh();
+    } catch (e) {
+      alert(`Couldn't delete: ${(e as Error).message}`);
+    }
   }
 
   function onExport() {
+    const payload = JSON.stringify(
+      library.map((s) => ({ name: s.name, content: s.body })),
+      null,
+      2,
+    );
     downloadFile(
-      "thecompai-prompts.json",
-      promptLibrary.exportJson(),
+      "companion-skills.json",
+      payload,
       "application/json",
     );
   }
@@ -170,11 +219,31 @@ function SystemPromptSection({
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    file.text().then((text) => {
-      const n = promptLibrary.importJson(text);
-      refresh();
-      if (n > 0) alert(`Imported ${n} prompt${n > 1 ? "s" : ""}.`);
-      else alert("Couldn't import — file format wasn't recognized.");
+    file.text().then(async (text) => {
+      try {
+        const parsed = JSON.parse(text) as Array<{
+          name?: string;
+          content?: string;
+          body?: string;
+        }>;
+        if (!Array.isArray(parsed)) {
+          alert("Couldn't import — file format wasn't recognized.");
+          return;
+        }
+        let n = 0;
+        for (const p of parsed) {
+          const name = p.name?.trim();
+          const body = (p.body ?? p.content)?.trim();
+          if (!name || !body) continue;
+          await api.createSkill({ name, body }).catch(() => undefined);
+          n++;
+        }
+        await refresh();
+        if (n > 0) alert(`Imported ${n} skill${n > 1 ? "s" : ""}.`);
+        else alert("No valid entries found in file.");
+      } catch {
+        alert("Couldn't import — file format wasn't recognized.");
+      }
     });
   }
 
@@ -182,7 +251,7 @@ function SystemPromptSection({
     <div className="mt-5 border-t border-gray-100 pt-4">
       <div className="mb-2 flex items-center justify-between">
         <span className="font-sans text-[11px] font-medium tracking-[0.08em] text-gray-400 uppercase">
-          System prompt
+          System prompt · Skills
         </span>
         <div className="flex items-center gap-3">
           <select
@@ -255,7 +324,7 @@ function SystemPromptSection({
               <button
                 type="button"
                 onClick={() => onLoad(p.id)}
-                title={p.content.slice(0, 200)}
+                title={p.body.slice(0, 200)}
                 className="rounded-l-full pr-1 pl-2.5 py-0.5"
               >
                 {p.name}
@@ -263,9 +332,9 @@ function SystemPromptSection({
               <button
                 type="button"
                 onClick={() => {
-                  if (confirm(`Delete saved prompt "${p.name}"?`)) onDelete(p.id);
+                  if (confirm(`Delete saved skill "${p.name}"?`)) onDelete(p.id);
                 }}
-                title="Delete this saved prompt"
+                title="Delete this saved skill"
                 aria-label={`Delete ${p.name}`}
                 className="ml-0.5 rounded-r-full pr-2 pl-1 py-0.5 text-gray-300 hover:text-red-500"
               >
