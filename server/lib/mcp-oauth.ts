@@ -275,6 +275,45 @@ async function tokenRequest(
  * Skew of 30s so we don't accidentally use a token that expires
  * mid-request.
  */
+/**
+ * Force a refresh regardless of cached expiry — used by mcp-client.ts
+ * when the MCP server returns 401/invalid_token. The cached
+ * access_token might be revoked or rotated server-side before its
+ * advertised expires_in elapses. Throws when no refresh path exists,
+ * leaving it to the caller to surface "re-authorization required".
+ */
+export async function forceRefreshAccessToken(
+  server: McpServerRow,
+): Promise<string> {
+  if (server.authKind !== "oauth") {
+    throw new Error(`server ${server.slug} is not OAuth`);
+  }
+  if (!server.oauthRefreshToken) {
+    throw new Error("oauth_access_expired_no_refresh");
+  }
+  if (!server.oauthMetadata || !server.oauthClientId) {
+    throw new Error("oauth_state_corrupt");
+  }
+  const fresh = await refreshAccessToken({
+    metadata: server.oauthMetadata as AuthServerMetadata,
+    clientId: server.oauthClientId,
+    clientSecret: server.oauthClientSecret,
+    refreshToken: server.oauthRefreshToken,
+  });
+  const newExpires = fresh.expiresInSec
+    ? new Date(Date.now() + fresh.expiresInSec * 1000)
+    : null;
+  await db
+    .update(mcpServers)
+    .set({
+      oauthAccessToken: fresh.accessToken,
+      oauthRefreshToken: fresh.refreshToken ?? server.oauthRefreshToken,
+      oauthExpiresAt: newExpires,
+    })
+    .where(eq(mcpServers.id, server.id));
+  return fresh.accessToken;
+}
+
 export async function ensureFreshAccessToken(
   server: McpServerRow,
 ): Promise<string> {

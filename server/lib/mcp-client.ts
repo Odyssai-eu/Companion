@@ -25,6 +25,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { McpServerRow } from "../db/schema";
+import {
+  ensureFreshAccessToken,
+  forceRefreshAccessToken,
+} from "./mcp-oauth";
+import { eq } from "drizzle-orm";
+import { db } from "../db/index";
+import { mcpServers } from "../db/schema";
 
 export type McpToolSpec = {
   name: string;
@@ -46,19 +53,7 @@ async function openClient(server: McpServerRow): Promise<Client> {
     { capabilities: {} },
   );
 
-  const headers: Record<string, string> = {};
-  if (server.authHeader) {
-    // Accept two convenience shapes:
-    //   "Bearer sk_…"            → use as-is for Authorization
-    //   "X-API-Key: abc123"      → split on first ":"
-    //   any other plain string   → use as Authorization value
-    const m = server.authHeader.match(/^([\w-]+):\s*(.+)$/);
-    if (m) {
-      headers[m[1]] = m[2];
-    } else {
-      headers.authorization = server.authHeader;
-    }
-  }
+  const headers = await buildAuthHeaders(server);
 
   let transport;
   if (server.transport === "sse") {
@@ -86,6 +81,45 @@ async function openClient(server: McpServerRow): Promise<Client> {
   return client;
 }
 
+/**
+ * Build the request headers for a server, branching on authKind:
+ *  - 'oauth'  → Bearer with a fresh access token (refresh in-place
+ *               if the cached one is near/past expiry)
+ *  - 'bearer' → the static authHeader the user pasted in
+ *  - 'none'   → no headers
+ */
+async function buildAuthHeaders(
+  server: McpServerRow,
+): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  if (server.authKind === "oauth") {
+    const token = await ensureFreshAccessToken(server);
+    headers.authorization = `Bearer ${token}`;
+    return headers;
+  }
+  if (server.authKind === "none") return headers;
+  // bearer (default)
+  if (server.authHeader) {
+    // Convenience shapes:
+    //   "Bearer sk_…"            → use as-is for Authorization
+    //   "X-API-Key: abc123"      → split on first ":"
+    //   any other plain string   → use as Authorization value
+    const m = server.authHeader.match(/^([\w-]+):\s*(.+)$/);
+    if (m) {
+      headers[m[1]] = m[2];
+    } else {
+      headers.authorization = server.authHeader;
+    }
+  }
+  return headers;
+}
+
+function isAuthError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = (err as Error).message ?? String(err);
+  return /\b(401|403|invalid_token|unauthorized)\b/i.test(msg);
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(label)), ms);
@@ -106,24 +140,62 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
  * Fetch the server's tool list. Used both by chat-path cache refresh
  * and by the /refresh route. The caller is responsible for persisting
  * the result + updating tools_cache_at / last_error.
+ *
+ * Retries once on auth-shaped errors when authKind=oauth — the access
+ * token may have been revoked / rotated server-side ahead of its
+ * advertised expiry. Force-refresh and re-attempt with a fresh token.
  */
 export async function fetchTools(
   server: McpServerRow,
 ): Promise<McpToolSpec[]> {
-  const client = await openClient(server);
+  return withOauthRetry(server, async (s) => {
+    const client = await openClient(s);
+    try {
+      const res = await withTimeout(
+        client.listTools(),
+        CALL_TIMEOUT_MS,
+        "mcp_list_tools_timeout",
+      );
+      return (res.tools ?? []).map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema as Record<string, unknown> | undefined,
+      }));
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  });
+}
+
+/**
+ * Wrap an MCP operation in a retry loop that handles OAuth token
+ * staleness. First attempt uses the current cached access_token
+ * (refreshed if expiry warns); on 401-shaped failure we force-refresh
+ * and retry once. After that, propagate.
+ *
+ * Non-OAuth servers skip the retry — there's no recovery action.
+ */
+async function withOauthRetry<T>(
+  server: McpServerRow,
+  fn: (s: McpServerRow) => Promise<T>,
+): Promise<T> {
   try {
-    const res = await withTimeout(
-      client.listTools(),
-      CALL_TIMEOUT_MS,
-      "mcp_list_tools_timeout",
-    );
-    return (res.tools ?? []).map((t) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.inputSchema as Record<string, unknown> | undefined,
-    }));
-  } finally {
-    await client.close().catch(() => undefined);
+    return await fn(server);
+  } catch (e) {
+    if (server.authKind !== "oauth" || !isAuthError(e)) throw e;
+    // Force-refresh and reload the row so the next call sees the new token.
+    try {
+      await forceRefreshAccessToken(server);
+    } catch {
+      throw e; // propagate original
+    }
+    const [reloaded] = await db
+      .select()
+      .from(mcpServers)
+      .where(eq(mcpServers.id, server.id))
+      .limit(1);
+    if (!reloaded) throw e;
+    return await fn(reloaded);
   }
 }
 
@@ -138,30 +210,29 @@ export async function callTool(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<{ ok: boolean; content: string; error?: string }> {
-  let client: Client;
   try {
-    client = await openClient(server);
+    return await withOauthRetry(server, async (s) => {
+      const client = await openClient(s);
+      try {
+        const res = await withTimeout(
+          client.callTool({ name: toolName, arguments: args }),
+          CALL_TIMEOUT_MS,
+          "mcp_call_tool_timeout",
+        );
+        if (res.isError) {
+          return {
+            ok: false,
+            content: contentToString(res.content),
+            error: "tool_returned_error",
+          };
+        }
+        return { ok: true, content: contentToString(res.content) };
+      } finally {
+        await client.close().catch(() => undefined);
+      }
+    });
   } catch (e) {
     return { ok: false, content: "", error: (e as Error).message };
-  }
-  try {
-    const res = await withTimeout(
-      client.callTool({ name: toolName, arguments: args }),
-      CALL_TIMEOUT_MS,
-      "mcp_call_tool_timeout",
-    );
-    if (res.isError) {
-      return {
-        ok: false,
-        content: contentToString(res.content),
-        error: "tool_returned_error",
-      };
-    }
-    return { ok: true, content: contentToString(res.content) };
-  } catch (e) {
-    return { ok: false, content: "", error: (e as Error).message };
-  } finally {
-    await client.close().catch(() => undefined);
   }
 }
 
