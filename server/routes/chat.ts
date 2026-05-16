@@ -1207,18 +1207,26 @@ async function collectNonStream(
  * picker doesn't 500 the conversation. The user just doesn't get
  * web_search/web_fetch on that model — they'd switch to claude-* to use it.
  */
+/**
+ * Heuristic fallback for tools capability when the engine doesn't
+ * publish an x_odyssai contract for a given alias (typical of
+ * LiteLLM-routed models — Qwen, GLM, MiMo, Kimi, vlm:…, etc.).
+ *
+ * We flipped from a strict allowlist to a *denylist* because the
+ * allowlist excluded every modern open-weights model with tool support
+ * (Qwen 2.5/3.x, GLM 4.5+, MiMo, Kimi K2, etc.). The new posture:
+ * assume tools are supported, except for the few backends we've
+ * empirically seen crash or hang on the OpenAI tools field.
+ *
+ * Known broken (deny list):
+ *   - EXO's MLX runner (model ids served via "exo:") — emits malformed
+ *     tool_calls that LiteLLM can't normalize. EXO Direct addon was
+ *     removed in v0.2; if anyone re-adds it, gate here.
+ */
 function modelSupportsTools(model: string): boolean {
   const m = model.toLowerCase();
-  if (m.includes("claude") || m.startsWith("anthropic/")) return true;
-  if (m.startsWith("gpt-") || m.startsWith("openai/")) return true;
-  // Local agent-* aliases (LiteLLM convention: agent-fast / agent-mid /
-  // agent-vision / "Agent-Fast MoE" …) all route to mlx-vlm servers, which
-  // do accept the OpenAI tools param and emit tool_calls correctly. Verified
-  // 2026-05-04 with agent-fast on max-64 (Qwen3.6-35B-A3B). Distinct from
-  // EXO's MLX runner which crashes on tools — that path doesn't go through
-  // here (EXO Direct uses its own dispatch).
-  if (m.startsWith("agent-")) return true;
-  return false;
+  if (m.startsWith("exo:") || m.startsWith("exo/")) return false;
+  return true;
 }
 
 /**
