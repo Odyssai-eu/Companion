@@ -650,21 +650,31 @@ conversationsRoute.post(
       // No rail available — skip prewarm rather than 503'ing the UI.
       return c.json({ ok: false, reason: "no_provider" });
     }
-    const target =
-      prewarmMode === "gateway" && user.engineUrl
-        ? {
-            baseUrl: user.engineUrl.replace(/\/+$/, ""),
-            apiKey: user.engineToken,
-          }
-        : {
-            baseUrl: (
-              user.litellmUrl ??
-              process.env.LITELLM_URL ??
-              "http://192.168.86.44:4000"
-            ).replace(/\/+$/, ""),
-            apiKey:
-              user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-          };
+    // Skip prewarm in gateway mode. Odysseus' session cache already
+    // makes turn N+1 reuse turn N's stored KV state under the same
+    // session_id, so the prewarm's TTFT benefit no longer exists. Worse,
+    // the prewarm appends a synthetic dummy_user message (with a fresh
+    // timestamp tag, unmatchable by the real next turn) that POLLUTES
+    // the session slot — every real chat turn following a prewarm gets
+    // `fp16·divergent` on Odysseus and pays the full prefill again
+    // (94s on 19k tokens observed). The fix is just: don't prewarm.
+    // The real session-cache plumbing in chat.ts gives the win on its
+    // own. See BRIEF-companion-prefix-cache-and-probes.md for the
+    // upstream-side diagnostic.
+    if (prewarmMode === "gateway") {
+      return c.json({ ok: false, reason: "skipped_gateway_session_cache" });
+    }
+    // hybrid + legacy fall through to LiteLLM. (Gateway-mode early
+    // returned above — Odysseus' session cache makes prewarm both
+    // useless and actively harmful there; see the comment above.)
+    const target = {
+      baseUrl: (
+        user.litellmUrl ??
+        process.env.LITELLM_URL ??
+        "http://192.168.86.44:4000"
+      ).replace(/\/+$/, ""),
+      apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+    };
 
     const upstreamBody: Record<string, unknown> = {
       model: opts.model,
