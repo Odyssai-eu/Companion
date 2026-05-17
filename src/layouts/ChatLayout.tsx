@@ -191,6 +191,8 @@ export default function ChatLayout() {
           conversationId={id ?? null}
           memoryEnabled={chat.conversation?.memoryEnabled ?? true}
           onToggleMemory={chat.toggleMemoryEnabled}
+          agentMode={chat.conversation?.agentMode ?? false}
+          onToggleAgentMode={chat.toggleAgentMode}
           // Hermes conversations bypass our memory wiki injection — the
           // gateway runs its own retrieval skills, so the toggle is a
           // no-op here and would be misleading.

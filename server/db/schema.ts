@@ -211,6 +211,15 @@ export const conversations = pgTable(
     // at creation; user can flip it from the chat header. When false, the
     // wiki is not injected into the prompt and "Remember now" is disabled.
     memoryEnabled: boolean("memory_enabled").notNull().default(true),
+    // Per-conversation "agent mode". When false (default), NO tool defs are
+    // injected — `tools` is omitted from the upstream body entirely. This
+    // gives a clean ~250-token prompt instead of 1000+ tokens of always-on
+    // FS/RAG/Web schemas, and lets the engine stream normally (no
+    // `shouldUseNonStream` forcing on jaccl). User flips this on per-conv
+    // when they actually want agentic capability (file ops, web fetch,
+    // RAG search, MCP servers). Default OFF so the typical case (a chat
+    // with a model) gets streaming + minimal prompt out of the box.
+    agentMode: boolean("agent_mode").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),

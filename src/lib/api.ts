@@ -217,6 +217,12 @@ export type ApiConversation = {
   /** Memory wiki injection toggle for this conversation. Inherited from
    *  the parent project at creation; user-flippable from the chat header. */
   memoryEnabled: boolean;
+  /** When true, Companion injects the full agentic tool surface (fs_*,
+   *  rag_search, web_*, MCP servers) into the upstream chat body. Default
+   *  off — keeps the prompt small (~250 tok) and unblocks streaming on
+   *  jaccl backends. User flips on per-conv when they want agentic
+   *  capability. */
+  agentMode?: boolean;
   lastMessage?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -655,6 +661,11 @@ export const api = {
     request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ memoryEnabled }),
+    }),
+  setConversationAgentMode: (id: string, agentMode: boolean) =>
+    request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ agentMode }),
     }),
   setConversationRepoPath: (id: string, repoPath: string | null) =>
     request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {

@@ -199,6 +199,10 @@ chatRoute.post("/completions", async (c) => {
   let projectGlobalReadOnly = false;
   let projectDedicatedMemoryEnabled = false;
   let convMemoryEnabled = true;
+  // Per-conversation agent mode. False by default → no tool defs injected,
+  // streaming works on jaccl, ~250-token prompts. User flips on per-conv
+  // when they want agentic behaviour (fs / rag / web / mcp).
+  let convAgentMode = false;
   if (body.conversationId) {
     try {
       const [conv] = await db
@@ -207,6 +211,7 @@ chatRoute.post("/completions", async (c) => {
           userId: conversations.userId,
           memorySnapshot: conversations.memorySnapshot,
           memoryEnabled: conversations.memoryEnabled,
+          agentMode: conversations.agentMode,
           kind: conversations.kind,
           repoPath: conversations.repoPath,
         })
@@ -218,6 +223,7 @@ chatRoute.post("/completions", async (c) => {
         convKind = conv.kind;
         convRepoPath = conv.repoPath;
         convMemoryEnabled = conv.memoryEnabled !== false;
+        convAgentMode = conv.agentMode === true;
 
         // Two-toggle composition (Sophie's simplified layout):
         //   memoryEnabled            = "Global wiki" toggle. Conv-level
@@ -489,10 +495,17 @@ chatRoute.post("/completions", async (c) => {
   const supportsTools = modelCaps
     ? modelCaps.supports_tools !== false
     : modelSupportsTools(body.model);
+  // Tools are gated on per-conv `agentMode`. Default is OFF — a normal
+  // chat does NOT inject any tool defs, so the prompt stays ~250 tokens
+  // (vs 1000+ with FS/RAG/Web schemas) and the engine can stream freely
+  // (no `shouldUseNonStream` forcing on jaccl). Hermes convs always run
+  // tools natively (their own dispatcher), so they bypass this gate.
   const tools =
-    convKind !== "hermes" && supportsTools
-      ? await toolsForUser(userId)
-      : [];
+    convKind === "hermes"
+      ? []
+      : supportsTools && convAgentMode
+        ? await toolsForUser(userId)
+        : [];
   const toolsEnabled = tools.length > 0;
 
   // Probe routing — gateway mode only. If this request looks like a

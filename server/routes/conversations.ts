@@ -45,6 +45,7 @@ const updateSchema = z.object({
   pinned: z.boolean().optional(),
   projectId: z.string().uuid().nullish(),
   memoryEnabled: z.boolean().optional(),
+  agentMode: z.boolean().optional(),
   /** Pass empty string or null to clear. */
   repoPath: z.string().max(500).nullish(),
 });
@@ -71,6 +72,7 @@ conversationsRoute.get("/", async (c) => {
       model: conversations.model,
       pinned: conversations.pinned,
       memoryEnabled: conversations.memoryEnabled,
+      agentMode: conversations.agentMode,
       createdAt: conversations.createdAt,
       updatedAt: conversations.updatedAt,
       lastMessage: lastMsg,
@@ -236,6 +238,7 @@ conversationsRoute.patch(
       data.pinned !== undefined ||
       data.projectId !== undefined ||
       data.memoryEnabled !== undefined ||
+      data.agentMode !== undefined ||
       data.repoPath !== undefined;
     const patch: Record<string, unknown> = { ...data };
     if (!isMetadataOnly) patch.updatedAt = new Date();

@@ -625,6 +625,19 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     }
   }, [conversation]);
 
+  const toggleAgentMode = useCallback(async () => {
+    if (!conversation) return;
+    const next = !(conversation.agentMode ?? false);
+    setConversation({ ...conversation, agentMode: next });
+    try {
+      const r = await api.setConversationAgentMode(conversation.id, next);
+      setConversation(r.conversation);
+    } catch (e) {
+      setConversation(conversation);
+      setError((e as Error).message);
+    }
+  }, [conversation]);
+
   /**
    * Force a re-fetch of the active conversation. Useful for Talk mode,
    * where messages are appended out-of-band by VoiceLiveOverlay rather
@@ -665,6 +678,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     cancel,
     startNew,
     toggleMemoryEnabled,
+    toggleAgentMode,
     reload,
   };
 }

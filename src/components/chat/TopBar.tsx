@@ -16,6 +16,8 @@ type Props = {
   conversationId?: string | null;
   memoryEnabled?: boolean;
   onToggleMemory?: () => void;
+  agentMode?: boolean;
+  onToggleAgentMode?: () => void;
   /** Hide the memory toggle + 'remember now' chips entirely. Used for
    *  Hermes conversations where memory wiki injection is suppressed
    *  server-side (Hermes runs its own retrieval skills). */
@@ -31,6 +33,8 @@ export default function TopBar({
   conversationId,
   memoryEnabled = true,
   onToggleMemory,
+  agentMode = false,
+  onToggleAgentMode,
   hideMemoryControls = false,
 }: Props) {
   const voiceMode = useVoiceMode();
@@ -59,6 +63,12 @@ export default function TopBar({
         <div className="flex items-center gap-1.5">
           {!hideMemoryControls && (
             <>
+              <AgentModeToggleButton
+                enabled={agentMode}
+                onToggle={onToggleAgentMode}
+                disabled={!conversationId}
+                compact
+              />
               <MemoryToggleButton
                 enabled={memoryEnabled}
                 onToggle={onToggleMemory}
@@ -123,6 +133,11 @@ export default function TopBar({
           <ToolsMenu />
           {!hideMemoryControls && (
             <>
+              <AgentModeToggleButton
+                enabled={agentMode}
+                onToggle={onToggleAgentMode}
+                disabled={!conversationId}
+              />
               <MemoryToggleButton
                 enabled={memoryEnabled}
                 onToggle={onToggleMemory}
@@ -274,6 +289,67 @@ function MemoryToggleButton({
     >
       <MemoryIcon strikethrough={!enabled} />
     </button>
+  );
+}
+
+/**
+ * AgentModeToggleButton: per-conversation switch to inject the tool
+ * surface (fs_*, rag_search, web_*, MCP servers). When OFF (default),
+ * Companion sends ZERO tool defs — the prompt stays small (~250 tok)
+ * and the engine streams freely (no `shouldUseNonStream` forcing on
+ * jaccl backends). User flips ON when they want agentic capability.
+ */
+function AgentModeToggleButton({
+  enabled,
+  onToggle,
+  disabled,
+  compact = false,
+}: {
+  enabled: boolean;
+  onToggle?: () => void;
+  disabled?: boolean;
+  compact?: boolean;
+}) {
+  const size = compact ? "h-11 w-11" : "h-8 w-8";
+  const ringColor = enabled
+    ? "border-amber-500 bg-white text-amber-600 hover:bg-amber-50"
+    : "border-gray-200 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-600";
+  const title = !disabled
+    ? enabled
+      ? "Agent mode ON — fs / rag / web / MCP tools are exposed to the model. Heavier prompt, non-streaming on jaccl. Click to disable."
+      : "Agent mode OFF — no tools injected, prompt stays small, engine streams freely. Click to enable."
+    : "Start a conversation to toggle agent mode";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={disabled || !onToggle}
+      aria-label={enabled ? "Disable agent mode" : "Enable agent mode"}
+      aria-pressed={enabled}
+      title={title}
+      className={`flex ${size} flex-shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${ringColor}`}
+    >
+      <AgentIcon dim={!enabled} />
+    </button>
+  );
+}
+
+function AgentIcon({ dim = false }: { dim?: boolean }) {
+  // A wrench-shaped glyph — same stroke language as the memory brain.
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={dim ? { opacity: 1 } : undefined}
+    >
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-2.4 2.6-2.6z" />
+    </svg>
   );
 }
 
