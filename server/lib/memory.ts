@@ -86,6 +86,114 @@ function stripWikilinks(md: string): string {
   });
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// RAG retrieval — per-turn semantic search against the Obsidian wiki
+// indexed in Qdrant (bge-m3 embeddings). Replaces the legacy "frozen
+// snapshot" approach that injected ~12 KB of wiki into every chat body
+// regardless of the question.
+//
+// Architecture:
+//   chat.ts asks ragRetrieve(question, k=5) → embedding round-trip to
+//   :8082, Qdrant search on :6333, returns top-K chunks. Each chunk is
+//   ~150 tokens, so K=5 ≈ 750 tokens — 16× lighter than the snapshot.
+//
+// Cache placement: the caller must inject these chunks as a system-role
+// message IMMEDIATELY BEFORE the latest user message. That keeps the
+// system prompt + earlier history byte-stable across turns (prefix-cache
+// hit), and only the (RAG block + user msg) tail re-prefills.
+// ──────────────────────────────────────────────────────────────────────────
+
+const RAG_QDRANT_URL = process.env.RAG_QDRANT_URL ?? "http://192.168.86.44:6333";
+const RAG_EMBED_URL = process.env.RAG_EMBED_URL ?? "http://192.168.86.44:8082";
+const RAG_COLLECTION = process.env.RAG_COLLECTION ?? "obsidian-context";
+
+export type RagHit = {
+  score: number;
+  path: string;
+  title: string;
+  snippet: string;
+};
+
+export function isRagAvailable(): boolean {
+  return Boolean(RAG_QDRANT_URL && RAG_EMBED_URL && RAG_COLLECTION);
+}
+
+export async function ragRetrieve(
+  query: string,
+  limit: number = 5,
+): Promise<RagHit[]> {
+  if (!isRagAvailable() || !query.trim()) return [];
+  const k = Math.max(1, Math.min(limit, 10));
+  try {
+    const embedResp = await fetch(`${RAG_EMBED_URL}/embed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ texts: [query] }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!embedResp.ok) return [];
+    const embedJson = (await embedResp.json()) as { embeddings?: number[][] };
+    const vector = embedJson.embeddings?.[0];
+    if (!vector || vector.length === 0) return [];
+
+    const searchResp = await fetch(
+      `${RAG_QDRANT_URL}/collections/${encodeURIComponent(RAG_COLLECTION)}/points/search`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vector, limit: k, with_payload: true }),
+        signal: AbortSignal.timeout(8_000),
+      },
+    );
+    if (!searchResp.ok) return [];
+    const searchJson = (await searchResp.json()) as {
+      result?: Array<{ score?: number; payload?: Record<string, unknown> }>;
+    };
+    return (searchJson.result ?? []).map((r) => {
+      const payload = r.payload ?? {};
+      const text =
+        (payload.text as string | undefined) ??
+        (payload.content as string | undefined) ??
+        "";
+      const path =
+        (payload.path as string | undefined) ??
+        (payload.source as string | undefined) ??
+        (payload.filepath as string | undefined) ??
+        "(unknown)";
+      const title =
+        (payload.title as string | undefined) ??
+        path.split("/").pop() ??
+        "";
+      return {
+        score: r.score ?? 0,
+        path,
+        title,
+        snippet: text.slice(0, 600),
+      };
+    });
+  } catch (err) {
+    console.warn("[memory] ragRetrieve failed:", (err as Error).message);
+    return [];
+  }
+}
+
+/** Format RAG hits into a Markdown block ready to drop into a system
+ *  message. Stable formatting (sorted by score descending, path-first
+ *  headers) so the byte layout is predictable for any cache hit on
+ *  identical queries. */
+export function formatRagBlock(hits: RagHit[]): string {
+  if (hits.length === 0) return "";
+  const sections = hits.map((h, i) => {
+    const head = h.title || h.path;
+    return `### [${i + 1}] ${head}\n_(source: ${h.path}, score ${h.score.toFixed(3)})_\n\n${h.snippet}`;
+  });
+  return [
+    "# Relevant context (top-K retrieval from your wiki for the latest question)",
+    "",
+    sections.join("\n\n---\n\n"),
+  ].join("\n");
+}
+
 /** Fire-and-forget compile trigger. Resolves immediately; the LLM call
  *  happens in the Python service. */
 export function triggerCompile(

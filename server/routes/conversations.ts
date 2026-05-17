@@ -10,7 +10,7 @@ import {
   listActiveForUser,
 } from "../lib/inference-state";
 import { authHeaders } from "../lib/litellm";
-import { capMarkdown, compileNow, getMemoryContext } from "../lib/memory";
+import { compileNow, getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
 
 const conversationsRoute = new Hono();
@@ -569,27 +569,14 @@ conversationsRoute.post(
       .limit(1);
     if (!user) return c.json({ error: "user_not_found" }, 404);
 
-    // Memory snapshot — read frozen value, lazy-backfill if missing. When
-    // the conversation has memory disabled, skip injection entirely (must
-    // match chat.ts behaviour or the prewarm prefix differs from the real
-    // chat's, defeating the whole point). Apply the byte cap consistently
-    // with chat.ts: existing snapshots may be larger than the current
-    // MEMORY_MAX_BYTES limit and must be trimmed at read time too.
-    let memoryBlock = "";
-    if (conv.memoryEnabled !== false) {
-      if (conv.memorySnapshot != null) {
-        memoryBlock = capMarkdown(conv.memorySnapshot);
-      } else {
-        memoryBlock = await getMemoryContext(userId, conv.projectId);
-        await db
-          .update(conversations)
-          .set({
-            memorySnapshot: memoryBlock || null,
-            memorySnapshotAt: memoryBlock ? new Date() : null,
-          })
-          .where(eq(conversations.id, id));
-      }
-    }
+    // Memory: chat.ts now uses per-turn RAG retrieval keyed to the
+    // latest user question, so we DON'T inject any memory block here in
+    // the prewarm — we don't have a future question to retrieve against.
+    // The prewarm still gets value from priming system + tools + history
+    // (which IS byte-stable). When the real chat turn lands, the
+    // (RAG block + new user msg) tail re-prefills (~800 tok) but
+    // everything before is a session-HIT.
+    const memoryBlock = "";
 
     // System prompt composition — must match chat.ts byte-for-byte.
     const systemSegments: string[] = [];

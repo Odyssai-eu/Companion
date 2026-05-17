@@ -26,7 +26,12 @@ import { conversations, messages, projects, users } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { incrementGuestUsage } from "../lib/guest-token";
 import { authHeaders } from "../lib/litellm";
-import { capMarkdown, getMemoryContext, triggerCompile } from "../lib/memory";
+import {
+  formatRagBlock,
+  isRagAvailable,
+  ragRetrieve,
+  triggerCompile,
+} from "../lib/memory";
 import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
 import { getProjectMemoryContext } from "../lib/project-memory";
 import { buildTag } from "../lib/timetag";
@@ -267,33 +272,15 @@ chatRoute.post("/completions", async (c) => {
             ? await getProjectMemoryContext(projectId)
             : "";
 
-        // Global wiki — independently gated by the conv's memoryEnabled.
-        // The frozen snapshot is reused turn-to-turn for cache hits.
-        let globalBlock = "";
-        if (conv.memoryEnabled !== false) {
-          if (conv.memorySnapshot != null) {
-            // Apply the cap on cached snapshots too — existing convs were
-            // frozen before the cap existed and would otherwise inject the
-            // full ~140 KB wiki on every turn forever.
-            globalBlock = capMarkdown(conv.memorySnapshot);
-          } else {
-            globalBlock = await getMemoryContext(userId, projectId);
-            await db
-              .update(conversations)
-              .set({
-                memorySnapshot: globalBlock || null,
-                memorySnapshotAt: globalBlock ? new Date() : null,
-              })
-              .where(eq(conversations.id, body.conversationId));
-          }
-        }
-
-        // Compose: project corpus first (project-specific, more
-        // targeted), global wiki second (general background). Empty
-        // segments are dropped — when both are off the result is "".
-        memoryBlock = [projectMemory, globalBlock]
-          .filter((s) => s.trim().length > 0)
-          .join("\n\n---\n\n");
+        // Global wiki injection moved out of the system prompt — see RAG
+        // retrieval section below. It now lives as a per-turn block
+        // injected RIGHT BEFORE the latest user message, so the system +
+        // prior turns stay byte-stable for the KV prefix cache while the
+        // (small) RAG context floats with the question.
+        // The project memory corpus is still composed here because it's
+        // expected to be stable across turns (per-project resource, not
+        // per-question).
+        memoryBlock = projectMemory.trim();
       }
     } catch (err) {
       console.warn("[chat] memory lookup failed:", (err as Error).message);
@@ -409,13 +396,86 @@ chatRoute.post("/completions", async (c) => {
   }
   const composedSystem = systemSegments.join("\n\n---\n\n");
 
-  const withSystem =
-    composedSystem.length > 0
-      ? [
-          { role: "system" as const, content: composedSystem },
-          ...taggedMessages,
-        ]
-      : taggedMessages;
+  // ── 5b. RAG retrieval (replaces the legacy snapshot path) ─────────────
+  //
+  // For chat-kind convs with memory enabled, retrieve the top-K most
+  // semantically similar Obsidian chunks for the latest user message.
+  // Inject them as a SYSTEM message positioned RIGHT BEFORE that user
+  // message in the wire. This keeps the global system + earlier turns
+  // byte-stable across requests (KV-prefix cache hits) while only the
+  // `(ragBlock + latest user)` tail re-prefills per turn.
+  //
+  // Skipped for:
+  //   - kind='hermes' (its gateway runs its own retrieval skills)
+  //   - kind='talk'   (voice convs, no wiki lookup needed)
+  //   - memoryEnabled === false
+  //   - guest tokens (don't read the owner's wiki)
+  //   - RAG infra unavailable (env vars missing or service down)
+  let ragInjection: { role: "system"; content: string } | null = null;
+  if (
+    convKind === "chat" &&
+    convMemoryEnabled &&
+    !guest &&
+    isRagAvailable()
+  ) {
+    // Find the latest user message in the tagged list. Skip if there
+    // isn't one (defensive — should never happen at this point).
+    const lastUserIdx = (() => {
+      for (let i = taggedMessages.length - 1; i >= 0; i--) {
+        if (taggedMessages[i].role === "user") return i;
+      }
+      return -1;
+    })();
+    if (lastUserIdx >= 0) {
+      const raw = taggedMessages[lastUserIdx].content;
+      const text =
+        typeof raw === "string"
+          ? raw
+          : raw
+              .filter((p: ContentPart) => p.type === "text")
+              .map((p) => (p as { type: "text"; text: string }).text)
+              .join(" ");
+      // Strip the `[2026-… | Δ: …]` tag prefix we added in step 4 so
+      // the embedder sees clean user prose. Tag format: `[…] `.
+      const cleanQuery = text.replace(/^\s*\[[^\]]+\]\s+/, "").trim();
+      const hits = await ragRetrieve(cleanQuery, 5);
+      if (hits.length > 0) {
+        ragInjection = {
+          role: "system",
+          content: formatRagBlock(hits),
+        };
+      }
+    }
+  }
+
+  // Compose the final wire-messages list. RAG block (if any) slots in
+  // right before the last user message.
+  const withSystem = (() => {
+    const head: Array<
+      { role: "system"; content: string } | IncomingMessage
+    > = composedSystem.length > 0
+      ? [{ role: "system" as const, content: composedSystem }]
+      : [];
+    if (!ragInjection) {
+      return [...head, ...taggedMessages];
+    }
+    const lastUserIdx = (() => {
+      for (let i = taggedMessages.length - 1; i >= 0; i--) {
+        if (taggedMessages[i].role === "user") return i;
+      }
+      return -1;
+    })();
+    if (lastUserIdx < 0) {
+      // No user msg → don't inject (shouldn't happen but be safe)
+      return [...head, ...taggedMessages];
+    }
+    return [
+      ...head,
+      ...taggedMessages.slice(0, lastUserIdx),
+      ragInjection,
+      ...taggedMessages.slice(lastUserIdx),
+    ];
+  })();
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)
   const baseBody: Record<string, unknown> = {
