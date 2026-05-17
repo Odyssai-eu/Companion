@@ -437,7 +437,13 @@ chatRoute.post("/completions", async (c) => {
     const v = body[k];
     if (v !== undefined) baseBody[k] = v;
   }
-  if (body.thinking) baseBody.enable_thinking = true;
+  // Always be explicit about thinking. Previously we only set this when
+  // body.thinking was true — that left the upstream provider to apply its
+  // own default, which is OFF for our local mlx-lm runners (THINKING_DEFAULT
+  // = false) but ON for Inferencer's API. The proxy translates
+  // `enable_thinking: false` → `thinking: false` for Inferencer-style
+  // providers, so we get consistent behaviour either way.
+  baseBody.enable_thinking = body.thinking === true;
   if (body.thinking && body.reasoning_effort)
     baseBody.reasoning_effort = body.reasoning_effort;
 
