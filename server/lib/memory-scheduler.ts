@@ -1,20 +1,30 @@
 /**
- * Scheduled memory-wiki refresh.
+ * Compile trigger orchestration. Two independent mechanisms:
  *
- * Three times a day (07:00 / 12:30 / 20:00 in the configured TZ) we fire
- * `triggerCompile` for each user who had chat activity in the last 24h.
- * This catches users whose only recent conversations are Talk or Hermes
- * (which skip the per-turn trigger), and provides a routine baseline
- * refresh even on quiet days.
+ * 1. **Time-scheduled slots** — 06:00 / 12:30 (global wiki) and 19:00
+ *    (project memory) in the configured TZ. Fires `triggerCompile` for
+ *    each user who had chat activity in the last 24h, catching quiet
+ *    conversations (Hermes / Talk) and giving a baseline daily refresh.
+ *
+ * 2. **Inactivity-based** — when a chat conv goes quiet for
+ *    `MEMORY_INACTIVITY_COMPILE_MS` (default 10 min), we fire one
+ *    compile for that conv. Registered from `chat.ts` after each
+ *    assistant message completes; the timer is reset by every new
+ *    activity, so a chatty conv only triggers ONE compile after the
+ *    user stops engaging (≈ "compile quand je quitte le chat").
+ *
+ * This replaces the previous per-message `triggerCompile` call in
+ * chat.ts, which was hammering the local Inferencer and causing chat
+ * latency contention.
  *
  * Safe vs KV cache: triggerCompile only writes to the wiki repo on the
  * memory service side — never to `conversations.memorySnapshot`. Existing
  * conversations keep their frozen prefix. Only NEW conversations created
  * after a refresh see the updated wiki.
  *
- * Per-user pick: we trigger against the user's most-recently-touched
- * conversation. The memory service uses that conversation as the source
- * context for the compile pass.
+ * Per-user pick (time-scheduled global slots): we trigger against the
+ * user's most-recently-touched conversation. The memory service uses
+ * that conversation as the source context for the compile pass.
  */
 
 import { desc, eq, gte } from "drizzle-orm";
@@ -28,23 +38,58 @@ import {
 
 const SCHEDULE_TZ = process.env.MEMORY_SCHEDULER_TZ ?? "Europe/Brussels";
 /** Local-clock targets. Order doesn't matter — we check all on every
- *  tick. `kind` selects which compile to fire: global wiki for the
- *  existing three slots, project memory at 19:00. */
+ *  tick. `kind` selects which compile to fire: global wiki at 06:00 /
+ *  12:30, project memory at 19:00. (User directive 2026-05-16: shift
+ *  compile out of the chat hot-path; cron + inactivity replace the
+ *  per-message trigger.) */
 const SLOTS: Array<{ h: number; m: number; label: string; kind: "global" | "project" }> = [
-  { h: 7, m: 0, label: "07:00", kind: "global" },
+  { h: 6, m: 0, label: "06:00", kind: "global" },
   { h: 12, m: 30, label: "12:30", kind: "global" },
   { h: 19, m: 0, label: "19:00", kind: "project" },
-  { h: 20, m: 0, label: "20:00", kind: "global" },
 ];
 /** Polling cadence. Every 60s is enough — we only need ±1min accuracy. */
 const TICK_MS = 60_000;
 /** Activity window. Skip users idle for longer than this. */
 const ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Idle duration after which a registered conv triggers a compile.
+ *  Refreshed by every assistant turn — only fires once the user stops
+ *  chatting. Default 10 min; bump via env if Inferencer is still
+ *  contended. */
+const INACTIVITY_COMPILE_MS = Number(
+  process.env.MEMORY_INACTIVITY_COMPILE_MS ?? 10 * 60 * 1000,
+);
 
 let started = false;
 /** Per-slot last-fired YYYY-MM-DD so we don't refire after a process restart
  *  that lands during the same minute. */
 const lastFiredDate = new Map<string, string>();
+
+/** Convs awaiting an inactivity compile.
+ *  key = conversationId, value = { userId, lastActivityAt }.
+ *  Refreshed by `registerInactivityCompile`, drained by `inactivityTick`. */
+const pendingInactivity = new Map<
+  string,
+  { userId: string; lastActivityAt: number }
+>();
+
+/**
+ * Mark a conversation as a candidate for inactivity-based compile.
+ * Called by `chat.ts` after each assistant message persists. Idempotent
+ * — calling repeatedly just resets the timer, so a chatty conv only
+ * compiles after the user actually stops engaging.
+ *
+ * Lost on process restart (in-memory Map). Acceptable: the time-scheduled
+ * slots (06/12:30/19) backstop any conv that escaped a restart.
+ */
+export function registerInactivityCompile(
+  userId: string,
+  conversationId: string,
+): void {
+  pendingInactivity.set(conversationId, {
+    userId,
+    lastActivityAt: Date.now(),
+  });
+}
 
 /**
  * Returns the current `{ year, month, day, hour, minute }` parts in the
@@ -136,6 +181,30 @@ function tick(): void {
       );
     });
   }
+  inactivityTick();
+}
+
+/** Scan pendingInactivity and fire `triggerCompile` for convs idle
+ *  beyond INACTIVITY_COMPILE_MS. Each conv fires exactly once per idle
+ *  period — re-registers (next assistant turn) reset the clock. */
+function inactivityTick(): void {
+  const now = Date.now();
+  for (const [convId, entry] of pendingInactivity) {
+    if (now - entry.lastActivityAt < INACTIVITY_COMPILE_MS) continue;
+    pendingInactivity.delete(convId);
+    try {
+      triggerCompile(entry.userId, convId);
+      const idleS = Math.round((now - entry.lastActivityAt) / 1000);
+      console.log(
+        `[memory-scheduler] inactivity compile fired conv=${convId} idle=${idleS}s`,
+      );
+    } catch (err) {
+      console.error(
+        `[memory-scheduler] inactivity compile failed conv=${convId}:`,
+        err,
+      );
+    }
+  }
 }
 
 /** Start the scheduler. Idempotent — calling twice is a no-op. */
@@ -145,7 +214,7 @@ export function startMemoryScheduler(): void {
   console.log(
     `[memory-scheduler] started (tz=${SCHEDULE_TZ}, slots=${SLOTS.map(
       (s) => `${s.label}/${s.kind}`,
-    ).join(", ")})`,
+    ).join(", ")}, inactivity=${Math.round(INACTIVITY_COMPILE_MS / 1000)}s)`,
   );
   // Run once immediately so a restart within the firing minute doesn't
   // miss the slot.

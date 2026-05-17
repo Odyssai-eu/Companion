@@ -26,7 +26,8 @@ import { conversations, messages, projects, users } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { incrementGuestUsage } from "../lib/guest-token";
 import { authHeaders } from "../lib/litellm";
-import { getMemoryContext, triggerCompile } from "../lib/memory";
+import { getMemoryContext } from "../lib/memory";
+import { registerInactivityCompile } from "../lib/memory-scheduler";
 import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
 import { getProjectMemoryContext } from "../lib/project-memory";
 import { buildTag } from "../lib/timetag";
@@ -195,7 +196,7 @@ chatRoute.post("/completions", async (c) => {
   let convRepoPath: string | null = null;
   // Project-level memory toggles. When the conv belongs to a project,
   // we pull these from `projects` and use them to gate global-wiki
-  // injection AND the post-turn triggerCompile.
+  // injection AND the inactivity-compile registration.
   let projectGlobalReadOnly = false;
   let projectDedicatedMemoryEnabled = false;
   let convMemoryEnabled = true;
@@ -956,13 +957,13 @@ chatRoute.post("/completions", async (c) => {
         // for a tab-switch / page-reload to catch up.
         setTimeout(() => deleteInference(convIdLocal), 60_000);
       }
-      // Memory wiki refresh — fire-and-forget after the assistant has
-      // finished. Restricted to kind='chat' with memory enabled:
-      //   - Hermes convs use Hermes's own retrieval skills (no wiki).
-      //   - Talk convs are voice-only; wiki would race with the in-flight
-      //     transcript persistence.
-      //   - Guests don't compile to the owner's wiki.
-      // Memory wiki refresh — fire-and-forget. Suppressed when:
+      // Memory wiki refresh — registered for inactivity-based compile.
+      // Was previously a per-turn `triggerCompile` call, which hammered
+      // the local Inferencer and contended with chat latency. Now we
+      // just mark the conv as a candidate; memory-scheduler fires the
+      // compile after MEMORY_INACTIVITY_COMPILE_MS (default 10 min) of
+      // quiet, OR via the time-scheduled slots (06/12:30/19).
+      // Suppressed when:
       //  - the conv kind isn't 'chat' (Hermes/Talk handle their own context)
       //  - the conv's memoryEnabled is off
       //  - the conv is a guest session (don't pollute the owner's wiki)
@@ -977,7 +978,7 @@ chatRoute.post("/completions", async (c) => {
         !projectGlobalReadOnly &&
         !projectDedicatedMemoryEnabled
       ) {
-        triggerCompile(userId, body.conversationId);
+        registerInactivityCompile(userId, body.conversationId);
       }
     }
   })();
