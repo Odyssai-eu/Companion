@@ -124,17 +124,27 @@ export async function ragRetrieve(
 ): Promise<RagHit[]> {
   if (!isRagAvailable() || !query.trim()) return [];
   const k = Math.max(1, Math.min(limit, 10));
+  const t0 = Date.now();
   try {
     const embedResp = await fetch(`${RAG_EMBED_URL}/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ texts: [query] }),
-      signal: AbortSignal.timeout(8_000),
+      // 20s — embed service can be slow on first request after idle
+      // (model warm-up). 8s was too tight and aborted real workloads.
+      signal: AbortSignal.timeout(20_000),
     });
-    if (!embedResp.ok) return [];
+    if (!embedResp.ok) {
+      console.warn(`[memory] embed ${embedResp.status} on /embed`);
+      return [];
+    }
     const embedJson = (await embedResp.json()) as { embeddings?: number[][] };
     const vector = embedJson.embeddings?.[0];
-    if (!vector || vector.length === 0) return [];
+    if (!vector || vector.length === 0) {
+      console.warn("[memory] embed: empty vector");
+      return [];
+    }
+    const tEmbed = Date.now() - t0;
 
     const searchResp = await fetch(
       `${RAG_QDRANT_URL}/collections/${encodeURIComponent(RAG_COLLECTION)}/points/search`,
@@ -142,14 +152,17 @@ export async function ragRetrieve(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ vector, limit: k, with_payload: true }),
-        signal: AbortSignal.timeout(8_000),
+        signal: AbortSignal.timeout(10_000),
       },
     );
-    if (!searchResp.ok) return [];
+    if (!searchResp.ok) {
+      console.warn(`[memory] qdrant ${searchResp.status}`);
+      return [];
+    }
     const searchJson = (await searchResp.json()) as {
       result?: Array<{ score?: number; payload?: Record<string, unknown> }>;
     };
-    return (searchJson.result ?? []).map((r) => {
+    const hits = (searchJson.result ?? []).map((r) => {
       const payload = r.payload ?? {};
       const text =
         (payload.text as string | undefined) ??
@@ -171,8 +184,17 @@ export async function ragRetrieve(
         snippet: text.slice(0, 600),
       };
     });
+    const tTotal = Date.now() - t0;
+    console.log(
+      `[memory] ragRetrieve: query=${JSON.stringify(query).slice(0, 60)} ` +
+        `hits=${hits.length} embed=${tEmbed}ms total=${tTotal}ms`,
+    );
+    return hits;
   } catch (err) {
-    console.warn("[memory] ragRetrieve failed:", (err as Error).message);
+    console.warn(
+      `[memory] ragRetrieve failed after ${Date.now() - t0}ms:`,
+      (err as Error).message,
+    );
     return [];
   }
 }
