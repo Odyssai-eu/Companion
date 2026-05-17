@@ -569,10 +569,21 @@ chatRoute.post("/completions", async (c) => {
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
   const writer = writable.getWriter();
 
+  // Safe wrapper around writer.write — never throws even if the downstream
+  // client disconnected mid-stream. This matters for the MCP `send_message`
+  // tool: it cancels its reader after headers arrive (so the tool call
+  // returns fast), but the server-side worker MUST keep going to consume
+  // the upstream SSE, persist the assistant message, trigger memory
+  // compile, etc. Without this wrapper, the first `await writer.write` on
+  // the dead socket throws → outer try/catch fires "[chat] upstream pipe
+  // failed" → finishInference never runs → message is lost.
+  const safeWrite = (data: Uint8Array) =>
+    writer.write(data).catch(() => undefined);
+
   // Push one heartbeat immediately so the first byte hits the wire asap.
-  writer.write(encoder.encode(":keepalive\n\n")).catch(() => undefined);
+  safeWrite(encoder.encode(":keepalive\n\n"));
   const heartbeat: ReturnType<typeof setInterval> = setInterval(() => {
-    writer.write(encoder.encode(":keepalive\n\n")).catch(() => undefined);
+    safeWrite(encoder.encode(":keepalive\n\n"));
   }, 25_000);
 
   void (async () => {
@@ -722,7 +733,7 @@ chatRoute.post("/completions", async (c) => {
           const text = await upstream.text().catch(() => "");
           const err = `${upstream.status} ${upstream.statusText}: ${text.slice(0, 200)}`;
           console.error("[chat] upstream not ok:", err);
-          await writer.write(
+          await safeWrite(
             encoder.encode(`data: ${JSON.stringify({ error: err })}\n\n`),
           );
           break;
@@ -745,7 +756,7 @@ chatRoute.post("/completions", async (c) => {
           toolCalls.length > 0
         ) {
           // Notify the client visually (the parser ignores `_event` shape).
-          await writer.write(
+          await safeWrite(
             encoder.encode(
               `data: ${JSON.stringify({
                 _event: "tool_start",
@@ -764,7 +775,7 @@ chatRoute.post("/completions", async (c) => {
             ),
           );
 
-          await writer.write(
+          await safeWrite(
             encoder.encode(
               `data: ${JSON.stringify({
                 _event: "tool_done",
@@ -785,7 +796,7 @@ chatRoute.post("/completions", async (c) => {
             if (tc.name !== "fs_write" && tc.name !== "fs_edit") continue;
             const path = (r.data as { path?: string } | undefined)?.path;
             if (!path) continue;
-            await writer.write(
+            await safeWrite(
               encoder.encode(
                 `data: ${JSON.stringify({ _event: "file_changed", path })}\n\n`,
               ),
@@ -834,7 +845,7 @@ chatRoute.post("/completions", async (c) => {
           "or disable some MCP servers to shrink the context.)_";
         for (let i = 0; i < note.length; i += 32) {
           const piece = note.slice(i, i + 32);
-          await writer.write(
+          await safeWrite(
             encoder.encode(
               `data: ${JSON.stringify({
                 choices: [
@@ -845,7 +856,7 @@ chatRoute.post("/completions", async (c) => {
           );
           appendInferenceContent(body.conversationId, piece);
         }
-        await writer.write(
+        await safeWrite(
           encoder.encode(
             `data: ${JSON.stringify({
               choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
@@ -854,7 +865,7 @@ chatRoute.post("/completions", async (c) => {
         );
       }
       // End-of-stream marker for the client parser
-      await writer.write(encoder.encode("data: [DONE]\n\n"));
+      await safeWrite(encoder.encode("data: [DONE]\n\n"));
 
       // Guest accounting — bill the token, log the use. We do this after
       // the stream has fully drained so we have the real usage numbers.
@@ -887,14 +898,10 @@ chatRoute.post("/completions", async (c) => {
     } catch (err) {
       console.error("[chat] upstream pipe failed:", err);
       if (body.conversationId) markInferenceError(body.conversationId, String(err));
-      try {
-        await writer.write(
-          encoder.encode(`data: ${JSON.stringify({ error: String(err) })}\n\n`),
-        );
-        await writer.write(encoder.encode("data: [DONE]\n\n"));
-      } catch {
-        // already closed
-      }
+      await safeWrite(
+        encoder.encode(`data: ${JSON.stringify({ error: String(err) })}\n\n`),
+      );
+      await safeWrite(encoder.encode("data: [DONE]\n\n"));
     } finally {
       clearInterval(heartbeat);
       try {
@@ -1156,7 +1163,10 @@ async function pipeAndCollect(
     }
 
     if (out.length > 0) {
-      await writer.write(encoder.encode(out.join("\n") + "\n"));
+      // .catch matches the safeWrite pattern in the caller — never throw
+      // back into the SSE consumer just because the client disconnected.
+      // The upstream must keep being drained so finishInference runs.
+      await writer.write(encoder.encode(out.join("\n") + "\n")).catch(() => undefined);
     }
   }
 
@@ -1223,7 +1233,7 @@ async function collectNonStream(
     // path catch the rest of the contract.
     await writer.write(
       encoder.encode(`data: ${JSON.stringify({ error: "invalid_json_from_upstream" })}\n\n`),
-    );
+    ).catch(() => undefined);
     return { toolCalls: [], finishReason: null, assistantContent: "", usage: null, chunkCount: 0 };
   }
 
@@ -1303,7 +1313,7 @@ async function collectNonStream(
       };
       await writer.write(
         encoder.encode(`data: ${JSON.stringify(synthChunk)}\n\n`),
-      );
+      ).catch(() => undefined);
       if (convId) appendInferenceContent(convId, piece);
       chunkCount++;
       // Skip the delay on the last slice — no need to add latency before
@@ -1337,7 +1347,7 @@ async function collectNonStream(
   };
   await writer.write(
     encoder.encode(`data: ${JSON.stringify(finishChunk)}\n\n`),
-  );
+  ).catch(() => undefined);
 
   return {
     toolCalls,
