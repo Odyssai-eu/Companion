@@ -527,6 +527,18 @@ function StatsRow({
     items.push(["Duration", `${(stats.durationMs / 1000).toFixed(2)}s`]);
   if (stats.promptTokens !== undefined)
     items.push(["Prompt", `${stats.promptTokens} tok`]);
+  // Show cache savings only when there's something to brag about. Display
+  // as "Cached: N tok (XX%)" so the user immediately sees the prefix-share
+  // win from oMLX's tiered KV cache (or any upstream prompt cache).
+  if (
+    stats.cachedTokens !== undefined &&
+    stats.cachedTokens > 0 &&
+    stats.promptTokens !== undefined &&
+    stats.promptTokens > 0
+  ) {
+    const pct = Math.round((stats.cachedTokens / stats.promptTokens) * 100);
+    items.push(["Cached", `${stats.cachedTokens} tok (${pct}%)`]);
+  }
   if (stats.completionTokens !== undefined)
     items.push(["Completion", `${stats.completionTokens} tok`]);
   if (

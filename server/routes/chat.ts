@@ -925,6 +925,10 @@ chatRoute.post("/completions", async (c) => {
                 promptTokens: st.promptTokens,
                 completionTokens: st.completionTokens,
                 reasoningTokens: st.reasoningTokens,
+                // Cached prompt tokens — 0 = full re-prefill, >0 = upstream
+                // (oMLX tiered KV / Anthropic prompt cache) served part of
+                // the prefix from cache. Surfaced in the UI as "Cached".
+                cachedTokens: st.cachedTokens,
                 chunks: totalChunkCount,
                 durationMs: st.totalMs,
                 speed:

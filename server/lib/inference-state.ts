@@ -36,6 +36,10 @@ export type InferenceEntry = {
   promptTokens: number;
   completionTokens: number;
   reasoningTokens: number;
+  /** Tokens served from the upstream's prefix cache (oMLX, Anthropic).
+   *  Exposed via OpenAI `prompt_tokens_details.cached_tokens` or
+   *  Anthropic `cache_read_input_tokens`. 0 means cache miss. */
+  cachedTokens: number;
 };
 
 export type InferenceStatus =
@@ -62,6 +66,7 @@ export function startInference(convId: string, userId: string): void {
     promptTokens: 0,
     completionTokens: 0,
     reasoningTokens: 0,
+    cachedTokens: 0,
   });
 }
 
@@ -87,6 +92,13 @@ export function recordInferenceUsage(
     input_tokens?: number;
     output_tokens?: number;
     completion_tokens_details?: { reasoning_tokens?: number };
+    // OpenAI-compat (oMLX 0.3.8+, vLLM, OpenAI native): cached input tokens
+    prompt_tokens_details?: { cached_tokens?: number };
+    // Anthropic /v1/messages: cache_read_input_tokens = served from prefix
+    // cache, cache_creation_input_tokens = freshly written to cache. We
+    // surface the read counter as the "saved compute" signal.
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
   } | null | undefined,
 ): void {
   const inf = _active.get(convId);
@@ -98,6 +110,13 @@ export function recordInferenceUsage(
   else if (usage.output_tokens) inf.completionTokens = usage.output_tokens;
   if (usage.completion_tokens_details?.reasoning_tokens) {
     inf.reasoningTokens = usage.completion_tokens_details.reasoning_tokens;
+  }
+  // Prefix-cache hit signal — show users the concrete win from oMLX's tiered
+  // KV cache (or Anthropic's prompt cache). Accept either shape.
+  if (usage.prompt_tokens_details?.cached_tokens) {
+    inf.cachedTokens = usage.prompt_tokens_details.cached_tokens;
+  } else if (usage.cache_read_input_tokens) {
+    inf.cachedTokens = usage.cache_read_input_tokens;
   }
 }
 
@@ -127,6 +146,7 @@ export async function finishInference(
       promptTokens: number;
       completionTokens: number;
       reasoningTokens: number;
+      cachedTokens: number;
     },
   ) => Promise<void>,
   error?: string | null,
@@ -145,6 +165,7 @@ export async function finishInference(
         promptTokens: inf.promptTokens,
         completionTokens: inf.completionTokens,
         reasoningTokens: inf.reasoningTokens,
+        cachedTokens: inf.cachedTokens,
       });
     } catch (e) {
       console.error("[inference-state] persist failed:", (e as Error).message);
