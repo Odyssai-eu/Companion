@@ -266,7 +266,7 @@ function AssistantMessage({
           )}
         </div>
         {showMetrics && message.stats && !message.streaming && (
-          <StatsRow stats={message.stats} />
+          <StatsRow stats={message.stats} model={message.model} />
         )}
         {!message.streaming && message.content && (
           <>
@@ -514,7 +514,13 @@ function TypingDots() {
   );
 }
 
-function StatsRow({ stats }: { stats: NonNullable<UIMessage["stats"]> }) {
+function StatsRow({
+  stats,
+  model,
+}: {
+  stats: NonNullable<UIMessage["stats"]>;
+  model?: string;
+}) {
   const items: [string, string][] = [];
   if (stats.ttft) items.push(["TTFT", stats.ttft]);
   if (stats.durationMs !== undefined)
@@ -536,6 +542,7 @@ function StatsRow({ stats }: { stats: NonNullable<UIMessage["stats"]> }) {
     items.push(["Tokens", `${stats.tokens} tok`]);
   if (stats.speed) items.push(["Speed", stats.speed]);
   if (stats.chunks !== undefined) items.push(["Chunks", String(stats.chunks)]);
+  if (model) items.push(["Model", model]);
   if (stats.cost) items.push(["Cost", stats.cost]);
 
   if (items.length === 0) return null;

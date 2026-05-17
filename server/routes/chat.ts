@@ -930,8 +930,9 @@ chatRoute.post("/completions", async (c) => {
                   st.totalMs && st.completionTokens
                     ? `${((st.completionTokens / st.totalMs) * 1000).toFixed(1)} tok/s`
                     : undefined,
+                model: body.model,
               }
-            : { chunks: totalChunkCount, durationMs: st.totalMs };
+            : { chunks: totalChunkCount, durationMs: st.totalMs, model: body.model };
           try {
             await db.insert(messages).values({
               conversationId: convIdLocal,

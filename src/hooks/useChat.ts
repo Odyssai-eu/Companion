@@ -96,6 +96,11 @@ export type UIMessage = {
     durationMs?: number;
     speed?: string;
     cost?: string;
+    /** Server-side echo of the model id used for this turn — lets the
+     *  StatsRow show "Model: vlm:qwen3.6-35b" even after the page is
+     *  reloaded and the live model picker state is gone. Set in chat.ts
+     *  when the assistant message is persisted. */
+    model?: string;
   };
 };
 
@@ -790,13 +795,18 @@ function pollServerInferenceUntilDone(
 }
 
 function toUIMessage(m: ApiMessage): UIMessage {
+  const stats = (m.stats as UIMessage["stats"]) ?? undefined;
   return {
     id: m.id,
     role: m.role,
     content: m.content,
     reasoning: m.reasoning ?? undefined,
     createdAt: m.createdAt,
-    stats: (m.stats as UIMessage["stats"]) ?? undefined,
+    // Surface the model id at the message level too, so the StatsRow
+    // can show it for DB-loaded messages where the live model state
+    // isn't available anymore.
+    model: stats?.model,
+    stats,
   };
 }
 
