@@ -173,10 +173,24 @@ export function getInferenceStatus(
   };
 }
 
-/** Drop the entry. Called by the client after consuming a finished stream. */
+/**
+ * Drop the entry. Called by the client after consuming a finished stream.
+ *
+ * Race-safety: we ONLY delete when `done=true`. The browser fires this
+ * route as soon as it sees `data: [DONE]` on the SSE wire, but the
+ * server-side `finishInference()` (which persists the assistant message)
+ * runs slightly later (after writer.close()). If we deleted the entry
+ * unconditionally, finishInference would find `inf=null` and skip persist
+ * entirely — observed as "ghost answer" : the stream visibly arrived in
+ * the UI, then the message vanished on reload because it was never
+ * inserted in the DB. Guarding on `done=true` keeps the entry alive
+ * during the persist window; a follow-up clear (or the 60s deferred
+ * delete inside chat.ts) removes it later.
+ */
 export function clearInference(convId: string, userId: string): boolean {
   const inf = _active.get(convId);
   if (!inf || inf.userId !== userId) return false;
+  if (!inf.done) return false;
   _active.delete(convId);
   return true;
 }
