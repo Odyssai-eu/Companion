@@ -569,14 +569,14 @@ conversationsRoute.post(
       .limit(1);
     if (!user) return c.json({ error: "user_not_found" }, 404);
 
-    // Memory: chat.ts now uses per-turn RAG retrieval keyed to the
-    // latest user question, so we DON'T inject any memory block here in
-    // the prewarm — we don't have a future question to retrieve against.
-    // The prewarm still gets value from priming system + tools + history
-    // (which IS byte-stable). When the real chat turn lands, the
-    // (RAG block + new user msg) tail re-prefills (~800 tok) but
-    // everything before is a session-HIT.
-    const memoryBlock = "";
+    // Memory: read the Karpathy-style compiled wiki (PG via thecompai-memory)
+    // for injection at SYSTEM-prompt level — same as chat.ts. Must match
+    // chat.ts byte-for-byte or the prewarm prefix diverges from the real
+    // next chat's, defeating the cache.
+    let memoryBlock = "";
+    if (conv.memoryEnabled !== false) {
+      memoryBlock = await getMemoryContext(userId, conv.projectId);
+    }
 
     // System prompt composition — must match chat.ts byte-for-byte.
     const systemSegments: string[] = [];
