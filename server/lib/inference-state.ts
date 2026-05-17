@@ -195,8 +195,20 @@ export function clearInference(convId: string, userId: string): boolean {
   return true;
 }
 
-/** Drop without auth check — used by the chat route's own cleanup paths. */
+/**
+ * Drop without auth check — used by the chat route's own cleanup paths.
+ *
+ * Race-safety: same constraint as clearInference. The 60s deferred GC
+ * inside chat.ts is scheduled by the persist callback of TURN N. If
+ * the user starts TURN N+1 before the timer fires, `startInference()`
+ * replaces the map entry with a fresh (done=false) one. When the
+ * stale timer eventually fires, it would otherwise delete N+1's
+ * still-streaming buffer → ghost answer #3. Gate on `done=true` so
+ * the timer is a no-op when a new inference is in flight.
+ */
 export function deleteInference(convId: string): void {
+  const inf = _active.get(convId);
+  if (!inf || !inf.done) return;
   _active.delete(convId);
 }
 
