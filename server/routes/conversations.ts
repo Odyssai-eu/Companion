@@ -550,6 +550,39 @@ conversationsRoute.post(
     if (msgRows.length === 0) {
       return c.json({ ok: false, reason: "empty" });
     }
+    // Cache-warmth heuristic: if the last assistant message landed in the
+    // recent past, the upstream's internal prefix cache (Inferencer,
+    // mlx-vlm, Odysseus session) is still warm — re-prewarming would just
+    // queue another 50KB-prefill call behind the active chat / compile /
+    // next-turn, slowing everything. Skip in that case.
+    //
+    // The frontend re-fires prewarm on every (sending → false) and on
+    // every messages.length change, so without this guard we hit the
+    // upstream once per chat turn for nothing. With a 10-minute window
+    // we still warm cold conv reopens and post-restart situations.
+    const PREWARM_SKIP_IF_RECENT_S = Number(
+      process.env.PREWARM_SKIP_IF_RECENT_S ?? 600,
+    );
+    let lastAssistantAt: Date | null = null;
+    for (let i = msgRows.length - 1; i >= 0; i--) {
+      if (msgRows[i].role === "assistant") {
+        lastAssistantAt = msgRows[i].createdAt;
+        break;
+      }
+    }
+    if (
+      PREWARM_SKIP_IF_RECENT_S > 0 &&
+      lastAssistantAt &&
+      Date.now() - lastAssistantAt.getTime() < PREWARM_SKIP_IF_RECENT_S * 1000
+    ) {
+      const ageS = Math.round(
+        (Date.now() - lastAssistantAt.getTime()) / 1000,
+      );
+      console.log(
+        `[prewarm] conv=${id.slice(0, 8)} skipped — last assistant ${ageS}s ago (cache warm)`,
+      );
+      return c.json({ ok: false, reason: "cache_recent", age_s: ageS });
+    }
     console.log(
       `[prewarm] conv=${id.slice(0, 8)} model=${opts.model} msgs=${msgRows.length}`,
     );
