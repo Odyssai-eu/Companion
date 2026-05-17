@@ -358,12 +358,24 @@ chatRoute.post("/completions", async (c) => {
   // Nothing depends on the volatile `userRow.lastInteractionAt` anymore:
   // including it would cause the latest msg's tag at turn T to differ
   // from its historical re-rendering at turn T+1.
+  //
+  // Gating on memory: temporal tags are useful only when the model has
+  // memory of past interactions to anchor them against. With memory OFF,
+  // `[2026-05-17T08:52:20+02:00 | Δ: 4m]` is just noise that reasoning
+  // models will spend cycles trying to justify (cf. Hy3, Hunyuan, Qwen3
+  // in thinking mode). So when memory is disabled for this conversation,
+  // we skip tagging entirely — pure user content goes to the model.
   const tz = userRow.timezone || "Europe/Brussels";
   const taggedMessages: IncomingMessage[] = [];
   let lastUserAt: Date | null = null;
+  const timeTagsEnabled = convMemoryEnabled;
 
   for (const m of body.messages) {
     if (m.role !== "user") {
+      taggedMessages.push(m);
+      continue;
+    }
+    if (!timeTagsEnabled) {
       taggedMessages.push(m);
       continue;
     }

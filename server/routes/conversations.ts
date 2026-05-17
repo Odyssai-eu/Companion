@@ -600,14 +600,17 @@ conversationsRoute.post(
     const composedSystem = systemSegments.join("\n\n---\n\n");
 
     // Tag user messages — same logic as chat.ts (uniform: stamp=createdAt,
-    // previous=previous user msg's createdAt).
+    // previous=previous user msg's createdAt). Gated on memoryEnabled to
+    // match chat.ts (memory OFF → no time tags, so the prewarm prefix
+    // stays byte-identical to what the real next chat will send).
     const tz = user.timezone || "Europe/Brussels";
+    const timeTagsEnabled = conv.memoryEnabled !== false;
     type WireMsg = { role: string; content: string; createdAt?: string };
     const tagged: WireMsg[] = [];
     let lastUserAt: Date | null = null;
     for (const m of msgRows) {
       const createdIso = m.createdAt.toISOString();
-      if (m.role !== "user") {
+      if (m.role !== "user" || !timeTagsEnabled) {
         tagged.push({
           role: m.role,
           content: m.content,
@@ -636,14 +639,12 @@ conversationsRoute.post(
     function withDummy(): WireMsg[] {
       const out = [...tagged];
       const dummyAt = new Date();
-      const dummyTag = buildTag({
-        now: dummyAt,
-        previous: lastUserAt,
-        timezone: tz,
-      });
+      const content = timeTagsEnabled
+        ? `${buildTag({ now: dummyAt, previous: lastUserAt, timezone: tz })} .`
+        : ".";
       out.push({
         role: "user",
-        content: `${dummyTag} .`,
+        content,
         createdAt: dummyAt.toISOString(),
       });
       return out;
