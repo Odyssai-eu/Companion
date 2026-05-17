@@ -162,7 +162,7 @@ export async function ragRetrieve(
     const searchJson = (await searchResp.json()) as {
       result?: Array<{ score?: number; payload?: Record<string, unknown> }>;
     };
-    const hits = (searchJson.result ?? []).map((r) => {
+    const rawHits = (searchJson.result ?? []).map((r) => {
       const payload = r.payload ?? {};
       const text =
         (payload.text as string | undefined) ??
@@ -184,11 +184,46 @@ export async function ragRetrieve(
         snippet: text.slice(0, 600),
       };
     });
+
+    // Quality filters — Qdrant always returns top-K even when nothing in
+    // the index is actually relevant to the query. Without filtering, the
+    // model receives noise (e.g. emoji-only chunks from a feature-matrix
+    // file) and concludes "I have no memory" because the chunks make no
+    // sense. We apply three guards:
+    //
+    //  1. SCORE_FLOOR : drop hits below cosine similarity threshold.
+    //     0.55 is the empirical bge-m3 sweet spot — above it, hits are
+    //     usually genuinely related; below it, they're random.
+    //  2. MIN_SNIPPET_CHARS : drop tiny payloads. The "✅"/"❌" cells
+    //     that result from over-chunked tables score artificially well
+    //     but carry no information.
+    //  3. If after filtering we have 0 hits, return [] — no memory
+    //     injection at all, which is honest: the wiki has nothing
+    //     relevant to this question.
+    const SCORE_FLOOR = Number(process.env.RAG_SCORE_FLOOR ?? 0.55);
+    const MIN_SNIPPET_CHARS = Number(process.env.RAG_MIN_SNIPPET_CHARS ?? 50);
+    const hits = rawHits.filter(
+      (h) =>
+        h.score >= SCORE_FLOOR &&
+        h.snippet.replace(/\s+/g, " ").trim().length >= MIN_SNIPPET_CHARS,
+    );
+
     const tTotal = Date.now() - t0;
+    const droppedFor = rawHits.length - hits.length;
+    const uniqSources = new Set(hits.map((h) => h.path)).size;
     console.log(
       `[memory] ragRetrieve: query=${JSON.stringify(query).slice(0, 60)} ` +
-        `hits=${hits.length} embed=${tEmbed}ms total=${tTotal}ms`,
+        `hits=${hits.length}/${rawHits.length}` +
+        (droppedFor > 0 ? ` dropped=${droppedFor}(score<${SCORE_FLOOR} or trivial)` : "") +
+        ` srcs=${uniqSources} embed=${tEmbed}ms total=${tTotal}ms`,
     );
+    if (hits.length > 0 && uniqSources === 1) {
+      console.warn(
+        `[memory] all ${hits.length} hits come from a single source ` +
+          `(${hits[0].path}) — wiki may not contain anything else relevant ` +
+          `to this query, or chunking is too narrow`,
+      );
+    }
     return hits;
   } catch (err) {
     console.warn(
