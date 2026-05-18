@@ -21,6 +21,7 @@
 
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { Agent } from "undici";
 import { db } from "../db/index";
 import { conversations, messages, projects, users } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
@@ -49,6 +50,27 @@ import {
 
 type Env = { Variables: { userId: string } };
 const chatRoute = new Hono<Env>();
+
+// Dedicated undici Agent for upstream LLM calls. Node's default global
+// dispatcher has `bodyTimeout: 300_000` (5 min) which is too short for big
+// prefills — observed symptom: Hy3-preview on Argo with a ~30k token wiki
+// injection times out mid-prefill, undici aborts the socket with
+// UND_ERR_BODY_TIMEOUT, finishInference never runs, and the client sees
+// a "ghost answer" (the partial response disappears on reload because
+// nothing got persisted to the DB).
+//
+// We disable bodyTimeout entirely (0 = no timeout) and keep a reasonable
+// headers/connect bound. The chat route already has its own client-side
+// heartbeat + finishInference cleanup if the upstream actually dies, so
+// removing the dispatcher timeout doesn't risk runaway connections —
+// the orphans get GC'd via the writer.close() + setTimeout fallback.
+const upstreamDispatcher = new Agent({
+  connect: { timeout: 10_000 },   // 10s to TCP+TLS connect
+  headersTimeout: 60_000,          // 60s to receive response headers
+  bodyTimeout: 0,                  // unbounded body — long prefills OK
+  keepAliveTimeout: 60_000,
+  keepAliveMaxTimeout: 600_000,
+});
 
 // ── Types from the client ─────────────────────────────────────────────────
 
@@ -727,7 +749,10 @@ chatRoute.post("/completions", async (c) => {
             method: "POST",
             headers,
             body: bodyJson,
-          },
+            // Node 20+ accepts undici Dispatcher here at runtime; the stock
+            // RequestInit type doesn't know about it. Cast to keep TS quiet.
+            dispatcher: upstreamDispatcher,
+          } as RequestInit & { dispatcher: typeof upstreamDispatcher },
         );
 
         if (!upstream.ok || !upstream.body) {
