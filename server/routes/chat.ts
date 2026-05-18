@@ -949,6 +949,15 @@ chatRoute.post("/completions", async (c) => {
       // the message lands even if the client disconnected mid-stream.
       if (body.conversationId) {
         const convIdLocal = body.conversationId;
+        // Resolve once before persistence — the cap cache is 60s TTL so this
+        // is a Map.get in the steady state. Failure falls back to raw alias.
+        const modelLabel = body.model
+          ? await resolveModelLabel(
+              body.model,
+              target?.baseUrl ?? null,
+              target?.apiKey ?? null,
+            ).catch(() => body.model)
+          : body.model;
         await finishInference(convIdLocal, async (content, _reasoning, st) => {
           const stats = sawUpstreamUsage
             ? {
@@ -967,9 +976,9 @@ chatRoute.post("/completions", async (c) => {
                   st.totalMs && st.completionTokens
                     ? `${((st.completionTokens / st.totalMs) * 1000).toFixed(1)} tok/s`
                     : undefined,
-                model: body.model,
+                model: modelLabel,
               }
-            : { chunks: totalChunkCount, durationMs: st.totalMs, model: body.model };
+            : { chunks: totalChunkCount, durationMs: st.totalMs, model: modelLabel };
           try {
             await db.insert(messages).values({
               conversationId: convIdLocal,
@@ -1449,6 +1458,36 @@ async function getModelCaps(
   } catch {
     return null;
   }
+}
+
+/**
+ * Build the user-facing model label for the StatsRow. When the requested
+ * model is a pool alias (e.g. "argo", "hades") and the engine reports a
+ * concrete `alias_for` path, expand to "argo — Qwen3.5-122B-A10B-MLX-9bit"
+ * so the user knows which actual model served the response.
+ *
+ * Falls back to the raw model id when:
+ *   - no caps available (engine doesn't expose x_odyssai)
+ *   - the model is already concrete (alias_for absent)
+ *   - the caps lookup fails for any reason
+ *
+ * Uses the 60s capability cache shared across requests — no extra fetch
+ * per chat completion.
+ */
+async function resolveModelLabel(
+  model: string,
+  engineUrl: string | null,
+  engineToken: string | null,
+): Promise<string> {
+  const caps = await getModelCaps(engineUrl, engineToken, model);
+  const aliasFor = caps?.alias_for;
+  if (!aliasFor || aliasFor === model) return model;
+  // alias_for is a filesystem path on the engine side (e.g.
+  // "/Volumes/models/odysseus/inferencerlabs/Qwen3.5-122B-A10B-MLX-9bit").
+  // Extract just the model basename — that's the readable part.
+  const concrete = aliasFor.split("/").pop() || aliasFor;
+  if (!concrete || concrete === model) return model;
+  return `${model} — ${concrete}`;
 }
 
 /**
