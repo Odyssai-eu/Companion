@@ -21,7 +21,13 @@
 
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { Agent } from "undici";
+// Both `fetch` and `Agent` must come from the SAME undici instance — Node's
+// built-in `fetch` uses its internal undici (different version), whose
+// Dispatcher interface (onRequestStart, …) doesn't match the userland
+// `undici@8.x` package. Passing one's Agent to the other's fetch throws
+// `UND_ERR_INVALID_ARG: invalid onRequestStart method`. The fix is to use
+// undici's own fetch with undici's own Agent.
+import { Agent, fetch as undiciFetch } from "undici";
 import { db } from "../db/index";
 import { conversations, messages, projects, users } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
@@ -743,16 +749,14 @@ chatRoute.post("/completions", async (c) => {
           );
         }
 
-        const upstream = await fetch(
+        const upstream = await undiciFetch(
           `${target.baseUrl}/v1/chat/completions`,
           {
             method: "POST",
             headers,
             body: bodyJson,
-            // Node 20+ accepts undici Dispatcher here at runtime; the stock
-            // RequestInit type doesn't know about it. Cast to keep TS quiet.
             dispatcher: upstreamDispatcher,
-          } as RequestInit & { dispatcher: typeof upstreamDispatcher },
+          },
         );
 
         if (!upstream.ok || !upstream.body) {
@@ -765,10 +769,13 @@ chatRoute.post("/completions", async (c) => {
           break;
         }
 
+        // undici's fetch returns its own Response type; structurally compatible
+        // with the global Response that collectNonStream/pipeAndCollect expect.
+        const upstreamResp = upstream as unknown as Response;
         const { toolCalls, finishReason, assistantContent, usage, chunkCount } =
           useNonStream
-            ? await collectNonStream(upstream, writer, encoder, body.conversationId)
-            : await pipeAndCollect(upstream, writer, encoder, body.conversationId);
+            ? await collectNonStream(upstreamResp, writer, encoder, body.conversationId)
+            : await pipeAndCollect(upstreamResp, writer, encoder, body.conversationId);
         totalChunkCount += chunkCount;
         if (usage) {
           sawUpstreamUsage = true;
