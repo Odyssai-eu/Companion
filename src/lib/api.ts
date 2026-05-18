@@ -642,6 +642,7 @@ export const api = {
     model?: string;
     kind?: "chat" | "talk" | "hermes";
     repoPath?: string;
+    memoryEnabled?: boolean;
   }) =>
     request<{ conversation: ApiConversation }>("/api/conversations", {
       method: "POST",

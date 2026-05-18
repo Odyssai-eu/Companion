@@ -26,6 +26,11 @@ const createSchema = z.object({
    *  for kind='hermes' but we don't enforce that here — useful to
    *  let the user pick before flipping kind in the future. */
   repoPath: z.string().min(1).max(500).optional(),
+  /** Explicit memory-toggle override. Without this, the conversation
+   *  inherits `projects.memoryEnabled` when projectId is set, else
+   *  defaults to true. UI uses this so the user can pre-toggle memory
+   *  OFF before sending the first message on a new top-level chat. */
+  memoryEnabled: z.boolean().optional(),
 });
 
 const appendMessageSchema = z.object({
@@ -92,11 +97,18 @@ conversationsRoute.post(
     const userId = c.get("userId");
     const data = c.req.valid("json");
 
-    // Inherit memory toggle from the parent project (if any). When the
-    // project disables memory, the new conversation starts with it off too,
-    // and we don't bother snapshotting.
+    // Resolve memory toggle.
+    //   1. If the caller passed `memoryEnabled` explicitly, that wins —
+    //      lets the chat UI pre-toggle OFF before the conv exists, and
+    //      lets MCP clients (Cowork etc.) override the inherited value.
+    //   2. Otherwise inherit from the parent project (if any).
+    //   3. Otherwise default to true.
+    // When memory ends up off we skip the wiki snapshot (no point paying
+    // for a memory-service round-trip the route won't use).
     let memoryEnabled = true;
-    if (data.projectId) {
+    if (typeof data.memoryEnabled === "boolean") {
+      memoryEnabled = data.memoryEnabled;
+    } else if (data.projectId) {
       const [proj] = await db
         .select({ memoryEnabled: projects.memoryEnabled })
         .from(projects)

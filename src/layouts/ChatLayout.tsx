@@ -189,7 +189,7 @@ export default function ChatLayout() {
           panelOpen={panelOpen}
           onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
           conversationId={id ?? null}
-          memoryEnabled={chat.conversation?.memoryEnabled ?? true}
+          memoryEnabled={chat.memoryEnabled}
           onToggleMemory={chat.toggleMemoryEnabled}
           agentMode={chat.conversation?.agentMode ?? false}
           onToggleAgentMode={chat.toggleAgentMode}

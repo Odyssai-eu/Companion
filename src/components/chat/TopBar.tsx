@@ -72,7 +72,6 @@ export default function TopBar({
               <MemoryToggleButton
                 enabled={memoryEnabled}
                 onToggle={onToggleMemory}
-                disabled={!conversationId}
                 compact
               />
               <RememberNowButton
@@ -141,7 +140,6 @@ export default function TopBar({
               <MemoryToggleButton
                 enabled={memoryEnabled}
                 onToggle={onToggleMemory}
-                disabled={!conversationId}
               />
               <RememberNowButton
                 conversationId={memoryEnabled ? conversationId ?? null : null}

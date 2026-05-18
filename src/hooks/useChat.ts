@@ -132,6 +132,14 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     expert?: string;
   }>({});
   const [showMetrics, setShowMetrics] = useState(false);
+  // Pre-conversation memory override. Null = no override (use project
+  // default / true on create). The TopBar memory toggle writes here when
+  // no conversation exists yet so the user can flip memory OFF before
+  // the first prompt; sendMessage forwards it to createConversation.
+  // Reset on conversation load / cleared on navigation.
+  const [pendingMemoryEnabled, setPendingMemoryEnabled] = useState<
+    boolean | null
+  >(null);
   const [conversation, setConversation] = useState<ApiConversation | null>(
     null,
   );
@@ -237,6 +245,10 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     if (!conversationId) {
       setMessages([]);
       setConversation(null);
+      // Clear any pre-conversation memory override when the user
+      // returns to the "new chat" entry, so the next conv starts from
+      // its project default (or true) instead of a stale pending flip.
+      setPendingMemoryEnabled(null);
       loadedIdRef.current = null;
       return;
     }
@@ -473,10 +485,18 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         try {
           const created = await api.createConversation({
             title: titleSeed.slice(0, 80),
+            // Honour the TopBar memory toggle if the user flipped it
+            // before sending the first message. Otherwise the server
+            // inherits from the project (or defaults to true).
+            ...(pendingMemoryEnabled !== null
+              ? { memoryEnabled: pendingMemoryEnabled }
+              : {}),
           });
           convId = created.conversation.id;
           setConversation(created.conversation);
           loadedIdRef.current = convId;
+          // Reset pending state — it's now persisted on the conversation.
+          setPendingMemoryEnabled(null);
         } catch (e) {
           setError((e as Error).message);
           return;
@@ -557,6 +577,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       navigate,
       project,
       sending,
+      pendingMemoryEnabled,
     ],
   );
 
@@ -621,7 +642,14 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   }, [navigate]);
 
   const toggleMemoryEnabled = useCallback(async () => {
-    if (!conversation) return;
+    // Pre-conversation: no row to PATCH yet, just flip the pending flag.
+    // The current value comes from the existing pending state, falling
+    // back to the project default (true). Persisted at conv creation
+    // in sendMessage.
+    if (!conversation) {
+      setPendingMemoryEnabled((prev) => !(prev ?? true));
+      return;
+    }
     const next = !conversation.memoryEnabled;
     // Optimistic — flip locally so the UI feels snappy. Roll back on error.
     setConversation({ ...conversation, memoryEnabled: next });
@@ -689,6 +717,10 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     toggleMemoryEnabled,
     toggleAgentMode,
     reload,
+    /** Effective memory toggle: persisted conv value when the conv
+     *  exists, else the pre-conversation pending override, else true. */
+    memoryEnabled:
+      conversation?.memoryEnabled ?? pendingMemoryEnabled ?? true,
   };
 }
 

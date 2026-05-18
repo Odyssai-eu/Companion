@@ -18,6 +18,7 @@
  *   - companion_list_conversations
  *   - companion_create_conversation
  *   - companion_get_conversation
+ *   - companion_set_conversation_memory
  *   - companion_send_message      (consumes own /api/chat/completions SSE)
  *   - companion_delete_messages_from
  *   - companion_export_md
@@ -92,35 +93,77 @@ async function getUserConversation(userId: string, id: string) {
   return { conversation: conv, messages: msgs };
 }
 
+/**
+ * Create a conversation by delegating to `POST /api/conversations`.
+ * Re-implementing the insert in-process would skip the project-memory
+ * inheritance (memoryEnabled snapshot, memory wiki snapshot, project
+ * memory toggles), so we proxy to the same route the UI uses. The
+ * `memoryEnabled` override is applied as a PATCH right after creation
+ * when the caller passed it explicitly — the create route doesn't
+ * accept it (it always inherits from the project).
+ */
 async function createUserConversation(
-  userId: string,
+  authHeader: string,
+  origin: string,
   data: {
     title?: string;
     projectId?: string;
     model?: string;
     kind?: "chat" | "talk" | "hermes";
     repoPath?: string;
+    memoryEnabled?: boolean;
   },
-) {
-  const kind = data.kind ?? "chat";
-  const defaultTitle =
-    kind === "talk"
-      ? "New talk"
-      : kind === "hermes"
-        ? "New Hermes"
-        : "New conversation";
-  const [row] = await db
-    .insert(conversations)
-    .values({
-      userId,
-      title: data.title ?? defaultTitle,
-      projectId: data.projectId ?? null,
-      model: data.model,
-      kind,
-      repoPath: data.repoPath ?? null,
-    })
-    .returning();
-  return row;
+): Promise<Record<string, unknown>> {
+  const payload: Record<string, unknown> = {};
+  if (data.title !== undefined) payload.title = data.title;
+  if (data.projectId !== undefined) payload.projectId = data.projectId;
+  if (data.model !== undefined) payload.model = data.model;
+  if (data.kind !== undefined) payload.kind = data.kind;
+  if (data.repoPath !== undefined) payload.repoPath = data.repoPath;
+
+  const r = await fetch(`${origin}/api/conversations`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: authHeader,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    throw new Error(
+      `create conversation failed: ${r.status} ${await r.text().catch(() => "")}`,
+    );
+  }
+  const { conversation } = (await r.json()) as {
+    conversation: Record<string, unknown>;
+  };
+
+  // Apply explicit memoryEnabled override via PATCH. Cowork's main use
+  // case for an override is the OFF direction — projects with memory off
+  // currently leak ON into MCP-created conversations otherwise.
+  if (
+    typeof data.memoryEnabled === "boolean" &&
+    conversation.memoryEnabled !== data.memoryEnabled
+  ) {
+    const p = await fetch(
+      `${origin}/api/conversations/${conversation.id}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: authHeader,
+        },
+        body: JSON.stringify({ memoryEnabled: data.memoryEnabled }),
+      },
+    );
+    if (p.ok) {
+      const { conversation: patched } = (await p.json()) as {
+        conversation: Record<string, unknown>;
+      };
+      return patched;
+    }
+  }
+  return conversation;
 }
 
 async function deleteMessagesFrom(
@@ -325,17 +368,18 @@ function buildServer(opts: {
     "companion_create_conversation",
     {
       description:
-        "Create a new conversation. `kind` defaults to 'chat'. Pass `projectId` to anchor inside a project.",
+        "Create a new conversation. `kind` defaults to 'chat'. Pass `projectId` to anchor inside a project — the project's `memoryEnabled` toggle is inherited (e.g. a memory-off project gives you a memory-off conversation). Pass `memoryEnabled` explicitly to override that inheritance.",
       inputSchema: {
         title: z.string().min(1).max(200).optional(),
         projectId: z.string().uuid().optional(),
         model: z.string().max(200).optional(),
         kind: z.enum(["chat", "talk", "hermes"]).optional(),
         repoPath: z.string().min(1).max(500).optional(),
+        memoryEnabled: z.boolean().optional(),
       },
     },
     async (data) => {
-      const row = await createUserConversation(opts.userId, data);
+      const row = await createUserConversation(opts.authHeader, opts.origin, data);
       return { content: [{ type: "text", text: JSON.stringify(row, null, 2) }] };
     },
   );
@@ -358,6 +402,43 @@ function buildServer(opts: {
       return {
         content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
       };
+    },
+  );
+
+  server.registerTool(
+    "companion_set_conversation_memory",
+    {
+      description:
+        "Toggle the memory wiki injection for a conversation. When `enabled` is false, the user's global memory wiki (and the project's dedicated corpus, if any) are NOT injected into subsequent turns — useful before sensitive or off-topic prompts.",
+      inputSchema: {
+        conversationId: z.string().uuid(),
+        enabled: z.boolean(),
+      },
+    },
+    async ({ conversationId, enabled }) => {
+      const r = await fetch(
+        `${opts.origin}/api/conversations/${conversationId}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: opts.authHeader,
+          },
+          body: JSON.stringify({ memoryEnabled: enabled }),
+        },
+      );
+      if (!r.ok) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `update failed: ${r.status} ${await r.text()}`,
+            },
+          ],
+        };
+      }
+      return { content: [{ type: "text", text: await r.text() }] };
     },
   );
 
