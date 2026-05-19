@@ -7,6 +7,7 @@ import SignupPage from "./pages/auth/SignupPage";
 import FilesPage from "./pages/FilesPage";
 import GuestEntry from "./pages/GuestEntry";
 import ProjectPage from "./pages/ProjectPage";
+import ProjectsListPage from "./pages/ProjectsListPage";
 import AccessibilityPage from "./pages/settings/AccessibilityPage";
 import AddonsPage from "./pages/settings/AddonsPage";
 import AdminPage from "./pages/settings/AdminPage";
@@ -44,6 +45,15 @@ export default function App() {
         element={
           <ProtectedRoute>
             <ChatLayout />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/projects"
+        element={
+          <ProtectedRoute>
+            <ProjectsListPage />
           </ProtectedRoute>
         }
       />

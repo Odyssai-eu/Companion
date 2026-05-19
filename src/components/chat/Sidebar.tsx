@@ -174,26 +174,23 @@ export default function Sidebar({
       </div>
 
       <div className="flex flex-col gap-1.5 px-3 pb-4">
-        {/* Three buttons in a 2 / 1 / 1 split: a wide Chat (the default
-         *  most-used path), a square Talk that's just a mic, and a square
-         *  Hermes that's just the agent logo. Square buttons keep the icons
-         *  centred without label fighting. */}
-        <div className="grid grid-cols-4 gap-1.5">
+        {/* Top row: Chat (new conv) + Project (workspace landing).
+         *  Each takes half the sidebar width. Talk moved to the bottom
+         *  as a full-width primary action (see footer block below). */}
+        <div className="grid grid-cols-2 gap-1.5">
           <button
             type="button"
             onClick={startNewConversation}
-            className="col-span-2 flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-[13px] font-medium text-ink transition-colors hover:bg-gray-50"
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-[13px] font-medium text-ink transition-colors hover:bg-gray-50"
           >
             Chat
           </button>
           <button
             type="button"
-            onClick={startNewTalk}
-            aria-label="New talk"
-            title="New talk"
-            className="flex items-center justify-center rounded-lg bg-cyan px-2 py-2.5 text-white transition-opacity hover:opacity-90"
+            onClick={() => navigate("/projects")}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-[13px] font-medium text-ink transition-colors hover:bg-gray-50"
           >
-            <MicIcon size={16} />
+            Project
           </button>
         </div>
         {activeProjectId && (
@@ -338,6 +335,22 @@ export default function Sidebar({
           </div>
         </div>
       )}
+
+      {/* Talk — primary positive action, full width, just above the
+       *  user footer. Was a small square button at the top alongside
+       *  Chat; promoted here so it reads as the "default voice entry"
+       *  without crowding the new Chat / Project pair. */}
+      <div className="border-t border-gray-200 px-3 py-3">
+        <button
+          type="button"
+          onClick={startNewTalk}
+          aria-label="New talk"
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-cyan px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+        >
+          <MicIcon size={16} />
+          <span>Talk</span>
+        </button>
+      </div>
 
       <UserFooter />
     </aside>
