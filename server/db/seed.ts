@@ -34,14 +34,16 @@ export async function seedIfEmpty() {
     })
     .returning();
 
-  // Add-ons that remain after the 2026-05-19 MCP migration:
+  // Add-ons that remain after the cleanup pass:
   //   - Voice Mode             — kept for the upcoming voice refactor
-  //   - Hermes Agent           — surfaces as "Cluster Operations" in the UI
   //   - Voice (Gemini Live)    — kept until the voice refactor lands
   // Migrated to MCP servers (dropped by migration 0036):
   //   - Notion, Obsidian, Web Search
-  // Retired earlier (migration 0035):
-  //   - Audiobook
+  // Retired earlier:
+  //   - Audiobook       (migration 0035)
+  //   - Hermes Agent    (migration 0037, 2026-05-19) — disconnected from
+  //                     Companion; the gateway CLI on .50 lives on as a
+  //                     standalone tool.
   await db.insert(addons).values([
     {
       userId: sophie.id,
@@ -50,15 +52,6 @@ export async function seedIfEmpty() {
       description:
         "Full-duplex audio via VibeVoice-Realtime. EN only for now; falls back to Voxtral batch when the realtime service is down.",
       version: "0.3.2",
-      enabled: false,
-    },
-    {
-      userId: sophie.id,
-      name: "Hermes Agent",
-      kind: "plugin",
-      description:
-        "Power-user tasks on your home server (RAG, ComfyUI, vault, rsync). Workspace files use the agent's built-in fs_* tools.",
-      version: "0.2.0",
       enabled: false,
     },
     {

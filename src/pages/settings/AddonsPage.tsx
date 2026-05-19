@@ -4,16 +4,12 @@ import { api, type ApiAddon, type ApiInferenceSettings } from "~/lib/api";
 
 type Filter = "all" | "plugin" | "mcp" | "core";
 
-/** UI relabel without changing the DB row name. */
+/** UI relabel hook (kept for future renames without touching DB rows). */
 function displayName(dbName: string): string {
-  if (dbName === "Hermes Agent") return "Cluster Operations";
   return dbName;
 }
 
-function displayDescription(dbName: string): string | null {
-  if (dbName === "Hermes Agent") {
-    return "Power-user tasks on your home server (RAG, ComfyUI, vault, rsync). Workspace files use the agent's built-in fs_* tools.";
-  }
+function displayDescription(_dbName: string): string | null {
   return null;
 }
 
@@ -218,14 +214,12 @@ function AddonCard({
   onToggle: () => void;
 }) {
   const isMobile = useIsMobile();
-  // Mobile hides the per-addon advanced panels (Tavily key, Obsidian token,
-  // Hermes bridge config). These are admin/infra surfaces — desktop only,
-  // mirroring ExoScopy's filter pattern.
+  // Mobile hides the per-addon advanced panels — these are admin/infra
+  // surfaces, desktop only, mirroring ExoScopy's filter pattern.
   const hasPanel =
     !isMobile &&
     (addon.name === "Obsidian" ||
       addon.name === "Web Search" ||
-      addon.name === "Hermes Agent" ||
       addon.name === "Voice (Gemini Live)");
 
   return (
@@ -259,7 +253,6 @@ function AddonCard({
         <div className="border-t border-gray-200 bg-gray-50/60 px-6 py-5">
           {addon.name === "Obsidian" && <ObsidianPanel />}
           {addon.name === "Web Search" && <TavilyPanel />}
-          {addon.name === "Hermes Agent" && <HermesPanel />}
           {addon.name === "Voice (Gemini Live)" && <VoiceLivePanel />}
         </div>
       )}
@@ -672,231 +665,6 @@ function TavilyPanel() {
   );
 }
 
-/**
- * NousResearch hermes-agent ships a separate web Dashboard that exposes
- * skills, sessions, model config, history. By convention it listens on
- * port 9119 of the same host as the gateway. Derive its URL from the
- * configured gateway URL by swapping the port — falls back to the host
- * with :9119 if the user's gateway URL has no port.
- */
-function dashboardUrl(gatewayUrl: string): string {
-  try {
-    const u = new URL(gatewayUrl);
-    u.port = "9119";
-    return u.toString();
-  } catch {
-    return "http://192.168.86.50:9119";
-  }
-}
-
-function HermesPanel() {
-  type Info = Awaited<ReturnType<typeof api.hermesInfo>>;
-  const [info, setInfo] = useState<Info | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-
-  // Local edits
-  const [apiUrl, setApiUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [defaultModel, setDefaultModel] = useState("");
-  const [showKey, setShowKey] = useState(false);
-
-  async function refresh() {
-    try {
-      const r = await api.hermesInfo();
-      setInfo(r);
-      setApiUrl(r.apiUrl ?? "");
-      setDefaultModel(r.defaultModel);
-      setApiKey("");
-    } catch (e) {
-      setErr((e as Error).message);
-    }
-  }
-
-  useEffect(() => {
-    refresh();
-  }, []);
-
-  async function save() {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.hermesUpdateConfig({
-        apiUrl: apiUrl.trim() || null,
-        defaultModel: defaultModel.trim(),
-        // Send apiKey only when the user typed a new value (empty = keep current).
-        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-      });
-      setSaved(true);
-      await refresh();
-      setTimeout(() => setSaved(false), 1800);
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function clearKey() {
-    if (!confirm("Remove the Hermes API key? The agent will stop working until you set a new one.")) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.hermesUpdateConfig({ apiKey: null });
-      await refresh();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!info) {
-    return <span className="font-mono text-[11px] text-gray-400">Loading…</span>;
-  }
-
-  return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 text-[12px] text-gray-600">
-        <span className="flex items-center gap-1.5">
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              info.gatewayOk ? "bg-emerald-500" : "bg-rose-500"
-            }`}
-          />
-          <span className="font-mono text-ink">
-            {info.gatewayOk ? "gateway online" : "gateway unreachable"}
-          </span>
-        </span>
-        <span>
-          <span className="text-gray-400">Gateway</span>{" "}
-          <code className="font-mono text-ink">{info.gatewayUrl}</code>
-        </span>
-        <span>
-          <span className="text-gray-400">Models</span>{" "}
-          <span className="font-mono text-ink">{info.availableModels.length}</span>
-        </span>
-        {info.lastError && !info.gatewayOk && (
-          <span className="text-rose-600">⚠ {info.lastError}</span>
-        )}
-      </div>
-
-      <Field
-        label="Gateway URL (override)"
-        hint="Where the Hermes Agent gateway runs. Leave empty for the default."
-      >
-        <input
-          type="url"
-          value={apiUrl}
-          onChange={(e) => setApiUrl(e.target.value)}
-          placeholder={info.gatewayUrl}
-          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-        />
-      </Field>
-
-      <Field
-        label="API key (Bearer)"
-        hint="API_SERVER_KEY from ~/.hermes/.env on the gateway host. Required — the gateway rejects unauth requests."
-      >
-        <div className="flex items-center gap-2">
-          <input
-            type={showKey ? "text" : "password"}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={info.hasApiKey ? "•••• (set — paste a new one to replace)" : "paste API key…"}
-            className="flex-1 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-          />
-          <button
-            type="button"
-            onClick={() => setShowKey((v) => !v)}
-            className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-600 hover:text-ink"
-          >
-            {showKey ? "Hide" : "Show"}
-          </button>
-          {info.hasApiKey && (
-            <button
-              type="button"
-              onClick={clearKey}
-              disabled={busy}
-              className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-600 hover:text-ink"
-            >
-              Revoke
-            </button>
-          )}
-        </div>
-      </Field>
-
-      <Field
-        label="Default model"
-        hint="The Hermes gateway exposes a single virtual model named hermes-agent. Leave default unless your gateway is configured otherwise."
-      >
-        <input
-          type="text"
-          value={defaultModel}
-          onChange={(e) => setDefaultModel(e.target.value)}
-          placeholder="hermes-agent"
-          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-        />
-      </Field>
-
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={save}
-          disabled={busy}
-          className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
-        >
-          {busy ? "Saving…" : saved ? "✓ Saved" : "Save"}
-        </button>
-        <a
-          href={dashboardUrl(info.gatewayUrl)}
-          target="_blank"
-          rel="noreferrer"
-          className="rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-ink hover:bg-gray-50"
-        >
-          Open Hermes Dashboard ↗
-        </a>
-      </div>
-
-      <details className="rounded-md border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-600">
-        <summary className="cursor-pointer font-medium text-ink">
-          How Hermes works in Companion
-        </summary>
-        <p className="mt-3 leading-relaxed">
-          Click the <strong>Hermes</strong> button in the sidebar to start a
-          dedicated conversation that talks <em>directly</em> to your Hermes
-          Agent gateway. Hermes brings its own toolbox — every skill installed
-          in <code className="rounded bg-gray-100 px-1 font-mono">~/.hermes/skills/</code>{" "}
-          on the gateway host (Notion, Obsidian, ComfyUI, GitHub, browser, …)
-          plus shell access via the terminal toolset.
-        </p>
-        <p className="mt-3 leading-relaxed">
-          The agent loop can take 30s–3min per turn — that's intrinsic to
-          NousResearch hermes-agent. Streaming keeps the connection alive.
-        </p>
-        <p className="mt-3 leading-relaxed">
-          Skill management, model defaults and session history live in the{" "}
-          <a
-            href={dashboardUrl(info.gatewayUrl)}
-            target="_blank"
-            rel="noreferrer"
-            className="text-cyan underline-offset-2 hover:underline"
-          >
-            Hermes Dashboard
-          </a>
-          . We don't duplicate it here.
-        </p>
-      </details>
-
-      {err && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 font-mono text-[11px] text-red-700">
-          {err}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function Field({
   label,

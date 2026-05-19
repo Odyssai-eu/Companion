@@ -211,10 +211,12 @@ export type ApiConversation = {
   userId: string;
   projectId: string | null;
   title: string;
-  /** 'chat' (text/multimodal), 'talk' (Voice Live), or 'hermes'
-   *  (direct Hermes Agent gateway conversation). */
+  /** 'chat' (text/multimodal) or 'talk' (Voice Live). The legacy 'hermes'
+   *  kind is accepted in the type only for backwards-compat with old rows;
+   *  the server normalises it to 'chat'. */
   kind: "chat" | "talk" | "hermes";
-  /** Optional repo binding (Hermes conversations). Path on the gateway host. */
+  /** Legacy field from the retired Hermes integration. Always null on
+   *  new conversations. */
   repoPath: string | null;
   model: string | null;
   pinned: boolean;
@@ -645,7 +647,7 @@ export const api = {
     title?: string;
     projectId?: string;
     model?: string;
-    kind?: "chat" | "talk" | "hermes";
+    kind?: "chat" | "talk";
     repoPath?: string;
     memoryEnabled?: boolean;
   }) =>
@@ -700,32 +702,7 @@ export const api = {
   listActiveInferences: () =>
     request<{ active: string[] }>("/api/conversations/active"),
 
-  // Hermes Bridge (auxiliary git ops over the bound repo) ─────────────
-  hermesBridgeHealth: () =>
-    request<{ ok: boolean; bin?: string }>("/api/hermes-bridge/health"),
-  hermesBridgeGitStatus: (repoPath: string) =>
-    request<{
-      branch: string;
-      upstream: string | null;
-      ahead: number;
-      behind: number;
-      staged: string[];
-      modified: string[];
-      untracked: string[];
-      deleted: string[];
-      dirty: boolean;
-    }>(
-      `/api/hermes-bridge/git/status?repoPath=${encodeURIComponent(repoPath)}`,
-    ),
-  hermesBridgeGitDiff: (
-    repoPath: string,
-    opts: { staged?: boolean; path?: string } = {},
-  ) => {
-    const qs = new URLSearchParams({ repoPath });
-    if (opts.staged) qs.set("staged", "true");
-    if (opts.path) qs.set("path", opts.path);
-    return request<{ diff: string }>(`/api/hermes-bridge/git/diff?${qs.toString()}`);
-  },
+  // Hermes Bridge retired 2026-05-19 — no client methods remain.
   moveConversationToProject: (id: string, projectId: string | null) =>
     request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
       method: "PATCH",
@@ -1021,30 +998,7 @@ export const api = {
   tavilyClearKey: () =>
     request<void>("/api/addons/tavily/key", { method: "DELETE" }),
 
-  // Hermes Agent add-on (native gateway, OpenAI-compatible)
-  hermesInfo: () =>
-    request<{
-      addonId: string;
-      enabled: boolean;
-      apiUrl: string | null;
-      gatewayUrl: string;
-      gatewayOk: boolean;
-      hasApiKey: boolean;
-      defaultModel: string;
-      availableModels: Array<{ id: string }>;
-      lastError: string | null;
-    }>("/api/addons/hermes/info"),
-  hermesUpdateConfig: (
-    body: Partial<{
-      apiUrl: string | null;
-      apiKey: string | null;
-      defaultModel: string;
-    }>,
-  ) =>
-    request<{ ok: true }>("/api/addons/hermes/config", {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    }),
+  // Hermes Agent add-on retired 2026-05-19.
 
   // Voice (Gemini Live) add-on
   voiceLiveInfo: () =>
@@ -1291,7 +1245,7 @@ export const api = {
         lastUsedAt: string | null;
         createdAt: string;
       }>
-    >("/api/hermes-bridge/tokens"),
+    >("/api/agent-tokens"),
   mintHermesToken: (body: {
     label?: string;
     ttlMs?: number | null;
@@ -1304,12 +1258,12 @@ export const api = {
       source: "hermes" | "cowork";
       expiresAt: string | null;
       createdAt: string;
-    }>("/api/hermes-bridge/tokens", {
+    }>("/api/agent-tokens", {
       method: "POST",
       body: JSON.stringify(body),
     }),
   revokeHermesToken: (id: string) =>
-    request<{ ok: true }>(`/api/hermes-bridge/tokens/${id}`, {
+    request<{ ok: true }>(`/api/agent-tokens/${id}`, {
       method: "DELETE",
     }),
 

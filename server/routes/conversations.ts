@@ -23,12 +23,12 @@ const createSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   projectId: z.string().uuid().optional(),
   model: z.string().max(200).optional(),
-  /** 'chat' (default), 'talk', or 'hermes' — chooses the layout +
-   *  routing path on send. */
+  /** 'chat' (default) or 'talk' — chooses the layout + routing path
+   *  on send. The legacy 'hermes' kind was retired 2026-05-19; the
+   *  schema enum keeps it only to tolerate stale clients (we coerce
+   *  to 'chat' below). */
   kind: z.enum(["chat", "talk", "hermes"]).optional(),
-  /** Optional repo path bound to this conversation. Only meaningful
-   *  for kind='hermes' but we don't enforce that here — useful to
-   *  let the user pick before flipping kind in the future. */
+  /** Legacy field from the Hermes era. Accepted but ignored. */
   repoPath: z.string().min(1).max(500).optional(),
   /** Explicit memory-toggle override. Without this, the conversation
    *  inherits `projects.memoryEnabled` when projectId is set, else
@@ -127,13 +127,10 @@ conversationsRoute.post(
     const memorySnapshot = memoryEnabled
       ? await getMemoryContext(userId, data.projectId ?? null)
       : "";
-    const kind = data.kind ?? "chat";
-    const defaultTitle =
-      kind === "talk"
-        ? "New talk"
-        : kind === "hermes"
-          ? "New Hermes"
-          : "New conversation";
+    // Coerce legacy kind='hermes' (and anything outside 'chat'/'talk')
+    // to plain 'chat' — Hermes integration retired 2026-05-19.
+    const kind = data.kind === "talk" ? "talk" : "chat";
+    const defaultTitle = kind === "talk" ? "New talk" : "New conversation";
     const [row] = await db
       .insert(conversations)
       .values({
@@ -142,7 +139,7 @@ conversationsRoute.post(
         projectId: data.projectId,
         model: data.model,
         kind,
-        repoPath: data.repoPath ?? null,
+        repoPath: null,
         memoryEnabled,
         memorySnapshot: memorySnapshot || null,
         memorySnapshotAt: memorySnapshot ? new Date() : null,
@@ -634,7 +631,6 @@ conversationsRoute.post(
       userSystemPrompt: opts.system_prompt,
       projectMemory: memoryBlock,
       globalMemory: null,
-      hermesRepoBinding: null,  // prewarm is never Hermes
     });
 
     const tz = user.timezone || "Europe/Brussels";

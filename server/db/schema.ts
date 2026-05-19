@@ -195,15 +195,17 @@ export const conversations = pgTable(
     // 'chat' = classic text/multimodal chat (default).
     // 'talk' = Voice Live conversation (no model picker, big-mic input,
     // transcripts persisted as messages).
-    // 'hermes' = direct conversation with the Hermes Agent gateway,
-    // bypassing LiteLLM (Hermes handles its own tool routing natively).
+    //
+    // (Legacy: 'hermes' kind existed before 2026-05-19. Migration 0037
+    // converts every 'hermes' row to 'chat'. The enum is widened here
+    // only to keep type compat with old rows the Drizzle reader might
+    // see during deploy; the chat route coerces 'hermes' to 'chat'.)
     kind: text("kind", { enum: ["chat", "talk", "hermes"] })
       .notNull()
       .default("chat"),
-    // Optional repo binding (kind='hermes' only). Free-text path on the
-    // gateway host. When set, the chat route prepends a "working
-    // directory" preamble to the system prompt so Hermes operates inside
-    // the bound repo (git ops, edits, builds, tests).
+    // Legacy column from the Hermes era. Kept nullable so old rows
+    // don't fail to load; new code never reads it. Drop in a later
+    // migration when we're confident no legacy data is referenced.
     repoPath: text("repo_path"),
     model: text("model"),
     pinned: boolean("pinned").notNull().default(false),

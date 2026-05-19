@@ -266,9 +266,6 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       .getConversation(conversationId)
       .then(({ conversation, messages: msgs, inference }) => {
         setConversation(conversation);
-        if (conversation.kind === "hermes") {
-          setModel("hermes-agent");
-        }
         if (conversation.projectId) {
           api
             .getProject(conversation.projectId)

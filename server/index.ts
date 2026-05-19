@@ -13,8 +13,9 @@ import { guestSessionLoader, requireUserOrGuest } from "./middleware/guest";
 import { hermesBearerLoader } from "./middleware/hermes-token";
 import { licenseGate } from "./middleware/license";
 import addonsRoute from "./routes/addons";
-import hermesAddonRoute from "./routes/addon-hermes";
-import hermesBridgeRoute from "./routes/hermes-bridge";
+// Hermes addon + hermes-bridge conversational routes retired 2026-05-19.
+// The agent-token lifecycle (mint/list/revoke) moved to ./routes/agent-tokens.
+import agentTokensRoute from "./routes/agent-tokens";
 import mcpRoute from "./routes/mcp";
 import voiceLiveAddonRoute from "./routes/addon-voice-live";
 import obsidianRoute, { obsidianBearerLoader } from "./routes/addon-obsidian";
@@ -101,7 +102,6 @@ app.use("/api/skills", licenseGate, requireUser);
 // so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
 app.use("/api/addons/*", licenseGate, requireUser);
-app.use("/api/hermes-bridge/*", licenseGate, hermesBearerLoader, requireUser);
 // MCP endpoint — Streamable HTTP, stateless. Auth is bearer-token only
 // (Cowork dispatch, Hermes Agent, third-party MCP clients hit this with
 // `Authorization: Bearer hms_…`). Cookie sessions are not expected here
@@ -125,6 +125,8 @@ app.use(
 // /api/guest/session is the public snapshot endpoint — gated inside the route.
 app.use("/api/guest/*", licenseGate, guestSessionLoader);
 app.use("/api/admin/*", licenseGate, requireUser);
+app.use("/api/agent-tokens", licenseGate, requireUser);
+app.use("/api/agent-tokens/*", licenseGate, requireUser);
 
 app.route("/api/conversations", conversationsRoute);
 app.route("/api/chat", chatRoute);
@@ -137,11 +139,9 @@ app.route("/api/profile", profileRoute);
 app.route("/api/files", filesRoute);
 app.route("/api/tts", ttsRoute);
 app.route("/api/addons", addonsRoute);
-app.route("/api/hermes-bridge", hermesBridgeRoute);
 app.route("/api/mcp", mcpRoute);
 app.route("/api/addons/obsidian", obsidianRoute);
 app.route("/api/addons/tavily", tavilyRoute);
-app.route("/api/addons/hermes", hermesAddonRoute);
 app.route("/api/addons/voice-live", voiceLiveAddonRoute);
 app.route("/api/models", modelsRoute);
 app.route("/api/inference", inferenceRoute);
@@ -155,6 +155,7 @@ app.get("/api/mcp-oauth/callback", handleOauthCallback);
 app.route("/api/skills", skillsRoute);
 app.route("/api/admin/users", adminUsersRoute);
 app.route("/api/admin/guest-tokens", adminGuestTokensRoute);
+app.route("/api/agent-tokens", agentTokensRoute);
 app.route("/api/guest", guestRoute);
 
 if (process.env.NODE_ENV === "production") {

@@ -426,10 +426,6 @@ function summarizeArgs(name: string, args: Record<string, unknown>): string {
   if (name === "web_fetch" && typeof args.url === "string") {
     return args.url;
   }
-  if (name === "hermes_agent" && typeof args.task === "string") {
-    const t = args.task.trim();
-    return t.length > 90 ? `"${t.slice(0, 90)}…"` : `"${t}"`;
-  }
   return Object.entries(args)
     .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
     .join(", ");

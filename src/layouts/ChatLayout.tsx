@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router";
 import InferencePanel from "~/components/chat/InferencePanel";
 import Input from "~/components/chat/Input";
 import Messages from "~/components/chat/Messages";
-import RepoBindingBar from "~/components/chat/RepoBindingBar";
+// RepoBindingBar (Hermes-only) retired 2026-05-19.
 import Sidebar from "~/components/chat/Sidebar";
 import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
 import { STYLE_PRESETS, useChat } from "~/hooks/useChat";
@@ -193,10 +193,6 @@ export default function ChatLayout() {
           onToggleMemory={chat.toggleMemoryEnabled}
           agentMode={chat.conversation?.agentMode ?? false}
           onToggleAgentMode={chat.toggleAgentMode}
-          // Hermes conversations bypass our memory wiki injection — the
-          // gateway runs its own retrieval skills, so the toggle is a
-          // no-op here and would be misleading.
-          hideMemoryControls={chat.conversation?.kind === "hermes"}
         />
         {panelOpen && !isMobile && (
           <InferencePanel
@@ -231,15 +227,6 @@ export default function ChatLayout() {
             </div>
           </div>
         )}
-        {chat.conversation?.kind === "hermes" && chat.conversation?.id && (
-          <RepoBindingBar
-            conversationId={chat.conversation.id}
-            repoPath={chat.conversation.repoPath ?? null}
-            onChange={() => {
-              void chat.reload();
-            }}
-          />
-        )}
         <Messages
           messages={chat.messages}
           error={chat.error}
@@ -251,23 +238,6 @@ export default function ChatLayout() {
           <TalkInput
             onOpenVoiceLive={() => setVoiceLiveOpen(true)}
             voiceLiveAvailable={voiceLiveAvailable}
-          />
-        ) : chat.conversation?.kind === "hermes" ? (
-          <Input
-            onSend={chat.sendMessage}
-            onCancel={chat.cancel}
-            sending={chat.sending}
-            disabled={false}
-            placeholder="Ask Hermes…"
-            modelHasVision={false}
-            model="hermes-agent"
-            onModelChange={() => undefined}
-            models={[]}
-            // Hermes runs its own model + tools on the gateway; the picker
-            // is meaningless here.
-            hideModelPicker
-            voiceLiveAvailable={false}
-            priorTokens={priorTokens}
           />
         ) : (
           <Input

@@ -4,15 +4,14 @@
  * Three categories of tools feed into the chat route:
  *   - Always-on: fs_list / fs_read / fs_write / fs_edit (workspace files)
  *   - "Web Search" addon (Tavily) → web_search, web_fetch
- *   - "Hermes Agent" addon (renamed Cluster Operations) → cluster_action
+ *   - MCP servers (per-user, dynamic)
  *
  * Workspace fs tools are not gated by an addon: they're a core capability
  * of the agentic UX. Tool calls always operate on the user's own scope.
  *
- * Hermes Agent talks to the native Hermes Gateway (NousResearch hermes-agent
- * v0.12+) on `:8642` — OpenAI-compatible chat completions with mandatory
- * Bearer auth. Repositioned in v0.2 from generic agent delegate to
- * cluster-specific operations (RAG / ComfyUI / Obsidian vault / rsync).
+ * The Hermes Agent integration (cluster_action / hermes_agent tool) was
+ * retired 2026-05-19. Stubs remain in the executor to gracefully reject
+ * any in-flight tool calls from old conversations.
  */
 
 import { and, eq } from "drizzle-orm";
@@ -27,7 +26,6 @@ import {
 import { fsEdit, fsList, fsRead, fsWrite, WorkspaceError } from "./workspace";
 
 const ADDON_NAME = "Web Search";
-const HERMES_ADDON_NAME = "Hermes Agent";
 
 // ── OpenAI-compat tool schemas ────────────────────────────────────────────
 
@@ -80,10 +78,9 @@ const WEB_SEARCH_TOOLS = [
   },
 ];
 
-// cluster_action is no longer exposed as a chat-model tool. Hermes is
-// reachable only via dedicated kind='hermes' conversations, which talk
-// directly to the gateway. The hermesRun() dispatcher below is preserved
-// to handle any in-flight legacy conversation that emits the tool name.
+// cluster_action / hermes_agent tools are retired (2026-05-19). The
+// executor still recognises the names so legacy conversations get a
+// clean error rather than a crash.
 
 // ── rag_search (always on when RAG_QDRANT_URL is set) ────────────────────
 
@@ -97,8 +94,7 @@ const RAG_TOOLS = [
         "bge-m3 embeddings). Use this for questions about anything the user " +
         "has previously written, ingested or curated — papers, notes, project " +
         "docs, web crawls. Returns top-K passages with their source path and " +
-        "similarity score. Faster than cluster_action for the same job " +
-        "(direct Qdrant query, no Hermes loop).",
+        "similarity score.",
       parameters: {
         type: "object",
         properties: {
@@ -211,18 +207,12 @@ export const TOOL_SCHEMAS = WEB_SEARCH_TOOLS;  // legacy export for places that 
  *  - fs_* are always on (workspace files, scoped per user).
  *  - rag_search is always on when RAG_QDRANT_URL is reachable (env-gated).
  *  - web_* require the Web Search addon (Tavily key).
- *  - cluster_action requires the Hermes Agent addon (gateway + key).
+ *  - MCP servers are per-user (dynamic, see collectMcpTools).
  */
 export async function toolsForUser(userId: string): Promise<unknown[]> {
   const out: unknown[] = [...FS_TOOLS];
   if (isRagConfigured()) out.push(...RAG_TOOLS);
   if (await isWebSearchEnabled(userId)) out.push(...WEB_SEARCH_TOOLS);
-  // cluster_action (Hermes) is intentionally NOT exposed to regular chat
-  // models anymore. Users who want Hermes pick a 'New Hermes' conversation
-  // from the sidebar — that routes directly to the Hermes gateway, which
-  // runs its own native tool layer. This avoids the double-orchestration
-  // (chat model deciding when to call cluster_action vs. talking to
-  // Hermes directly) which empirically gave mediocre results.
 
   // MCP tools — third-party servers the user registered. Read the cache
   // and refresh entries older than the TTL in the background; the cached
@@ -415,129 +405,20 @@ export async function isWebSearchEnabled(userId: string): Promise<boolean> {
   return Boolean(k);
 }
 
-// ── Hermes add-on lookup ──────────────────────────────────────────────────
+// ── Hermes add-on lookup (RETIRED 2026-05-19) ─────────────────────────────
+// The Hermes Agent integration was disconnected from Companion on
+// 2026-05-19. The gateway on .50 may still be running as a standalone
+// CLI, but we no longer route user conversations to it (cf. session
+// notes — "ketchup on chocolate cake"). The `cluster_action` /
+// `hermes_agent` tool names are kept as no-op stubs so old in-flight
+// conversations don't blow up; they return a polite error.
 
-type HermesConfig = {
-  apiUrl?: string;
-  apiKey?: string;
-  defaultModel?: string;
-};
-
-const HERMES_DEFAULT_GATEWAY = "http://192.168.86.50:8642";
-
-/**
- * Resolve the Hermes Agent gateway target for a user. Used both by the
- * `cluster_action` tool inside regular chats AND by the chat route when
- * a conversation has kind='hermes' and we route directly to the Hermes
- * gateway instead of LiteLLM.
- *
- * Returns null when the addon is missing/disabled. The caller is
- * responsible for surfacing a useful error.
- */
-export async function resolveHermesTarget(userId: string): Promise<{
-  baseUrl: string;
-  apiKey: string | null;
-  model: string;
-} | null> {
-  const cfg = await getHermesConfig(userId);
-  if (!cfg) return null;
-  const baseUrl = (
-    cfg.apiUrl ?? process.env.HERMES_GATEWAY_URL ?? HERMES_DEFAULT_GATEWAY
-  ).replace(/\/+$/, "");
+async function hermesRetired(): Promise<ToolResult> {
   return {
-    baseUrl,
-    apiKey: cfg.apiKey ?? null,
-    model: cfg.defaultModel ?? "hermes-agent",
+    ok: false,
+    error:
+      "Hermes integration retired 2026-05-19. Use the Hermes CLI on the .50 host directly.",
   };
-}
-
-async function getHermesConfig(
-  userId: string,
-): Promise<HermesConfig | null> {
-  const [row] = await db
-    .select({ enabled: addons.enabled, config: addons.config })
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, HERMES_ADDON_NAME)))
-    .limit(1);
-  if (!row || !row.enabled) return null;
-  return (row.config ?? {}) as HermesConfig;
-}
-
-export async function isHermesEnabled(userId: string): Promise<boolean> {
-  const cfg = await getHermesConfig(userId);
-  // Need both enabled AND an api key — the gateway always rejects unauth.
-  return cfg !== null && Boolean(cfg.apiKey);
-}
-
-/**
- * Call the Hermes Gateway as an OpenAI-compatible chat completion.
- * Hermes itself decides which internal tool to use and returns the final
- * assistant message text. We surface that text as the tool result so the
- * caller LLM can integrate it into its reply.
- */
-async function hermesRun(
-  userId: string,
-  args: ToolArgs,
-): Promise<ToolResult> {
-  const cfg = await getHermesConfig(userId);
-  if (!cfg) {
-    return { ok: false, error: "Hermes Agent add-on is not enabled." };
-  }
-  if (!cfg.apiKey) {
-    return {
-      ok: false,
-      error: "Hermes Agent: missing API key. Configure it in Settings → Add-ons → Hermes Agent.",
-    };
-  }
-  const url = (cfg.apiUrl ?? process.env.HERMES_GATEWAY_URL ?? HERMES_DEFAULT_GATEWAY).replace(
-    /\/+$/,
-    "",
-  );
-  const task = String(args.task ?? "");
-  if (!task) return { ok: false, error: "missing 'task' argument" };
-
-  const body = {
-    model: cfg.defaultModel ?? "hermes-agent",
-    messages: [{ role: "user", content: task }],
-    stream: false,
-  };
-
-  try {
-    const r = await fetch(`${url}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${cfg.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      // Hermes can chain many internal tool calls; allow generous slack.
-      // Hermes can chain many internal tool calls; 5 min was too tight on
-      // long Qwen 397B loops. 15 min is more realistic for vault reads /
-      // RAG queries / deep agent runs.
-      signal: AbortSignal.timeout(900_000),
-    });
-    if (!r.ok) {
-      const text = await r.text().catch(() => "");
-      return {
-        ok: false,
-        error: `hermes ${r.status}: ${text.slice(0, 200)}`,
-      };
-    }
-    const data = (await r.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
-    const content = data.choices?.[0]?.message?.content ?? "";
-    return {
-      ok: true,
-      data: {
-        content,
-        usage: data.usage,
-      },
-    };
-  } catch (e) {
-    return { ok: false, error: (e as Error).message };
-  }
 }
 
 // ── Executor ──────────────────────────────────────────────────────────────
@@ -737,10 +618,11 @@ export async function executeTool(
   if (name === "web_search" || name === "web_fetch") {
     return executeWebTool(name, args, userId);
   }
-  // `hermes_agent` kept as alias for in-flight conversations created
-  // before the rename to `cluster_action` (v0.2).
+  // `cluster_action` / `hermes_agent` were the Hermes-backed tools;
+  // retired 2026-05-19. Return a polite error if a stale tool schema
+  // still calls them.
   if (name === "cluster_action" || name === "hermes_agent") {
-    return hermesRun(userId, args);
+    return hermesRetired();
   }
   if (name.startsWith("mcp_")) {
     return executeMcpTool(name, args, userId);

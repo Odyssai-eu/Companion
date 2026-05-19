@@ -133,15 +133,19 @@ export function tagUserMessages<M extends TaggableMessage>(
  *   1. userSystemPrompt   — the request body's system_prompt (highest precedence)
  *   2. projectMemory      — per-project corpus (dedicated project wiki)
  *   3. globalMemory       — user-level Karpathy wiki
- *   4. hermesRepoBinding  — Hermes-only working directory note
  *
  * Empty strings are skipped silently. All inputs are trimmed; an input
  * that becomes empty after trim is treated as absent.
+ *
+ * The `hermesRepoBinding` field is accepted for backwards-compat with
+ * call sites that pass `null`; it is otherwise ignored. The Hermes
+ * integration was retired 2026-05-19 — see CHANGELOG.
  */
 export function buildSystemPrompt(opts: {
   userSystemPrompt?: string | null;
   projectMemory?: string | null;
   globalMemory?: string | null;
+  /** @deprecated retained for call-site compat; ignored. */
   hermesRepoBinding?: string | null;
 }): string {
   const segments: string[] = [];
@@ -162,21 +166,5 @@ export function buildSystemPrompt(opts: {
     .filter((s) => s.length > 0)
     .join("\n\n---\n\n");
   if (memCombined.length > 0) segments.push(memCombined);
-  push(opts.hermesRepoBinding);
   return segments.join("\n\n---\n\n");
-}
-
-/**
- * Convenience: build the Hermes working-directory binding string from a
- * repo path. Returns empty string when the path is absent. Pure.
- */
-export function buildHermesRepoBinding(repoPath: string | null): string {
-  if (!repoPath || !repoPath.trim()) return "";
-  return (
-    `# Working directory\n\nThis conversation is bound to the repo at: ` +
-    `\`${repoPath}\`\n\n` +
-    `Operate inside that directory unless explicitly told otherwise. ` +
-    `Use \`cd ${repoPath}\` at the start of any bash command, or pass it ` +
-    `as cwd to your tools.`
-  );
 }

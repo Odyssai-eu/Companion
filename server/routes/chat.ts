@@ -39,7 +39,6 @@ import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
 import { getProjectMemoryContext } from "../lib/project-memory";
 import {
   buildSystemPrompt,
-  buildHermesRepoBinding,
   tagUserMessages,
 } from "../lib/prompt-builder";
 import type { GuestTokenContext } from "../lib/guest-token";
@@ -53,7 +52,6 @@ import {
 } from "../lib/inference-state";
 import {
   executeTool,
-  resolveHermesTarget,
   toolsForUser,
   type ToolResult,
 } from "../lib/tools";
@@ -176,9 +174,6 @@ chatRoute.post("/completions", async (c) => {
   //   legacy   → LiteLLM only. If litellm_disabled, we 503 — the user
   //              turned off the only rail and didn't pair an engine.
   //
-  // For kind='hermes' conversations we swap to the Hermes Agent gateway
-  // (set after the conv lookup below) and skip the tool layer — Hermes
-  // handles its own tool routing natively.
   const effectiveMode: "gateway" | "hybrid" | "legacy" =
     userRow.litellmDisabled && userRow.engineUrl
       ? "gateway"
@@ -212,7 +207,6 @@ chatRoute.post("/completions", async (c) => {
           ).replace(/\/+$/, ""),
           apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
         };
-  let hermesModelOverride: string | null = null;
 
   // ── 3. Resolve project + memory snapshot (frozen per-conversation) ────
   // The memory wiki is snapshot at conversation creation (or on explicit
@@ -224,8 +218,7 @@ chatRoute.post("/completions", async (c) => {
   // turn 2 onwards.
   let projectId: string | null = null;
   let memoryBlock = "";
-  let convKind: "chat" | "talk" | "hermes" = "chat";
-  let convRepoPath: string | null = null;
+  let convKind: "chat" | "talk" = "chat";
   // Project-level memory toggles. When the conv belongs to a project,
   // we pull these from `projects` and use them to gate global-wiki
   // injection AND the inactivity-compile registration.
@@ -246,15 +239,17 @@ chatRoute.post("/completions", async (c) => {
           memoryEnabled: conversations.memoryEnabled,
           agentMode: conversations.agentMode,
           kind: conversations.kind,
-          repoPath: conversations.repoPath,
         })
         .from(conversations)
         .where(eq(conversations.id, body.conversationId))
         .limit(1);
       if (conv && conv.userId === userId) {
         projectId = conv.projectId;
-        convKind = conv.kind;
-        convRepoPath = conv.repoPath;
+        // Defensive: legacy rows with kind='hermes' are treated as
+        // regular 'chat' now that the Hermes integration is retired.
+        // Migration 0037 normalises the column, but we coerce here in
+        // case a stale row slips through.
+        convKind = conv.kind === "talk" ? "talk" : "chat";
         convMemoryEnabled = conv.memoryEnabled !== false;
         convAgentMode = conv.agentMode === true;
 
@@ -334,39 +329,12 @@ chatRoute.post("/completions", async (c) => {
     startInference(body.conversationId, userId);
   }
 
-  // ── 3b. Hermes routing — kind='hermes' conversations talk DIRECTLY to
-  // the Hermes Agent gateway. The user wants Hermes itself, with all its
-  // skills (obsidian-read, qdrant-search, steel-browser, …) — not a fast
-  // LLM in front of it. Hermes is slow (30s-3min/turn) by design; that's
-  // the cost of an autonomous agent loop. Streaming keeps the SSE pipe
-  // alive while the loop runs. Memory wiki is suppressed because Hermes
-  // has its own retrieval skills that cover the same ground on demand.
-  if (convKind === "hermes") {
-    memoryBlock = "";
-    const hermes = await resolveHermesTarget(userId);
-    if (!hermes) {
-      return c.json(
-        {
-          error: "hermes_addon_disabled",
-          detail:
-            "Enable Settings → Add-ons → Hermes Agent and set an API key to use Hermes conversations.",
-        },
-        400,
-      );
-    }
-    if (!hermes.apiKey) {
-      return c.json(
-        {
-          error: "hermes_missing_api_key",
-          detail:
-            "Hermes Agent gateway requires an API key. Configure it in Settings → Add-ons → Hermes Agent.",
-        },
-        400,
-      );
-    }
-    target = { baseUrl: hermes.baseUrl, apiKey: hermes.apiKey };
-    hermesModelOverride = hermes.model;
-  }
+  // Hermes integration retired 2026-05-19. kind='hermes' rows that
+  // remain in the DB (migration 0037 converts them to 'chat' but we
+  // stay defensive) are treated as regular chat and routed through
+  // the normal gateway/LiteLLM chain. The Hermes Agent CLI on the
+  // .50 host remains a standalone tool — Companion just doesn't pipe
+  // user conversations to it anymore. (Ketchup on chocolate cake.)
 
   // ── 4. Inject time tags into user messages ────────────────────────────
   //
@@ -409,8 +377,6 @@ chatRoute.post("/completions", async (c) => {
     // stays empty in this code path.
     projectMemory: memoryBlock,
     globalMemory: null,
-    hermesRepoBinding:
-      convKind === "hermes" ? buildHermesRepoBinding(convRepoPath) : null,
   });
 
   const withSystem =
@@ -423,9 +389,7 @@ chatRoute.post("/completions", async (c) => {
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)
   const baseBody: Record<string, unknown> = {
-    // Hermes ignores the model picker — its gateway exposes a single
-    // virtual model. For kind='hermes' we hard-override here.
-    model: hermesModelOverride ?? body.model,
+    model: body.model,
     stream: true,
   };
   for (const k of [
@@ -495,17 +459,11 @@ chatRoute.post("/completions", async (c) => {
   //
   // exo's MLX runner currently aborts (SIGABRT) when handed a `tools:`
   // param even for tool-trained models, so we whitelist by model name.
-  // Tool gating:
-  //  - Regular chats (kind='chat') get the standard toolbox: fs_*,
-  //    rag_search (always-on if RAG configured), web_search (if Tavily).
-  //  - Hermes chats (kind='hermes') do NOT use our tool layer — Hermes
-  //    runs its own native skills inside the gateway. We just pipe the
-  //    messages through and let Hermes do its thing.
-  // Resolve tools whenever the model supports the OpenAI tools field
-  // and the conv isn't a Hermes one (Hermes runs its own native tool
-  // layer). toolsForUser() reads from every source (fs_*, RAG, web
-  // search, MCP servers, …) and returns an empty array when nothing
-  // is enabled — so the call is cheap when there's nothing to expose.
+  // Tool gating: resolve tools whenever the model supports the OpenAI
+  // tools field. toolsForUser() reads from every source (fs_*, RAG,
+  // web search, MCP servers, …) and returns an empty array when
+  // nothing is enabled — so the call is cheap when there's nothing
+  // to expose.
   // Pull the model's Odyssai capability snapshot once — we need
   // supports_tools (gating tool resolution) AND backend/pool (gating
   // the stream vs. non-stream upstream decision below).
@@ -520,14 +478,9 @@ chatRoute.post("/completions", async (c) => {
   // Tools are gated on per-conv `agentMode`. Default is OFF — a normal
   // chat does NOT inject any tool defs, so the prompt stays ~250 tokens
   // (vs 1000+ with FS/RAG/Web schemas) and the engine can stream freely
-  // (no `shouldUseNonStream` forcing on jaccl). Hermes convs always run
-  // tools natively (their own dispatcher), so they bypass this gate.
+  // (no `shouldUseNonStream` forcing on jaccl).
   const tools =
-    convKind === "hermes"
-      ? []
-      : supportsTools && convAgentMode
-        ? await toolsForUser(userId)
-        : [];
+    supportsTools && convAgentMode ? await toolsForUser(userId) : [];
   const toolsEnabled = tools.length > 0;
 
   // Probe routing — gateway mode only. If this request looks like a
@@ -537,12 +490,10 @@ chatRoute.post("/completions", async (c) => {
   // tokens of output. ~4× faster, frees the heavy cluster for real
   // responses. See BRIEF-companion-prefix-cache-and-probes.md.
   //
-  // Skipped for kind='hermes' (Hermes has its own model) and for
-  // hybrid/legacy modes (the `probe` alias is published by Odysseus
-  // only — LiteLLM won't know it).
+  // Skipped for hybrid/legacy modes (the `probe` alias is published
+  // by Odysseus only — LiteLLM won't know it).
   if (
     effectiveMode === "gateway" &&
-    convKind !== "hermes" &&
     !toolsEnabled &&
     typeof baseBody.max_tokens === "number" &&
     baseBody.max_tokens <= 20 &&
@@ -991,7 +942,7 @@ chatRoute.post("/completions", async (c) => {
       // compile after MEMORY_INACTIVITY_COMPILE_MS (default 10 min) of
       // quiet, OR via the time-scheduled slots (06/12:30/19).
       // Suppressed when:
-      //  - the conv kind isn't 'chat' (Hermes/Talk handle their own context)
+      //  - the conv kind isn't 'chat' (Talk handles its own context)
       //  - the conv's memoryEnabled is off
       //  - the conv is a guest session (don't pollute the owner's wiki)
       //  - the project has globalMemoryReadOnly = true (explicit opt-out)
@@ -1513,24 +1464,7 @@ function summarizeResult(
   }
   const data = r.data as
     | { results?: Array<{ title: string; url: string }>; query?: string }
-    | { url?: string; content?: string }
-    | {
-        content?: string;
-        usage?: {
-          prompt_tokens?: number;
-          completion_tokens?: number;
-        };
-      };
-  // Hermes Agent (native gateway) — chat completion-style result.
-  if ("content" in data && typeof data.content === "string" && "usage" in data) {
-    const u = data.usage ?? {};
-    const tot = (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0);
-    const len = data.content.length;
-    return {
-      ok: true,
-      summary: `${len.toLocaleString()} chars · ${tot.toLocaleString()} tok`,
-    };
-  }
+    | { url?: string; content?: string };
   // Tavily search
   if ("results" in data && Array.isArray(data.results)) {
     return {
