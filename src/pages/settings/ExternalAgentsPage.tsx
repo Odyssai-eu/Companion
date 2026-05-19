@@ -399,12 +399,27 @@ const TOOL_CATEGORIES: ToolCategory[] = [
       {
         name: "companion_list_skills",
         description:
-          "List saved skills (named system prompts) — name, description, tags, body preview.",
+          "List the user's agent skills (markdown instruction packages the chat model loads on demand). Returns name, description, tags, source, body preview.",
       },
       {
         name: "companion_get_skill",
         description:
-          "Fetch a skill's full body by name (case-insensitive). Use as a prefix to the agent's own system prompt.",
+          "Fetch an agent skill's full body by name (case-insensitive). Treat the body as task-specific instructions, not as a system-prompt replacement.",
+      },
+      {
+        name: "companion_create_skill",
+        description:
+          "Persist a new agent skill. Fails on name collision — use companion_update_skill instead.",
+      },
+      {
+        name: "companion_update_skill",
+        description:
+          "Edit an existing skill by name. Pass only the fields to change (body, description, tags).",
+      },
+      {
+        name: "companion_delete_skill",
+        description:
+          "Hard-delete an agent skill by name. No undo.",
       },
     ],
   },
@@ -590,7 +605,7 @@ Transport:      Streamable HTTP`,
     },
     curl: {
       label: "curl (smoke test)",
-      hint: "Quick check that the token works. Should return a JSON-RPC tools/list response with 15 entries.",
+      hint: "Quick check that the token works. Should return a JSON-RPC tools/list response with the current tool catalog.",
       lang: "bash",
       code: `curl -s -X POST '${url}' \\
   -H 'Authorization: Bearer ${placeholder}' \\

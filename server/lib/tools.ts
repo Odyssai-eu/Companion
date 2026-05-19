@@ -14,9 +14,9 @@
  * any in-flight tool calls from old conversations.
  */
 
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "../db/index";
-import { addons, mcpServers } from "../db/schema";
+import { addons, agentSkills, mcpServers } from "../db/schema";
 import {
   callTool as callMcpTool,
   fetchTools as fetchMcpTools,
@@ -201,6 +201,118 @@ const FS_TOOLS = [
   },
 ];
 
+// Agent skills — markdown instruction packages the model loads on
+// demand. Distinct from `prompt_skills` (saved system-prompt presets
+// the user picks from the chat panel dropdown). The chat model
+// curates these itself: when the user says "save this as a skill",
+// "use the X skill", "list my skills", etc., the model invokes the
+// relevant tool below. Sophie said: "le skill c'est D … et il doit
+// pouvoir créér lui meme un skill si je le demande."
+const SKILL_TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "skill_list",
+      description:
+        "List the user's saved agent skills. Returns an array of " +
+        "{name, description, tags, source, bodyLength}. Use this to " +
+        "discover what skills are already available before creating " +
+        "a new one (avoid duplicates).",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "skill_get",
+      description:
+        "Fetch the full body of a saved agent skill by name (case-" +
+        "insensitive). Call this when the user asks you to 'use the X " +
+        "skill', and apply the body as part of your reasoning for the " +
+        "current turn (don't replace your entire system prompt — treat " +
+        "the body as instructions for THIS task).",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Skill name to load." },
+        },
+        required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "skill_create",
+      description:
+        "Persist a new agent skill. Call this when the user explicitly " +
+        "asks you to save a skill ('save this as a skill named X', " +
+        "'crée une skill X qui …'). The body is the markdown the " +
+        "future you will load when invoked. The description should " +
+        "explain WHEN to use the skill (the trigger), not what it does " +
+        "internally. Fails on name collision — use skill_update " +
+        "instead in that case.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Short identifier, e.g. 'Code review strict'.",
+          },
+          body: {
+            type: "string",
+            description: "Markdown instructions the skill carries.",
+          },
+          description: {
+            type: "string",
+            description: "When to invoke this skill (the trigger).",
+          },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description: "Free-form categories.",
+          },
+        },
+        required: ["name", "body"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "skill_update",
+      description:
+        "Edit an existing skill by name. Provide only the fields you " +
+        "want to change. Use this instead of skill_create when the " +
+        "user refines an existing skill or fixes a typo.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          body: { type: "string" },
+          description: { type: "string" },
+          tags: { type: "array", items: { type: "string" } },
+        },
+        required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "skill_delete",
+      description:
+        "Remove a skill by name. Use only when the user explicitly " +
+        "asks ('drop the X skill', 'supprime la skill Y').",
+      parameters: {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      },
+    },
+  },
+];
+
 export const TOOL_SCHEMAS = WEB_SEARCH_TOOLS;  // legacy export for places that still reference it
 
 /** All tools exposed to the model.
@@ -210,7 +322,7 @@ export const TOOL_SCHEMAS = WEB_SEARCH_TOOLS;  // legacy export for places that 
  *  - MCP servers are per-user (dynamic, see collectMcpTools).
  */
 export async function toolsForUser(userId: string): Promise<unknown[]> {
-  const out: unknown[] = [...FS_TOOLS];
+  const out: unknown[] = [...FS_TOOLS, ...SKILL_TOOLS];
   if (isRagConfigured()) out.push(...RAG_TOOLS);
   if (await isWebSearchEnabled(userId)) out.push(...WEB_SEARCH_TOOLS);
 
@@ -618,6 +730,9 @@ export async function executeTool(
   if (name === "web_search" || name === "web_fetch") {
     return executeWebTool(name, args, userId);
   }
+  if (name.startsWith("skill_")) {
+    return executeSkillTool(name, args, userId);
+  }
   // `cluster_action` / `hermes_agent` were the Hermes-backed tools;
   // retired 2026-05-19. Return a polite error if a stale tool schema
   // still calls them.
@@ -667,4 +782,180 @@ async function executeMcpTool(
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(n)));
+}
+
+// ── Agent skill tools ────────────────────────────────────────────────
+// Dispatch the skill_* family. The chat model calls these to manage
+// the agent_skills table on the user's behalf. Lookup is by name,
+// case-insensitive (matches the unique index on lower(name)).
+
+async function executeSkillTool(
+  name: string,
+  args: ToolArgs,
+  userId: string,
+): Promise<ToolResult> {
+  if (name === "skill_list") return skillList(userId);
+  if (name === "skill_get") return skillGet(userId, String(args.name ?? ""));
+  if (name === "skill_create") {
+    return skillCreate(userId, {
+      name: String(args.name ?? ""),
+      body: String(args.body ?? ""),
+      description: args.description
+        ? String(args.description)
+        : null,
+      tags: Array.isArray(args.tags) ? (args.tags as string[]) : [],
+    });
+  }
+  if (name === "skill_update") {
+    return skillUpdate(userId, {
+      name: String(args.name ?? ""),
+      body: typeof args.body === "string" ? args.body : undefined,
+      description:
+        typeof args.description === "string" ? args.description : undefined,
+      tags: Array.isArray(args.tags) ? (args.tags as string[]) : undefined,
+    });
+  }
+  if (name === "skill_delete") {
+    return skillDelete(userId, String(args.name ?? ""));
+  }
+  return { ok: false, error: `unknown skill tool: ${name}` };
+}
+
+async function skillList(userId: string): Promise<ToolResult> {
+  const rows = await db
+    .select({
+      name: agentSkills.name,
+      description: agentSkills.description,
+      tags: agentSkills.tags,
+      source: agentSkills.source,
+      body: agentSkills.body,
+      updatedAt: agentSkills.updatedAt,
+    })
+    .from(agentSkills)
+    .where(eq(agentSkills.userId, userId))
+    .orderBy(asc(agentSkills.name));
+  const summary = rows.map((r) => ({
+    name: r.name,
+    description: r.description,
+    tags: r.tags,
+    source: r.source,
+    bodyLength: r.body.length,
+    updatedAt: r.updatedAt,
+  }));
+  return { ok: true, data: summary };
+}
+
+async function skillGet(userId: string, name: string): Promise<ToolResult> {
+  if (!name.trim()) return { ok: false, error: "missing 'name' argument" };
+  const [row] = await db
+    .select()
+    .from(agentSkills)
+    .where(
+      and(
+        eq(agentSkills.userId, userId),
+        sql`lower(${agentSkills.name}) = lower(${name})`,
+      ),
+    )
+    .limit(1);
+  if (!row) return { ok: false, error: `skill not found: ${name}` };
+  return {
+    ok: true,
+    data: {
+      name: row.name,
+      description: row.description,
+      tags: row.tags,
+      source: row.source,
+      body: row.body,
+      updatedAt: row.updatedAt,
+    },
+  };
+}
+
+async function skillCreate(
+  userId: string,
+  input: {
+    name: string;
+    body: string;
+    description: string | null;
+    tags: string[];
+  },
+): Promise<ToolResult> {
+  if (!input.name.trim() || !input.body.trim()) {
+    return { ok: false, error: "name and body are both required" };
+  }
+  try {
+    const [row] = await db
+      .insert(agentSkills)
+      .values({
+        userId,
+        name: input.name.trim(),
+        body: input.body,
+        description: input.description?.trim() || null,
+        tags: input.tags,
+        source: "agent",
+      })
+      .returning({ id: agentSkills.id, name: agentSkills.name });
+    return {
+      ok: true,
+      data: { ok: true, id: row.id, name: row.name, source: "agent" },
+    };
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/unique|duplicate/i.test(msg)) {
+      return {
+        ok: false,
+        error: `a skill named "${input.name}" already exists — use skill_update to refine it`,
+      };
+    }
+    return { ok: false, error: msg };
+  }
+}
+
+async function skillUpdate(
+  userId: string,
+  input: {
+    name: string;
+    body?: string;
+    description?: string;
+    tags?: string[];
+  },
+): Promise<ToolResult> {
+  if (!input.name.trim()) {
+    return { ok: false, error: "missing 'name' argument" };
+  }
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (input.body !== undefined) patch.body = input.body;
+  if (input.description !== undefined)
+    patch.description = input.description.trim() || null;
+  if (input.tags !== undefined) patch.tags = input.tags;
+  if (Object.keys(patch).length === 1) {
+    return { ok: false, error: "nothing to update — pass at least one of body / description / tags" };
+  }
+  const [row] = await db
+    .update(agentSkills)
+    .set(patch)
+    .where(
+      and(
+        eq(agentSkills.userId, userId),
+        sql`lower(${agentSkills.name}) = lower(${input.name})`,
+      ),
+    )
+    .returning({ id: agentSkills.id, name: agentSkills.name });
+  if (!row) return { ok: false, error: `skill not found: ${input.name}` };
+  return { ok: true, data: { ok: true, id: row.id, name: row.name } };
+}
+
+async function skillDelete(userId: string, name: string): Promise<ToolResult> {
+  if (!name.trim()) return { ok: false, error: "missing 'name' argument" };
+  const r = await db
+    .delete(agentSkills)
+    .where(
+      and(
+        eq(agentSkills.userId, userId),
+        sql`lower(${agentSkills.name}) = lower(${name})`,
+      ),
+    )
+    .returning({ id: agentSkills.id });
+  if (r.length === 0) return { ok: false, error: `skill not found: ${name}` };
+  return { ok: true, data: { ok: true, deleted: name } };
 }

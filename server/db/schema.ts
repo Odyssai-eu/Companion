@@ -758,6 +758,39 @@ export const promptSkills = pgTable(
 export type PromptSkillRow = typeof promptSkills.$inferSelect;
 export type NewPromptSkillRow = typeof promptSkills.$inferInsert;
 
+// Agent skills — markdown instruction packages the chat model loads on
+// demand. Distinct from prompt_skills (which the user picks via the
+// chat panel dropdown). Created / read / updated / deleted by the chat
+// model itself via the `skill_*` built-in tools and the corresponding
+// MCP gateway tools. See 0038_agent_skills.sql for the rationale.
+export const agentSkills = pgTable(
+  "agent_skills",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    body: text("body").notNull(),
+    tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
+    /** 'user' | 'agent' | 'imported' — who/what produced this row. */
+    source: text("source").notNull().default("agent"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userIdx: index("agent_skills_user_id_idx").on(t.userId),
+  }),
+);
+
+export type AgentSkillRow = typeof agentSkills.$inferSelect;
+export type NewAgentSkillRow = typeof agentSkills.$inferInsert;
+
 // Hermes tokens — bearer credentials used by the Hermes Agent and Cowork
 // dispatch (via the thecompai-mcp MCP server) to call back into Companion
 // on behalf of a user. Scope is per-user (large). Plain token shown once

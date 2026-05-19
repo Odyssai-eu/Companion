@@ -26,8 +26,11 @@
  *   - companion_search_memory     (RAG over the Obsidian wiki, optional
  *                                  project_memory_files scan when scoped)
  *   - companion_remember          (write a fact into project_memory_files)
- *   - companion_list_skills       (named system-prompt fragments)
+ *   - companion_list_skills       (markdown skills the agent can load)
  *   - companion_get_skill         (fetch a skill body by name)
+ *   - companion_create_skill      (persist a new skill, fails on dup)
+ *   - companion_update_skill      (edit an existing skill)
+ *   - companion_delete_skill      (remove a skill)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -37,11 +40,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
 import {
+  agentSkills,
   conversations,
   messages,
   projectMemoryFiles,
   projects,
-  promptSkills,
 } from "../db/schema";
 import { ragRetrieve } from "../lib/memory";
 
@@ -791,25 +794,27 @@ function buildServer(opts: {
     "companion_list_skills",
     {
       description:
-        "List the user's saved skills (named system-prompt fragments). Returns name, description, tags, and a short preview of the body. Use companion_get_skill to fetch the full body.",
+        "List the user's agent skills (markdown instruction packages the chat model can load on demand). Returns name, description, tags, source, and a short preview of the body. Use companion_get_skill to fetch the full body, companion_create_skill to persist a new one.",
       inputSchema: {},
     },
     async () => {
       const rows = await db
         .select({
-          id: promptSkills.id,
-          name: promptSkills.name,
-          description: promptSkills.description,
-          tags: promptSkills.tags,
-          body: promptSkills.body,
+          id: agentSkills.id,
+          name: agentSkills.name,
+          description: agentSkills.description,
+          tags: agentSkills.tags,
+          source: agentSkills.source,
+          body: agentSkills.body,
         })
-        .from(promptSkills)
-        .where(eq(promptSkills.userId, opts.userId))
-        .orderBy(asc(promptSkills.name));
+        .from(agentSkills)
+        .where(eq(agentSkills.userId, opts.userId))
+        .orderBy(asc(agentSkills.name));
       const summary = rows.map((r) => ({
         name: r.name,
         description: r.description,
         tags: r.tags,
+        source: r.source,
         preview: r.body.slice(0, 200) + (r.body.length > 200 ? "…" : ""),
         bodyLength: r.body.length,
       }));
@@ -823,7 +828,7 @@ function buildServer(opts: {
     "companion_get_skill",
     {
       description:
-        "Fetch the full body of a saved skill by name. Useful before answering a class of question for which the user has authored a tuned system prompt — load it, prepend to your own system prompt, then respond.",
+        "Fetch the full body of an agent skill by name (case-insensitive). Treat the body as instructions to apply for the current task — do not replace your own system prompt with it.",
       inputSchema: {
         name: z.string().min(1).max(120),
       },
@@ -831,11 +836,11 @@ function buildServer(opts: {
     async (args) => {
       const [row] = await db
         .select()
-        .from(promptSkills)
+        .from(agentSkills)
         .where(
           and(
-            eq(promptSkills.userId, opts.userId),
-            ilike(promptSkills.name, args.name),
+            eq(agentSkills.userId, opts.userId),
+            ilike(agentSkills.name, args.name),
           ),
         )
         .limit(1);
@@ -851,11 +856,160 @@ function buildServer(opts: {
         name: row.name,
         description: row.description,
         tags: row.tags,
+        source: row.source,
         body: row.body,
         updatedAt: row.updatedAt,
       };
       return {
         content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    "companion_create_skill",
+    {
+      description:
+        "Persist a new agent skill. Fails on name collision — use companion_update_skill in that case. Set source='imported' when bulk-loading from an external library (e.g. Anthropic's published skills); otherwise the row is tagged 'agent'.",
+      inputSchema: {
+        name: z.string().min(1).max(120),
+        body: z.string().min(1).max(50_000),
+        description: z.string().max(500).optional(),
+        tags: z.array(z.string().max(40)).max(20).optional(),
+        source: z.enum(["agent", "user", "imported"]).optional(),
+      },
+    },
+    async (args) => {
+      try {
+        const [row] = await db
+          .insert(agentSkills)
+          .values({
+            userId: opts.userId,
+            name: args.name,
+            body: args.body,
+            description: args.description ?? null,
+            tags: args.tags ?? [],
+            source: args.source ?? "agent",
+          })
+          .returning({ id: agentSkills.id, name: agentSkills.name });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ ok: true, id: row.id, name: row.name }),
+            },
+          ],
+        };
+      } catch (e) {
+        const msg = (e as Error).message;
+        const collision = /unique|duplicate/i.test(msg);
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: collision
+                ? `A skill named "${args.name}" already exists. Use companion_update_skill to refine it.`
+                : msg,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "companion_update_skill",
+    {
+      description:
+        "Edit an existing agent skill by name. Pass only the fields to change. Use this when refining a skill or fixing a typo.",
+      inputSchema: {
+        name: z.string().min(1).max(120),
+        body: z.string().min(1).max(50_000).optional(),
+        description: z.string().max(500).nullable().optional(),
+        tags: z.array(z.string().max(40)).max(20).optional(),
+      },
+    },
+    async (args) => {
+      const patch: Record<string, unknown> = { updatedAt: new Date() };
+      if (args.body !== undefined) patch.body = args.body;
+      if (args.description !== undefined)
+        patch.description = args.description;
+      if (args.tags !== undefined) patch.tags = args.tags;
+      if (Object.keys(patch).length === 1) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Nothing to update — pass at least one of body / description / tags.",
+            },
+          ],
+        };
+      }
+      const [row] = await db
+        .update(agentSkills)
+        .set(patch)
+        .where(
+          and(
+            eq(agentSkills.userId, opts.userId),
+            ilike(agentSkills.name, args.name),
+          ),
+        )
+        .returning({ id: agentSkills.id, name: agentSkills.name });
+      if (!row) {
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: `Skill not found: ${args.name}` },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ ok: true, id: row.id, name: row.name }),
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
+    "companion_delete_skill",
+    {
+      description:
+        "Delete an agent skill by name (case-insensitive). Hard delete, no undo.",
+      inputSchema: {
+        name: z.string().min(1).max(120),
+      },
+    },
+    async (args) => {
+      const r = await db
+        .delete(agentSkills)
+        .where(
+          and(
+            eq(agentSkills.userId, opts.userId),
+            ilike(agentSkills.name, args.name),
+          ),
+        )
+        .returning({ id: agentSkills.id });
+      if (r.length === 0) {
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: `Skill not found: ${args.name}` },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ ok: true, deleted: args.name }),
+          },
+        ],
       };
     },
   );

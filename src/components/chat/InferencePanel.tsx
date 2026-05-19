@@ -193,15 +193,6 @@ function SystemPromptSection({
     onChange({ systemPrompt: found.body, systemPromptEnabled: true });
   }
 
-  async function onDelete(id: string) {
-    try {
-      await api.deleteSkill(id);
-      await refresh();
-    } catch (e) {
-      alert(`Couldn't delete: ${(e as Error).message}`);
-    }
-  }
-
   function onExport() {
     const payload = JSON.stringify(
       library.map((s) => ({ name: s.name, content: s.body })),
@@ -251,7 +242,7 @@ function SystemPromptSection({
     <div className="mt-5 border-t border-gray-100 pt-4">
       <div className="mb-2 flex items-center justify-between">
         <span className="font-sans text-[11px] font-medium tracking-[0.08em] text-gray-400 uppercase">
-          System prompt · Skills
+          System prompt
         </span>
         <div className="flex items-center gap-3">
           <select
@@ -314,36 +305,6 @@ function SystemPromptSection({
         rows={3}
         className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3 py-2 text-[13px] text-ink outline-none placeholder:text-gray-400 focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
       />
-      {library.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {library.map((p) => (
-            <span
-              key={p.id}
-              className="group inline-flex items-center rounded-full border border-gray-200 bg-white text-[11px] text-gray-600 hover:border-cyan hover:text-navy"
-            >
-              <button
-                type="button"
-                onClick={() => onLoad(p.id)}
-                title={p.body.slice(0, 200)}
-                className="rounded-l-full pr-1 pl-2.5 py-0.5"
-              >
-                {p.name}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm(`Delete saved skill "${p.name}"?`)) onDelete(p.id);
-                }}
-                title="Delete this saved skill"
-                aria-label={`Delete ${p.name}`}
-                className="ml-0.5 rounded-r-full pr-2 pl-1 py-0.5 text-gray-300 hover:text-red-500"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
