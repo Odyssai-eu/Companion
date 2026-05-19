@@ -34,6 +34,14 @@ export async function seedIfEmpty() {
     })
     .returning();
 
+  // Add-ons that remain after the 2026-05-19 MCP migration:
+  //   - Voice Mode             — kept for the upcoming voice refactor
+  //   - Hermes Agent           — surfaces as "Cluster Operations" in the UI
+  //   - Voice (Gemini Live)    — kept until the voice refactor lands
+  // Migrated to MCP servers (dropped by migration 0036):
+  //   - Notion, Obsidian, Web Search
+  // Retired earlier (migration 0035):
+  //   - Audiobook
   await db.insert(addons).values([
     {
       userId: sophie.id,
@@ -42,27 +50,6 @@ export async function seedIfEmpty() {
       description:
         "Full-duplex audio via VibeVoice-Realtime. EN only for now; falls back to Voxtral batch when the realtime service is down.",
       version: "0.3.2",
-      enabled: false,
-    },
-    // Audiobook seed removed 2026-05-19 per Sophie's brief: 'on supprime
-    // Audiobook, pas besoin de mcp audiobook'. Existing rows are dropped
-    // by migration 0035_drop_audiobook_addon.sql.
-    {
-      userId: sophie.id,
-      name: "Obsidian",
-      kind: "plugin",
-      description:
-        "Read-only sync of your memory wiki to an Obsidian vault. Install the companion plugin and paste your sync token.",
-      version: "0.1.0",
-      enabled: false,
-    },
-    {
-      userId: sophie.id,
-      name: "Web Search",
-      kind: "plugin",
-      description:
-        "Give the assistant web access via Tavily — search and fetch URLs as tool calls. Paste your Tavily API key to enable.",
-      version: "0.1.0",
       enabled: false,
     },
     {
