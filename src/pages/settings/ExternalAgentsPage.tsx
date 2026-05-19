@@ -125,6 +125,10 @@ export default function ExternalAgentsPage() {
         </div>
       </header>
 
+      <ToolsCatalog />
+
+      <ClientSnippets baseUrl={window.location.origin} />
+
       {/* Mint form */}
       <section className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-5">
         <h2 className="font-display text-[18px] font-light text-navy">
@@ -363,5 +367,273 @@ function RevealModal(props: {
         </footer>
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Tools catalog — list of MCP tools exposed at /api/mcp, grouped by
+// purpose. Updated alongside server/routes/mcp.ts; keep these two in
+// sync when adding a tool. Categories are editorial, not enforced
+// server-side.
+// ─────────────────────────────────────────────────────────────────────
+
+type ToolSpec = { name: string; description: string };
+type ToolCategory = { title: string; tools: ToolSpec[]; intro?: string };
+
+const TOOL_CATEGORIES: ToolCategory[] = [
+  {
+    title: "Memory & skills",
+    intro:
+      "Companion's positioning: the brain external agents call into when they need the user's long-term context.",
+    tools: [
+      {
+        name: "companion_search_memory",
+        description:
+          "Semantic RAG over the Obsidian wiki (bge-m3 + Qdrant) and substring grep over project memory files when projectId is given.",
+      },
+      {
+        name: "companion_remember",
+        description:
+          "Persist a fact/learning into a project's memory under agent-notes/<date>-<slug>.md.",
+      },
+      {
+        name: "companion_list_skills",
+        description:
+          "List saved skills (named system prompts) — name, description, tags, body preview.",
+      },
+      {
+        name: "companion_get_skill",
+        description:
+          "Fetch a skill's full body by name (case-insensitive). Use as a prefix to the agent's own system prompt.",
+      },
+    ],
+  },
+  {
+    title: "Projects",
+    tools: [
+      {
+        name: "companion_list_projects",
+        description: "List the user's projects, most recent first.",
+      },
+      {
+        name: "companion_get_project",
+        description:
+          "Read a project's metadata + system prompt + memory toggles.",
+      },
+    ],
+  },
+  {
+    title: "Conversations",
+    tools: [
+      {
+        name: "companion_list_conversations",
+        description: "List conversations, optionally filtered by projectId.",
+      },
+      {
+        name: "companion_create_conversation",
+        description:
+          "Start a new conversation, optionally inside a project / with a system prompt.",
+      },
+      {
+        name: "companion_get_conversation",
+        description:
+          "Fetch a conversation's messages + metadata + frozen memory snapshot.",
+      },
+      {
+        name: "companion_set_conversation_memory",
+        description:
+          "Toggle the memory-injection flag on a conversation (rebuilds snapshot lazily on next turn).",
+      },
+      {
+        name: "companion_delete_messages_from",
+        description:
+          "Truncate a conversation back to (and excluding) a given message id — useful before regenerate.",
+      },
+      {
+        name: "companion_export_md",
+        description: "Markdown export of an entire conversation.",
+      },
+    ],
+  },
+  {
+    title: "Inference",
+    tools: [
+      {
+        name: "companion_send_message",
+        description:
+          "Submit a user message; fire-and-forget (returns once the server accepts). Poll get_inference_status until done.",
+      },
+      {
+        name: "companion_get_inference_status",
+        description:
+          "Live status of the server-side inference buffer (active, content, reasoning, error). Polled until done.",
+      },
+      {
+        name: "companion_list_models",
+        description:
+          "List models available to the user (Odyssai capability contract + LiteLLM aliases).",
+      },
+    ],
+  },
+];
+
+function ToolsCatalog() {
+  const [openCat, setOpenCat] = useState<string | null>("Memory & skills");
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="font-display text-[18px] font-light text-navy">
+        Tools available over MCP
+      </h2>
+      <p className="text-[12px] leading-relaxed text-gray-600">
+        The endpoint above exposes these tools to any MCP-compatible client.
+        Each is gated by the bearer token below; calls run as you.
+      </p>
+      <div className="flex flex-col gap-2">
+        {TOOL_CATEGORIES.map((cat) => {
+          const open = openCat === cat.title;
+          return (
+            <div
+              key={cat.title}
+              className="rounded-md border border-gray-200 bg-white"
+            >
+              <button
+                type="button"
+                onClick={() => setOpenCat(open ? null : cat.title)}
+                className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-gray-50"
+              >
+                <span className="font-sans text-[13px] font-medium text-ink">
+                  {cat.title}
+                  <span className="ml-2 font-mono text-[11px] text-gray-400">
+                    {cat.tools.length} tool{cat.tools.length === 1 ? "" : "s"}
+                  </span>
+                </span>
+                <span className="font-mono text-[12px] text-gray-400">
+                  {open ? "−" : "+"}
+                </span>
+              </button>
+              {open && (
+                <div className="flex flex-col gap-2 border-t border-gray-100 px-4 py-3">
+                  {cat.intro && (
+                    <p className="text-[12px] italic text-gray-500">
+                      {cat.intro}
+                    </p>
+                  )}
+                  {cat.tools.map((t) => (
+                    <div key={t.name} className="flex flex-col gap-0.5">
+                      <code className="font-mono text-[12px] text-cyan-700">
+                        {t.name}
+                      </code>
+                      <p className="text-[12px] leading-relaxed text-gray-600">
+                        {t.description}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Client snippets — copy-paste configs for the common MCP clients. The
+// user picks one, generates a token below, pastes the token into the
+// config. No magic, just receipts for "where do I put what".
+// ─────────────────────────────────────────────────────────────────────
+
+function ClientSnippets({ baseUrl }: { baseUrl: string }) {
+  const [tab, setTab] = useState<"claude-desktop" | "continue" | "cline" | "curl">(
+    "claude-desktop",
+  );
+  const url = `${baseUrl}/api/mcp`;
+  const placeholder = "hms_REPLACE_WITH_YOUR_TOKEN";
+
+  const snippets = {
+    "claude-desktop": {
+      label: "Claude Desktop",
+      hint: "claude_desktop_config.json (Settings → Developer → Edit Config). Headers field is supported as of Claude Desktop 0.7+.",
+      lang: "json",
+      code: JSON.stringify(
+        {
+          mcpServers: {
+            companion: {
+              url,
+              headers: { Authorization: `Bearer ${placeholder}` },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    },
+    continue: {
+      label: "Continue.dev",
+      hint: "~/.continue/config.yaml — under the `mcpServers` key. Continue auto-discovers tools on first turn.",
+      lang: "yaml",
+      code: `mcpServers:
+  - name: companion
+    url: ${url}
+    requestOptions:
+      headers:
+        Authorization: Bearer ${placeholder}`,
+    },
+    cline: {
+      label: "Cline (VS Code)",
+      hint: "Cline → MCP Servers → Add → HTTP. URL field below, Bearer token in the auth-header field.",
+      lang: "text",
+      code: `URL:            ${url}
+Auth header:    Authorization: Bearer ${placeholder}
+Transport:      Streamable HTTP`,
+    },
+    curl: {
+      label: "curl (smoke test)",
+      hint: "Quick check that the token works. Should return a JSON-RPC tools/list response with 15 entries.",
+      lang: "bash",
+      code: `curl -s -X POST '${url}' \\
+  -H 'Authorization: Bearer ${placeholder}' \\
+  -H 'Content-Type: application/json' \\
+  -H 'Accept: application/json, text/event-stream' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`,
+    },
+  } as const;
+
+  const active = snippets[tab];
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="font-display text-[18px] font-light text-navy">
+        Connect a client
+      </h2>
+      <p className="text-[12px] leading-relaxed text-gray-600">
+        Pick a client, copy the snippet, replace{" "}
+        <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">
+          {placeholder}
+        </code>{" "}
+        with a token generated below.
+      </p>
+      <div className="flex gap-1 border-b border-gray-200">
+        {(Object.keys(snippets) as Array<keyof typeof snippets>).map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setTab(k)}
+            className={`px-3 py-1.5 text-[12px] font-medium transition-colors ${
+              tab === k
+                ? "border-b-2 border-cyan-500 text-ink"
+                : "text-gray-500 hover:text-ink"
+            }`}
+          >
+            {snippets[k].label}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] italic text-gray-500">{active.hint}</p>
+      <pre className="overflow-x-auto rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-[11px] leading-relaxed text-gray-800">
+        {active.code}
+      </pre>
+    </section>
   );
 }
