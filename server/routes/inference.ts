@@ -36,6 +36,7 @@ inferenceRoute.get("/settings", async (c) => {
       litellmDisabled: users.litellmDisabled,
       showMetrics: users.showMetrics,
       debugVerbose: users.debugVerbose,
+      hiddenModels: users.hiddenModels,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -57,6 +58,7 @@ inferenceRoute.get("/settings", async (c) => {
     litellmDisabled: u.litellmDisabled,
     showMetrics: u.showMetrics,
     debugVerbose: u.debugVerbose,
+    hiddenModels: u.hiddenModels ?? [],
   });
 });
 
@@ -83,6 +85,8 @@ const patchSchema = z.object({
   litellmDisabled: z.boolean().optional(),
   showMetrics: z.boolean().optional(),
   debugVerbose: z.boolean().optional(),
+  // Picker hide list — full replacement on PATCH. Null clears it.
+  hiddenModels: z.array(z.string().max(200)).max(200).nullish(),
 });
 
 inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => {
@@ -116,6 +120,12 @@ inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => 
   }
   if (data.debugVerbose !== undefined) {
     patch.debugVerbose = data.debugVerbose;
+  }
+  if (data.hiddenModels !== undefined) {
+    // null / empty array both mean "no hide list" — store as null so the
+    // default "show everything" reads naturally.
+    const list = data.hiddenModels;
+    patch.hiddenModels = list && list.length > 0 ? list : null;
   }
   if (Object.keys(patch).length === 0) {
     return c.json({ error: "no_fields_to_update" }, 400);

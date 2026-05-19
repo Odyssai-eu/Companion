@@ -71,6 +71,13 @@ export const users = pgTable("users", {
     engineer?: string;
     expert?: string;
   }>(),
+  // Model picker hide list — per-user curation of which model ids
+  // appear in the chat picker. Set populated via Settings → Inference
+  // (advanced) or via the eye-toggle in the picker itself. In `easy`
+  // mode, hidden ids are filtered out; in `advanced`/`expert` mode,
+  // they appear grayed out so the user can un-hide them in context.
+  // Default null = "show everything" (no hide list yet).
+  hiddenModels: jsonb("hidden_models").$type<string[]>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .default(sql`now()`),

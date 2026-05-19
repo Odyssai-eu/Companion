@@ -73,6 +73,10 @@ export type ApiInferenceSettings = {
   /** Per-user toggle for verbose debug logging on chat.ts (logs upstream
    *  request bodies to docker logs). Off by default. */
   debugVerbose: boolean;
+  /** Model ids the user has hidden from the chat picker. `easy` mode
+   *  filters them out entirely; advanced/expert gray them out so the
+   *  user can un-hide via the eye toggle next to each row. */
+  hiddenModels: string[];
 };
 
 export type ApiEngineProbeResult = {
@@ -478,6 +482,7 @@ export const api = {
       litellmDisabled: boolean;
       showMetrics: boolean;
       debugVerbose: boolean;
+      hiddenModels: string[] | null;
     }>,
   ) =>
     request<{ ok: true }>("/api/inference/settings", {

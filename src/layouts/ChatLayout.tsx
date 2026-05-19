@@ -288,6 +288,9 @@ export default function ChatLayout() {
               chat.namedModels,
             )}
             hideModelPicker={chat.inferenceMode === "easy"}
+            hiddenModels={chat.hiddenModels}
+            inferenceMode={chat.inferenceMode}
+            onToggleHidden={chat.toggleModelHidden}
             voiceLiveAvailable={voiceLiveAvailable}
             onOpenVoiceLive={() => setVoiceLiveOpen(true)}
             priorTokens={priorTokens}

@@ -25,6 +25,9 @@ export default function Input({
   onOpenVoiceLive,
   voiceLiveAvailable,
   priorTokens = 0,
+  hiddenModels = [],
+  inferenceMode = "expert",
+  onToggleHidden,
 }: {
   onSend: (text: string, attachments: Attachment[]) => void;
   onCancel: () => void;
@@ -44,6 +47,12 @@ export default function Input({
    *  (computed in ChatLayout from chat.messages). Combined with the live
    *  estimate of the typed value to render the context bar. */
   priorTokens?: number;
+  /** Per-user hide list — filtered out in `easy`, grayed out elsewhere. */
+  hiddenModels?: string[];
+  inferenceMode?: "easy" | "advanced" | "expert";
+  /** Toggle a model id's hidden state. Provided by ChatLayout; called
+   *  from the eye button next to each row in advanced/expert mode. */
+  onToggleHidden?: (id: string) => void;
 }) {
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState<VoiceInputState>({ status: "idle" });
@@ -382,6 +391,9 @@ export default function Input({
                 value={model}
                 onChange={onModelChange}
                 models={models}
+                hiddenModels={hiddenModels}
+                inferenceMode={inferenceMode}
+                onToggleHidden={onToggleHidden}
               />
             )}
           </div>
@@ -498,26 +510,44 @@ function ModelDropdown({
   value,
   onChange,
   models,
+  hiddenModels,
+  inferenceMode,
+  onToggleHidden,
 }: {
   value: string;
   onChange: (id: string) => void;
   models: ApiGlobalModel[];
+  hiddenModels: string[];
+  inferenceMode: "easy" | "advanced" | "expert";
+  onToggleHidden?: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
+  // Easy mode: hidden ids vanish from the picker entirely so the user
+  // sees only the curated set. Advanced / expert mode keeps them visible
+  // (rendered grayed) with the eye toggle so they can be un-hidden inline.
+  const hiddenSet = useMemo(() => new Set(hiddenModels), [hiddenModels]);
+  const visibleModels = useMemo(
+    () =>
+      inferenceMode === "easy"
+        ? models.filter((m) => !hiddenSet.has(m.id))
+        : models,
+    [models, hiddenSet, inferenceMode],
+  );
+
   // Group by tag (first tag wins). Untagged → "Other".
   const groups = useMemo(() => {
     const out = new Map<string, ApiGlobalModel[]>();
-    for (const m of models) {
+    for (const m of visibleModels) {
       const tag = m.tags[0] ?? "Models";
       const list = out.get(tag) ?? [];
       list.push(m);
       out.set(tag, list);
     }
     return Array.from(out.entries());
-  }, [models]);
+  }, [visibleModels]);
 
   useEffect(() => {
     if (!open) return;
@@ -567,6 +597,11 @@ function ModelDropdown({
                   key={m.id}
                   model={m}
                   selected={m.id === value}
+                  hidden={hiddenSet.has(m.id)}
+                  showHideToggle={inferenceMode !== "easy" && !!onToggleHidden}
+                  onToggleHidden={
+                    onToggleHidden ? () => onToggleHidden(m.id) : undefined
+                  }
                   onPick={() => {
                     onChange(m.id);
                     setOpen(false);
@@ -831,10 +866,21 @@ function ChevronIcon() {
 function ModelRow({
   model,
   selected,
+  hidden = false,
+  showHideToggle = false,
+  onToggleHidden,
   onPick,
 }: {
   model: ApiGlobalModel;
   selected: boolean;
+  /** True when this model is in the user's hide list. Renders grayed
+   *  out so the user remembers it exists. Clicking the row still picks
+   *  it (we don't lock the selection — only easy mode filters). */
+  hidden?: boolean;
+  /** When true, render the eye-toggle next to the row's right-side
+   *  badges so the user can hide/un-hide inline. */
+  showHideToggle?: boolean;
+  onToggleHidden?: () => void;
   onPick: () => void;
 }) {
   const o = model.odyssai;
@@ -849,43 +895,65 @@ function ModelRow({
     : "";
   const tooltip = o ? buildOdyssaiTooltip(o) : undefined;
   return (
-    <button
-      type="button"
-      onClick={onPick}
-      title={tooltip}
-      className={`flex w-full items-start justify-between gap-2 px-3 py-2 text-left text-[13px] ${
-        selected ? "bg-cyan/10 text-navy" : "text-ink hover:bg-gray-50"
-      }`}
+    <div
+      className={`group/row flex w-full items-start gap-2 px-3 py-2 text-[13px] ${
+        selected
+          ? "bg-cyan/10 text-navy"
+          : "text-ink hover:bg-gray-50"
+      } ${hidden ? "opacity-45" : ""}`}
     >
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="truncate font-mono">{model.name}</span>
-        {subtitle && (
-          <span className="truncate font-mono text-[10px] text-gray-500">
-            {subtitle}
+      <button
+        type="button"
+        onClick={onPick}
+        title={tooltip}
+        className="flex flex-1 min-w-0 items-start justify-between gap-2 text-left"
+      >
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="truncate font-mono">{model.name}</span>
+          {subtitle && (
+            <span className="truncate font-mono text-[10px] text-gray-500">
+              {subtitle}
+            </span>
+          )}
+        </span>
+        <span className="flex shrink-0 items-center gap-1">
+          {o && <PoolBadge caps={o} />}
+          {o && <LoadStateBadge caps={o} />}
+          {model.capabilities.vision && (
+            <span
+              title="Vision-capable"
+              className="rounded-full bg-cyan/15 px-1.5 py-0.5 text-[10px] text-cyan-700"
+            >
+              👁
+            </span>
+          )}
+          {model.capabilities.tools && (
+            <span
+              title="Tool / function calling"
+              className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-700"
+            >
+              ⚒
+            </span>
+          )}
+        </span>
+      </button>
+      {showHideToggle && onToggleHidden && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleHidden();
+          }}
+          title={hidden ? "Show in picker (easy mode)" : "Hide from picker (easy mode)"}
+          className="shrink-0 self-center rounded p-1 text-gray-400 opacity-0 transition-opacity hover:bg-gray-100 hover:text-ink group-hover/row:opacity-100"
+        >
+          {/* eye-slash if hidden, eye if visible */}
+          <span aria-hidden className="text-[14px] leading-none">
+            {hidden ? "🙈" : "👁"}
           </span>
-        )}
-      </span>
-      <span className="flex shrink-0 items-center gap-1">
-        {o && <PoolBadge caps={o} />}
-        {o && <LoadStateBadge caps={o} />}
-        {model.capabilities.vision && (
-          <span
-            title="Vision-capable"
-            className="rounded-full bg-cyan/15 px-1.5 py-0.5 text-[10px] text-cyan-700"
-          >
-            👁
-          </span>
-        )}
-        {model.capabilities.tools && (
-          <span
-            title="Tool / function calling"
-            className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-700"
-          >
-            ⚒
-          </span>
-        )}
-      </span>
-    </button>
+        </button>
+      )}
+    </div>
   );
 }
 

@@ -132,6 +132,10 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     expert?: string;
   }>({});
   const [showMetrics, setShowMetrics] = useState(false);
+  // Per-user picker hide list. Filtered out in easy mode; grayed
+  // with an eye toggle elsewhere. PATCH'd back to /api/inference/settings
+  // when the user clicks the toggle.
+  const [hiddenModels, setHiddenModels] = useState<string[]>([]);
   // Pre-conversation memory override. Null = no override (use project
   // default / true on create). The TopBar memory toggle writes here when
   // no conversation exists yet so the user can flip memory OFF before
@@ -202,6 +206,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         setEasyModel(settings.easyModel);
         setNamedModels(settings.namedModels ?? {});
         setShowMetrics(settings.showMetrics);
+        setHiddenModels(settings.hiddenModels ?? []);
 
         // Choose a default model that respects the active mode.
         if (settings.inferenceMode === "easy") {
@@ -693,6 +698,24 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     }
   }, [conversationId]);
 
+  /** Flip a model id's hidden state. Optimistic local update + PATCH
+   *  back to /api/inference/settings. Errors are silently logged —
+   *  the next reload will reconcile from the server. */
+  const toggleModelHidden = useCallback(
+    async (id: string) => {
+      const next = hiddenModels.includes(id)
+        ? hiddenModels.filter((x) => x !== id)
+        : [...hiddenModels, id];
+      setHiddenModels(next);
+      try {
+        await api.updateInferenceSettings({ hiddenModels: next });
+      } catch (e) {
+        console.warn("[useChat] toggleModelHidden patch failed:", (e as Error).message);
+      }
+    },
+    [hiddenModels],
+  );
+
   return {
     messages,
     sending,
@@ -706,6 +729,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     easyModel,
     namedModels,
     showMetrics,
+    hiddenModels,
+    toggleModelHidden,
     inference,
     setInference: updateInference,
     activeModelCapabilities,
