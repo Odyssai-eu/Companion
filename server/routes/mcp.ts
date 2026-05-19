@@ -23,15 +23,27 @@
  *   - companion_delete_messages_from
  *   - companion_export_md
  *   - companion_list_models
+ *   - companion_search_memory     (RAG over the Obsidian wiki, optional
+ *                                  project_memory_files scan when scoped)
+ *   - companion_remember          (write a fact into project_memory_files)
+ *   - companion_list_skills       (named system-prompt fragments)
+ *   - companion_get_skill         (fetch a skill body by name)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
-import { conversations, messages, projects } from "../db/schema";
+import {
+  conversations,
+  messages,
+  projectMemoryFiles,
+  projects,
+  promptSkills,
+} from "../db/schema";
+import { ragRetrieve } from "../lib/memory";
 
 type Env = { Variables: { userId: string } };
 const mcpRoute = new Hono<Env>();
@@ -598,6 +610,253 @@ function buildServer(opts: {
       });
       const txt = await r.text();
       return { content: [{ type: "text", text: txt }] };
+    },
+  );
+
+  // ── Brain tools (memory + skills) ────────────────────────────────────
+  // Companion as a knowledge backend for external coding agents
+  // (Continue.dev, Cline, Claude Desktop, Aider). The agent in VS Code
+  // can call these to fetch user memory before answering and write back
+  // learnings without leaving its editor flow.
+
+  server.registerTool(
+    "companion_search_memory",
+    {
+      description:
+        "Semantic search over the user's Obsidian wiki (RAG via bge-m3 + Qdrant). When `projectId` is given, also greps the project's DB-backed memory files. Returns up to `limit` top hits (default 5, max 10).",
+      inputSchema: {
+        query: z.string().min(1),
+        projectId: z.string().uuid().optional(),
+        limit: z.number().int().min(1).max(10).optional(),
+      },
+    },
+    async (args) => {
+      const limit = args.limit ?? 5;
+      const ragHits = await ragRetrieve(args.query, limit);
+      const sections: string[] = [];
+
+      if (ragHits.length > 0) {
+        sections.push(
+          "# Wiki hits (semantic, top " + ragHits.length + ")\n\n" +
+            ragHits
+              .map(
+                (h, i) =>
+                  `## [${i + 1}] ${h.title}\n_(source: ${h.path}, score ${h.score.toFixed(3)})_\n\n${h.snippet}`,
+              )
+              .join("\n\n---\n\n"),
+        );
+      }
+
+      // Project-scoped substring grep — RAG only indexes the global
+      // Obsidian wiki, not project_memory_files. When the caller asks
+      // for a project-scoped search, fall back to a simple substring
+      // match over the project's stored content. Cheap; cardinality is
+      // typically < 100 files per project.
+      if (args.projectId) {
+        const q = args.query.toLowerCase();
+        // Ownership check via the project row's user_id.
+        const [proj] = await db
+          .select({ userId: projects.userId })
+          .from(projects)
+          .where(eq(projects.id, args.projectId))
+          .limit(1);
+        if (proj && proj.userId === opts.userId) {
+          const files = await db
+            .select({
+              path: projectMemoryFiles.path,
+              content: projectMemoryFiles.content,
+            })
+            .from(projectMemoryFiles)
+            .where(eq(projectMemoryFiles.projectId, args.projectId));
+          const matches: Array<{ path: string; snippet: string }> = [];
+          for (const f of files) {
+            const lc = f.content.toLowerCase();
+            const idx = lc.indexOf(q);
+            if (idx < 0) continue;
+            const start = Math.max(0, idx - 120);
+            const end = Math.min(f.content.length, idx + 280);
+            matches.push({
+              path: f.path,
+              snippet:
+                (start > 0 ? "…" : "") +
+                f.content.slice(start, end) +
+                (end < f.content.length ? "…" : ""),
+            });
+            if (matches.length >= limit) break;
+          }
+          if (matches.length > 0) {
+            sections.push(
+              `# Project memory hits (substring, ${matches.length})\n\n` +
+                matches
+                  .map((m) => `## ${m.path}\n\n${m.snippet}`)
+                  .join("\n\n---\n\n"),
+            );
+          }
+        }
+      }
+
+      const text =
+        sections.length > 0
+          ? sections.join("\n\n===\n\n")
+          : "_No hits for query: " + JSON.stringify(args.query) + "_";
+      return { content: [{ type: "text", text }] };
+    },
+  );
+
+  server.registerTool(
+    "companion_remember",
+    {
+      description:
+        "Persist a fact / learning into the user's project memory. Writes to a deterministic path under `agent-notes/` so subsequent calls accumulate without clobbering. `projectId` is currently required — global wiki writes (back to Obsidian) aren't supported yet.",
+      inputSchema: {
+        projectId: z.string().uuid(),
+        title: z.string().min(1).max(120),
+        body: z.string().min(1).max(20_000),
+        tags: z.array(z.string().max(40)).max(10).optional(),
+      },
+    },
+    async (args) => {
+      // Ownership check.
+      const [proj] = await db
+        .select({ userId: projects.userId })
+        .from(projects)
+        .where(eq(projects.id, args.projectId))
+        .limit(1);
+      if (!proj || proj.userId !== opts.userId) {
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: "project_not_found_or_not_owned" },
+          ],
+        };
+      }
+      const slug = args.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60) || "note";
+      const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      const path = `agent-notes/${today}-${slug}.md`;
+      const tagsLine =
+        args.tags && args.tags.length > 0
+          ? `\ntags: ${args.tags.join(", ")}\n`
+          : "";
+      const content =
+        `# ${args.title}\n` +
+        `created: ${new Date().toISOString()}\n` +
+        tagsLine +
+        `\n${args.body}\n`;
+      // Manual upsert by (projectId, path). The table has no unique
+      // constraint on that pair (cf. schema), so onConflictDoUpdate
+      // can't help — do a SELECT then UPDATE/INSERT branch. The table has no unique
+      // constraint on that pair (cf. schema), so onConflictDoUpdate
+      // can't help — do a SELECT then UPDATE/INSERT branch.
+      const sizeBytes = Buffer.byteLength(content, "utf8");
+      const [existing] = await db
+        .select({ id: projectMemoryFiles.id })
+        .from(projectMemoryFiles)
+        .where(
+          and(
+            eq(projectMemoryFiles.projectId, args.projectId),
+            eq(projectMemoryFiles.path, path),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        await db
+          .update(projectMemoryFiles)
+          .set({ content, sizeBytes, updatedAt: new Date() })
+          .where(eq(projectMemoryFiles.id, existing.id));
+      } else {
+        await db.insert(projectMemoryFiles).values({
+          projectId: args.projectId,
+          path,
+          mimeType: "text/markdown",
+          sizeBytes,
+          content,
+        });
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Saved to ${path} (${Buffer.byteLength(content, "utf8")} bytes)`,
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
+    "companion_list_skills",
+    {
+      description:
+        "List the user's saved skills (named system-prompt fragments). Returns name, description, tags, and a short preview of the body. Use companion_get_skill to fetch the full body.",
+      inputSchema: {},
+    },
+    async () => {
+      const rows = await db
+        .select({
+          id: promptSkills.id,
+          name: promptSkills.name,
+          description: promptSkills.description,
+          tags: promptSkills.tags,
+          body: promptSkills.body,
+        })
+        .from(promptSkills)
+        .where(eq(promptSkills.userId, opts.userId))
+        .orderBy(asc(promptSkills.name));
+      const summary = rows.map((r) => ({
+        name: r.name,
+        description: r.description,
+        tags: r.tags,
+        preview: r.body.slice(0, 200) + (r.body.length > 200 ? "…" : ""),
+        bodyLength: r.body.length,
+      }));
+      return {
+        content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    "companion_get_skill",
+    {
+      description:
+        "Fetch the full body of a saved skill by name. Useful before answering a class of question for which the user has authored a tuned system prompt — load it, prepend to your own system prompt, then respond.",
+      inputSchema: {
+        name: z.string().min(1).max(120),
+      },
+    },
+    async (args) => {
+      const [row] = await db
+        .select()
+        .from(promptSkills)
+        .where(
+          and(
+            eq(promptSkills.userId, opts.userId),
+            ilike(promptSkills.name, args.name),
+          ),
+        )
+        .limit(1);
+      if (!row) {
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: `Skill not found: ${args.name}` },
+          ],
+        };
+      }
+      const out = {
+        name: row.name,
+        description: row.description,
+        tags: row.tags,
+        body: row.body,
+        updatedAt: row.updatedAt,
+      };
+      return {
+        content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
+      };
     },
   );
 
