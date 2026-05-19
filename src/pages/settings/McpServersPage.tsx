@@ -44,6 +44,106 @@ const EMPTY_DRAFT: Draft = {
   enabled: true,
 };
 
+// Quick-add catalog (2026-05-19). Each preset seeds the EditModal so
+// the user types only the auth token (or signs in via OAuth) instead
+// of guessing transport + url + headers. URLs are public endpoints
+// or canonical templates — the user can still tweak before saving.
+//
+// Sources:
+//   - Notion        https://mcp.notion.com/mcp                (OAuth)
+//   - GitHub        https://api.githubcopilot.com/mcp/         (OAuth)
+//   - Tavily        https://mcp.tavily.com/mcp/?tavilyApiKey=… (bearer)
+//   - Obsidian      user-hosted bridge over LAN                (bearer)
+//   - Linear        https://mcp.linear.app/sse                 (OAuth)
+//   - Filesystem    user-hosted MCP fs over HTTP               (bearer)
+type Preset = {
+  id: string;
+  label: string;
+  description: string;
+  draft: Partial<Draft>;
+};
+
+const PRESETS: Preset[] = [
+  {
+    id: "notion",
+    label: "Notion",
+    description: "Pages, databases, search. OAuth.",
+    draft: {
+      name: "Notion",
+      slug: "notion",
+      transport: "streamable_http",
+      url: "https://mcp.notion.com/mcp",
+      authKind: "oauth",
+      enabled: true,
+    },
+  },
+  {
+    id: "github",
+    label: "GitHub",
+    description: "Repos, issues, PRs, code search. OAuth via Copilot.",
+    draft: {
+      name: "GitHub",
+      slug: "github",
+      transport: "streamable_http",
+      url: "https://api.githubcopilot.com/mcp/",
+      authKind: "oauth",
+      enabled: true,
+    },
+  },
+  {
+    id: "tavily",
+    label: "Tavily",
+    description: "Web search + URL fetch. Bearer (API key).",
+    draft: {
+      name: "Tavily",
+      slug: "tavily",
+      transport: "streamable_http",
+      url: "https://mcp.tavily.com/mcp/",
+      authKind: "bearer",
+      enabled: true,
+    },
+  },
+  {
+    id: "linear",
+    label: "Linear",
+    description: "Issues, projects, comments. OAuth.",
+    draft: {
+      name: "Linear",
+      slug: "linear",
+      transport: "sse",
+      url: "https://mcp.linear.app/sse",
+      authKind: "oauth",
+      enabled: true,
+    },
+  },
+  {
+    id: "obsidian",
+    label: "Obsidian",
+    description: "Local vault bridge. Bearer to your self-hosted endpoint.",
+    draft: {
+      name: "Obsidian",
+      slug: "obsidian",
+      transport: "streamable_http",
+      url: "",  // user fills LAN URL
+      authKind: "bearer",
+      enabled: true,
+    },
+  },
+  {
+    id: "filesystem",
+    label: "Filesystem",
+    description: "Local files via your own MCP fs server.",
+    draft: {
+      name: "Filesystem",
+      slug: "fs",
+      transport: "streamable_http",
+      url: "",
+      authKind: "bearer",
+      enabled: true,
+    },
+  },
+];
+
 export default function McpServersPage() {
   const [servers, setServers] = useState<ApiMcpServer[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +164,10 @@ export default function McpServersPage() {
 
   function startNew() {
     setEditing({ ...EMPTY_DRAFT });
+  }
+
+  function startFromPreset(p: Preset) {
+    setEditing({ ...EMPTY_DRAFT, ...p.draft });
   }
 
   function startEdit(s: ApiMcpServer) {
@@ -176,14 +280,37 @@ export default function McpServersPage() {
         </p>
       </header>
 
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={startNew}
-          className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95"
-        >
-          Add MCP server
-        </button>
+      <div className="flex flex-col gap-3">
+        <div className="text-[11px] font-medium tracking-wider text-gray-400 uppercase">
+          Quick add
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => startFromPreset(p)}
+              title={p.description}
+              className="flex flex-col items-start gap-0.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-left hover:border-cyan hover:bg-gray-50"
+            >
+              <span className="font-display text-[14px] font-medium text-navy">
+                {p.label}
+              </span>
+              <span className="font-mono text-[10px] leading-tight text-gray-500">
+                {p.draft.authKind === "oauth" ? "OAuth" : "Bearer"}
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center justify-end">
+          <button
+            type="button"
+            onClick={startNew}
+            className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95"
+          >
+            Add MCP server
+          </button>
+        </div>
       </div>
 
       {servers === null ? (
