@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useIsMobile } from "~/hooks/useIsMobile";
-import { api, type ApiAddon } from "~/lib/api";
+import { api, type ApiAddon, type ApiInferenceSettings } from "~/lib/api";
 
 type Filter = "all" | "plugin" | "mcp" | "core";
 
@@ -120,6 +120,12 @@ export default function AddonsPage() {
           <span className="font-mono text-[11px] text-gray-400">Loading…</span>
         </div>
       )}
+
+      {/* LiteLLM add-on — backed by users.litellm* fields, not by an addons
+       *  row. Lives here (per Sophie 2026-05-19) because it's an optional
+       *  routing layer that the user adds or removes from their chain, just
+       *  like the DB-backed plugins/MCP entries below. */}
+      <LiteLLMAddon />
 
       {core.length > 0 && (
         <Group
@@ -1261,5 +1267,175 @@ function PackageIcon() {
       <path d="M3 7l9 4.5 9-4.5" />
       <path d="M12 22V11.5" />
     </svg>
+  );
+}
+
+// LiteLLM as an add-on — moved here from Inference page 2026-05-19.
+// Backed by `users.litellm{Url,ApiKey,Disabled}` so flipping the toggle
+// persists across logins. When off, all sub-fields are hidden (Sophie's
+// 'en off, on n'affiche pas les info comme actuellement').
+function LiteLLMAddon() {
+  const [s, setS] = useState<ApiInferenceSettings | null>(null);
+  const [pending, setPending] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [urlDraft, setUrlDraft] = useState("");
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keyDirty, setKeyDirty] = useState(false);
+
+  useEffect(() => {
+    api.inferenceSettings()
+      .then((data) => {
+        setS(data);
+        setUrlDraft(data.litellmUrl ?? "");
+      })
+      .catch((e: Error) => setErr(e.message));
+  }, []);
+
+  if (!s) return null;
+
+  // Enabled = NOT disabled. The DB stores litellmDisabled (true means OFF).
+  const enabled = !s.litellmDisabled;
+
+  async function toggle(next: boolean) {
+    setPending(true);
+    setErr(null);
+    try {
+      await api.updateInferenceSettings({ litellmDisabled: !next });
+      setS((prev) => (prev ? { ...prev, litellmDisabled: !next } : prev));
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function saveFields() {
+    setPending(true);
+    setErr(null);
+    try {
+      const patch: {
+        litellmUrl?: string | null;
+        litellmApiKey?: string | null;
+      } = {
+        litellmUrl: urlDraft.trim() || null,
+      };
+      if (keyDirty) patch.litellmApiKey = keyDraft.trim() || null;
+      await api.updateInferenceSettings(patch);
+      setS((prev) =>
+        prev
+          ? { ...prev, litellmUrl: patch.litellmUrl ?? null, hasApiKey: keyDirty ? Boolean(patch.litellmApiKey) : prev.hasApiKey }
+          : prev,
+      );
+      setKeyDraft("");
+      setKeyDirty(false);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white">
+      <div className="flex items-start gap-4 p-5">
+        <div className="mt-0.5 shrink-0 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-[10px] tracking-wider text-gray-500 uppercase">
+          add-on
+        </div>
+        <div className="flex flex-1 flex-col gap-1.5">
+          <div className="flex items-center gap-2">
+            <h3 className="font-display text-[18px] font-medium text-navy">
+              LiteLLM proxy
+            </h3>
+            <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600">
+              optional
+            </span>
+          </div>
+          <p className="max-w-[640px] text-[13px] leading-relaxed text-gray-600">
+            Stand-alone LiteLLM proxy for cascade fallback, budget tracking,
+            or the Anthropic protocol bridge. In gateway mode Odysseus
+            already proxies cloud providers — most users can keep this off
+            and run the simpler chain.
+          </p>
+        </div>
+        <label className="flex shrink-0 cursor-pointer items-center gap-2">
+          <span className="font-mono text-[11px] text-gray-500">
+            {enabled ? "ON" : "OFF"}
+          </span>
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={pending}
+            onChange={(e) => toggle(e.target.checked)}
+            className="h-4 w-4 cursor-pointer"
+          />
+        </label>
+      </div>
+
+      {enabled && (
+        <div className="flex flex-col gap-3 border-t border-gray-100 px-5 py-4">
+          <div className="flex flex-col gap-1">
+            <label className="font-sans text-[11px] tracking-wider text-gray-500 uppercase">
+              Proxy URL
+            </label>
+            <input
+              type="url"
+              value={urlDraft}
+              onChange={(e) => setUrlDraft(e.target.value)}
+              placeholder={s.envDefaultUrl}
+              className="rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
+            <span className="font-mono text-[10px] text-gray-400">
+              Default: {s.envDefaultUrl}
+            </span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="font-sans text-[11px] tracking-wider text-gray-500 uppercase">
+              API key (optional)
+            </label>
+            <input
+              type="password"
+              value={keyDraft}
+              onChange={(e) => {
+                setKeyDraft(e.target.value);
+                setKeyDirty(true);
+              }}
+              placeholder={s.hasApiKey ? "•••• (set)" : "sk-…"}
+              className="rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
+            <span className="font-mono text-[10px] text-gray-400">
+              {s.hasApiKey
+                ? "A key is set. Leave blank to keep; type a new one to replace."
+                : "Only needed if the proxy enforces an API key."}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={saveFields}
+              disabled={pending}
+              className="rounded-md bg-navy px-3 py-1.5 text-[12px] text-white hover:opacity-95 disabled:opacity-50"
+            >
+              {pending ? "Saving…" : "Save"}
+            </button>
+            <a
+              href={
+                (urlDraft || s.envDefaultUrl).replace(/\/+$/, "") + "/ui"
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-700 hover:bg-gray-50 hover:text-ink"
+            >
+              Open LiteLLM admin UI ↗
+            </a>
+          </div>
+        </div>
+      )}
+
+      {err && (
+        <div className="border-t border-red-100 bg-red-50 px-5 py-2 font-mono text-[11px] text-red-700">
+          {err}
+        </div>
+      )}
+    </div>
   );
 }

@@ -44,15 +44,9 @@ export async function seedIfEmpty() {
       version: "0.3.2",
       enabled: false,
     },
-    {
-      userId: sophie.id,
-      name: "Audiobook",
-      kind: "plugin",
-      description:
-        "Turn long documents into voiced MP3s. Voxtral TTS with prosody-aware LLM splitting, speed slider, Google Drive delivery.",
-      version: "1.2.0",
-      enabled: false,
-    },
+    // Audiobook seed removed 2026-05-19 per Sophie's brief: 'on supprime
+    // Audiobook, pas besoin de mcp audiobook'. Existing rows are dropped
+    // by migration 0035_drop_audiobook_addon.sql.
     {
       userId: sophie.id,
       name: "Obsidian",
