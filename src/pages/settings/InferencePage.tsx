@@ -185,15 +185,18 @@ export default function InferencePage() {
           Inference.
         </h1>
         <p className="max-w-[640px] text-[15px] leading-[24px] text-gray-600">
-          Companion talks to your models through a provider — either an
-          Odysseus engine paired with "Join the Odyssai" (recommended), or a
-          LiteLLM proxy (legacy / power users). Pick what you want, or
-          combine both.
+          Companion talks to your models through Odysseus — paired via
+          "Join the Odyssai" below. Optional providers (LiteLLM, etc.)
+          live in Settings → Add-ons.
         </p>
       </header>
 
-      {/* ── Provider: Odyssai gateway / pair ────────────────────────── */}
-      <Section title="Provider">
+      {/* ── Odysseus Gateway ──────────────────────────────────────────
+       *  Renamed from "Provider" 2026-05-19. The whole local-LLM stack
+       *  is Odysseus end-to-end (gateway + engine + dashboard); the
+       *  generic "Provider" word was a leftover from when LiteLLM was
+       *  the canonical layer. */}
+      <Section title="Odysseus Gateway">
         {paired ? (
           <PairedCard
             url={settings.engineUrl ?? ""}
@@ -236,77 +239,10 @@ export default function InferencePage() {
         </details>
       </Section>
 
-      {/* ── LiteLLM (optional rail) ─────────────────────────────────── */}
-      <Section title="LiteLLM (optional)">
-        <p className="text-[13px] text-gray-600">
-          A standalone LiteLLM proxy stays useful for cascade fallback,
-          budget tracking, or the Anthropic protocol bridge. In gateway
-          mode (recommended) Odysseus already proxies cloud providers, so
-          you can turn LiteLLM off and run the simpler chain.
-        </p>
-        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 text-[13px] hover:bg-gray-50">
-          <input
-            type="checkbox"
-            checked={litellmDisabled}
-            onChange={(e) => setLitellmDisabled(e.target.checked)}
-            className="mt-0.5"
-          />
-          <div className="flex flex-col gap-0.5">
-            <span className="font-medium text-ink">
-              Disable LiteLLM
-            </span>
-            <span className="text-[12px] text-gray-500">
-              When checked, Companion never calls LiteLLM. Requires a paired
-              Odysseus engine — otherwise chat has no rail at all.
-            </span>
-          </div>
-        </label>
-        {!litellmDisabled && (
-          <>
-            <Field label="Proxy URL" hint={`Default: ${settings.envDefaultUrl}`}>
-              <input
-                type="url"
-                value={litellmUrl}
-                onChange={(e) => setLitellmUrl(e.target.value)}
-                placeholder={settings.envDefaultUrl}
-                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
-              />
-            </Field>
-            <Field
-              label="API key (optional)"
-              hint={
-                settings.hasApiKey
-                  ? "A key is set. Leave blank to keep it; clear to remove; type a new one to replace."
-                  : "Only needed if your LiteLLM proxy enforces an API key."
-              }
-            >
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => {
-                  setApiKey(e.target.value);
-                  setKeyDirty(true);
-                }}
-                placeholder={settings.hasApiKey ? "•••• (set)" : "sk-…"}
-                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
-              />
-            </Field>
-            <div className="flex flex-wrap items-center gap-2">
-              <a
-                href={
-                  (litellmUrl || settings.envDefaultUrl).replace(/\/+$/, "") +
-                  "/ui"
-                }
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-600 hover:bg-gray-50 hover:text-ink"
-              >
-                Open LiteLLM admin UI ↗
-              </a>
-            </div>
-          </>
-        )}
-      </Section>
+      {/* LiteLLM moved to Settings → Add-ons (2026-05-19). Its DB fields
+         (litellmUrl, litellmApiKey, litellmDisabled) stay on the user
+         row and continue to gate the chat routing chain — only the UI
+         surface moved. */}
 
       {/* ── Inference mode ──────────────────────────────────────────── */}
       <Section title="Inference mode">

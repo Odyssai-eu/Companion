@@ -11,12 +11,11 @@ import AccessibilityPage from "./pages/settings/AccessibilityPage";
 import AddonsPage from "./pages/settings/AddonsPage";
 import AdminPage from "./pages/settings/AdminPage";
 import AppearancePage from "./pages/settings/AppearancePage";
-import ComingSoonPage from "./pages/settings/ComingSoonPage";
-import DevicesPage from "./pages/settings/DevicesPage";
+// ComingSoonPage no longer routed for Security — section retired
+// 2026-05-19 per Sophie's UX brief.
 import ExternalAgentsPage from "./pages/settings/ExternalAgentsPage";
 import HelpPage from "./pages/settings/HelpPage";
 import InferencePage from "./pages/settings/InferencePage";
-import LearningCenterPage from "./pages/settings/LearningCenterPage";
 import McpServersPage from "./pages/settings/McpServersPage";
 import ProfilePage from "./pages/settings/ProfilePage";
 import ShortcutsPage from "./pages/settings/ShortcutsPage";
@@ -77,13 +76,15 @@ export default function App() {
       >
         <Route index element={<Navigate to="/settings/inference" replace />} />
         <Route path="inference" element={<InferencePage />} />
-        <Route path="learning" element={<LearningCenterPage />} />
         <Route path="profile" element={<ProfilePage />} />
-        <Route path="security" element={<ComingSoonPage title="Security" />} />
+        {/* Retired 2026-05-19 — redirect old bookmarks to Profile so a
+            user landing on /settings/security doesn't get a 404. */}
+        <Route path="security" element={<Navigate to="/settings/profile" replace />} />
+        <Route path="devices" element={<Navigate to="/settings/profile" replace />} />
+        <Route path="learning" element={<Navigate to="/settings/help" replace />} />
         {/* Old paths redirect to /inference for backward compat */}
         <Route path="servers" element={<Navigate to="/settings/inference" replace />} />
         <Route path="engines" element={<Navigate to="/settings/inference" replace />} />
-        <Route path="devices" element={<DevicesPage />} />
         <Route path="appearance" element={<AppearancePage />} />
         <Route path="accessibility" element={<AccessibilityPage />} />
         <Route path="shortcuts" element={<ShortcutsPage />} />

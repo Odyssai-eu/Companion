@@ -108,13 +108,14 @@ export default function ExternalAgentsPage() {
     <div className="flex flex-col gap-8 p-8">
       <header className="flex flex-col gap-2">
         <h1 className="font-display text-[28px] font-light text-navy">
-          External agents
+          Agents tokens
         </h1>
         <p className="max-w-[640px] text-[13px] leading-relaxed text-gray-600">
           Generate a token to let an external MCP client — Claude Cowork
           dispatch, Hermes Agent, Claude Desktop, Continue.dev — call back
           into Companion as you. The client gets read/write access to your
-          projects, conversations, and inference.
+          projects, conversations, and inference. (Renamed from "External
+          agents" 2026-05-19: the page is just tokens, no more no less.)
         </p>
         <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-[12px] text-gray-700">
           <div className="mb-1 font-sans text-[11px] tracking-wider text-gray-400 uppercase">

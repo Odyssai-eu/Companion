@@ -4,19 +4,25 @@ import { useAuth } from "~/hooks/useAuth";
 type NavItem = { to: string; label: string };
 type NavSection = { title: string; items: NavItem[] };
 
+// Settings nav — refactor 2026-05-19 per Sophie's UX brief:
+//   - dropped: Security / Devices & sync / Learning Center
+//   - renamed: Inference → "Inference & gateway" (Provider section becomes
+//              "Odysseus Gateway", LiteLLM moves out to Add-ons)
+//   - renamed: External agents → "Agents tokens"
+//   - kept:    MCP servers (the hub for Notion/Obsidian/Tavily/…)
+// Guest tokens (previously surfaced under Devices) stay accessible via
+// the Admin link (admin role only).
 const baseSections: NavSection[] = [
   {
     title: "Account",
     items: [
       { to: "/settings/profile", label: "Profile" },
-      { to: "/settings/security", label: "Security" },
     ],
   },
   {
     title: "Infrastructure",
     items: [
       { to: "/settings/inference", label: "Inference" },
-      { to: "/settings/devices", label: "Devices & sync" },
     ],
   },
   {
@@ -31,13 +37,9 @@ const baseSections: NavSection[] = [
     title: "Extensions",
     items: [
       { to: "/settings/add-ons", label: "Add-ons" },
-      { to: "/settings/external-agents", label: "External agents" },
       { to: "/settings/mcp-servers", label: "MCP servers" },
+      { to: "/settings/external-agents", label: "Agents tokens" },
     ],
-  },
-  {
-    title: "Premium",
-    items: [{ to: "/settings/learning", label: "Learning Center" }],
   },
   {
     title: "Reference",
