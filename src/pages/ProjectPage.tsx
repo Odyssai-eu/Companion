@@ -30,6 +30,11 @@ export default function ProjectPage() {
   const [externalVaultPath, setExternalVaultPath] = useState("");
   const [externalVaultReadOnly, setExternalVaultReadOnly] = useState(true);
   const [sharingEnabled, setSharingEnabled] = useState(false);
+  // Project settings panel — gates the system prompt + memory + vault
+  // controls. Default closed so the project view stays focused on
+  // chats; user opens it when they actually want to tune. Instructions
+  // stays outside the panel (always visible per Sophie's UX call).
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -164,7 +169,7 @@ export default function ProjectPage() {
           <header className="flex items-start justify-between gap-6">
             <div className="flex flex-col gap-2">
               <Link
-                to="/"
+                to="/projects"
                 className="flex items-center gap-1.5 text-[13px] text-gray-500 hover:text-ink"
               >
                 <svg
@@ -179,7 +184,7 @@ export default function ProjectPage() {
                 >
                   <path d="M15 18l-6-6 6-6" />
                 </svg>
-                Back to chat
+                Back to projects
               </Link>
               <span className="font-sans text-[13px] font-medium tracking-[0.08em] text-cyan uppercase">
                 Project
@@ -216,6 +221,30 @@ export default function ProjectPage() {
                   </svg>
                   Export .md
                 </a>
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen((v) => !v)}
+                  className={`flex h-9 items-center gap-2 rounded-lg border px-3.5 text-[13px] font-medium transition-colors ${
+                    settingsOpen
+                      ? "border-cyan bg-[rgba(79,179,217,0.08)] text-navy"
+                      : "border-gray-200 bg-white text-ink hover:bg-gray-50"
+                  }`}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.75"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                  Project settings
+                </button>
                 <button
                   type="button"
                   onClick={startNewChat}
@@ -283,18 +312,6 @@ export default function ProjectPage() {
             </Field>
 
             <Field
-              label="System prompt"
-              hint="Sent as the first system message in every conversation in this project."
-            >
-              <textarea
-                value={systemPrompt}
-                onChange={(e) => setSystemPrompt(e.target.value)}
-                rows={6}
-                className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3.5 py-2.5 text-[13px] leading-[20px] text-ink outline-none focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
-              />
-            </Field>
-
-            <Field
               label="Instructions"
               hint="Private notes — for you, not sent to the engine."
             >
@@ -307,27 +324,75 @@ export default function ProjectPage() {
               />
             </Field>
 
-            <Field label="Memory">
-              <MemoryControls
-                globalEnabled={memoryEnabled}
-                globalReadOnly={globalMemoryReadOnly}
-                projectEnabled={dedicatedMemoryEnabled}
-                onGlobalChange={setMemoryEnabled}
-                onGlobalReadOnlyChange={setGlobalMemoryReadOnly}
-                onProjectChange={setDedicatedMemoryEnabled}
-              />
-            </Field>
+            {/* Project settings — System prompt + Memory + Vault gated
+             *  behind a button on the header, so the default project
+             *  view stays focused on conversations. Forced open during
+             *  creation (isNew) so the user can configure before saving. */}
+            {(settingsOpen || isNew) && (
+              <div className="flex flex-col gap-5 rounded-xl border border-gray-200 bg-gray-50/50 p-5">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-[18px] font-light text-navy">
+                    Project settings
+                  </h2>
+                  {!isNew && (
+                    <button
+                      type="button"
+                      onClick={() => setSettingsOpen(false)}
+                      aria-label="Close settings"
+                      title="Close settings"
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-gray-500 hover:bg-white hover:text-ink"
+                    >
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M18 6L6 18M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
 
-            {!isNew && id && dedicatedMemoryEnabled && (
-              <ProjectMemoryPanel
-                projectId={id}
-                externalVaultPath={externalVaultPath}
-                externalVaultReadOnly={externalVaultReadOnly}
-                sharingEnabled={sharingEnabled}
-                onExternalVaultPathChange={setExternalVaultPath}
-                onExternalVaultReadOnlyChange={setExternalVaultReadOnly}
-                onSharingEnabledChange={setSharingEnabled}
-              />
+                <Field
+                  label="System prompt"
+                  hint="Sent as the first system message in every conversation in this project."
+                >
+                  <textarea
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
+                    rows={6}
+                    className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3.5 py-2.5 text-[13px] leading-[20px] text-ink outline-none focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
+                  />
+                </Field>
+
+                <Field label="Memory">
+                  <MemoryControls
+                    globalEnabled={memoryEnabled}
+                    globalReadOnly={globalMemoryReadOnly}
+                    projectEnabled={dedicatedMemoryEnabled}
+                    onGlobalChange={setMemoryEnabled}
+                    onGlobalReadOnlyChange={setGlobalMemoryReadOnly}
+                    onProjectChange={setDedicatedMemoryEnabled}
+                  />
+                </Field>
+
+                {!isNew && id && dedicatedMemoryEnabled && (
+                  <ProjectMemoryPanel
+                    projectId={id}
+                    externalVaultPath={externalVaultPath}
+                    externalVaultReadOnly={externalVaultReadOnly}
+                    sharingEnabled={sharingEnabled}
+                    onExternalVaultPathChange={setExternalVaultPath}
+                    onExternalVaultReadOnlyChange={setExternalVaultReadOnly}
+                    onSharingEnabledChange={setSharingEnabled}
+                  />
+                )}
+              </div>
             )}
 
             <div className="flex items-center justify-between gap-3 pt-2">
