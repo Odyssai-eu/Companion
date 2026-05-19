@@ -12,6 +12,10 @@ import {
 import { authHeaders } from "../lib/litellm";
 import { compileNow, getMemoryContext } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
+import {
+  buildSystemPrompt,
+  tagUserMessages,
+} from "../lib/prompt-builder";
 
 const conversationsRoute = new Hono();
 
@@ -614,51 +618,50 @@ conversationsRoute.post(
       .limit(1);
     if (!user) return c.json({ error: "user_not_found" }, 404);
 
-    // Memory: read the Karpathy-style compiled wiki (PG via thecompai-memory)
-    // for injection at SYSTEM-prompt level — same as chat.ts. Must match
-    // chat.ts byte-for-byte or the prewarm prefix diverges from the real
-    // next chat's, defeating the cache.
+    // Memory: read the Karpathy-style compiled wiki for SYSTEM-prompt
+    // injection. Same source as chat.ts uses; bound to the conversation's
+    // memoryEnabled flag so prewarm prefix matches what chat will send.
     let memoryBlock = "";
     if (conv.memoryEnabled !== false) {
       memoryBlock = await getMemoryContext(userId, conv.projectId);
     }
 
-    // System prompt composition — must match chat.ts byte-for-byte.
-    const systemSegments: string[] = [];
-    if (opts.system_prompt && opts.system_prompt.trim().length > 0) {
-      systemSegments.push(opts.system_prompt.trim());
-    }
-    if (memoryBlock.trim().length > 0) systemSegments.push(memoryBlock);
-    const composedSystem = systemSegments.join("\n\n---\n\n");
+    // System prompt + user-message tags via the shared builder. This is
+    // the single source of truth for both prewarm and chat — byte-stable
+    // by construction, no more "must match chat.ts" comment to enforce
+    // by hand. Builder details in server/lib/prompt-builder.ts.
+    const composedSystem = buildSystemPrompt({
+      userSystemPrompt: opts.system_prompt,
+      projectMemory: memoryBlock,
+      globalMemory: null,
+      hermesRepoBinding: null,  // prewarm is never Hermes
+    });
 
-    // Tag user messages — same logic as chat.ts (uniform: stamp=createdAt,
-    // previous=previous user msg's createdAt). Gated on memoryEnabled to
-    // match chat.ts (memory OFF → no time tags, so the prewarm prefix
-    // stays byte-identical to what the real next chat will send).
     const tz = user.timezone || "Europe/Brussels";
-    const timeTagsEnabled = conv.memoryEnabled !== false;
     type WireMsg = { role: string; content: string; createdAt?: string };
-    const tagged: WireMsg[] = [];
-    let lastUserAt: Date | null = null;
-    for (const m of msgRows) {
-      const createdIso = m.createdAt.toISOString();
-      if (m.role !== "user" || !timeTagsEnabled) {
-        tagged.push({
-          role: m.role,
-          content: m.content,
-          createdAt: createdIso,
-        });
-        continue;
-      }
-      const stamp = m.createdAt;
-      const tag = buildTag({ now: stamp, previous: lastUserAt, timezone: tz });
-      tagged.push({
-        role: m.role,
-        content: `${tag} ${m.content}`,
-        createdAt: createdIso,
-      });
-      lastUserAt = stamp;
-    }
+    // Build a tag-ready intermediate (Date instances) so the builder gets
+    // the same types chat.ts feeds it.
+    const ready = msgRows.map((m) => ({
+      role: m.role,
+      content: m.content,
+      createdAt: m.createdAt,
+    }));
+    const taggedRich = tagUserMessages(ready, {
+      enabled: conv.memoryEnabled !== false,
+      timezone: tz,
+    });
+    // The wire schema needs string ISO createdAts and string content.
+    const tagged: WireMsg[] = taggedRich.map((m) => ({
+      role: m.role,
+      content: typeof m.content === "string"
+        ? m.content
+        // Persisted msg rows are always string today — but be defensive
+        // if a future schema lets multimodal through.
+        : JSON.stringify(m.content),
+      createdAt: m.createdAt instanceof Date
+        ? m.createdAt.toISOString()
+        : (m.createdAt || ""),
+    }));
 
     // Whether to append a synthetic dummy user message. LiteLLM (and most
     // upstream engines) require messages to end with `user`. Odysseus'
@@ -667,6 +670,17 @@ conversationsRoute.post(
     // user or assistant. We decide AFTER computing prewarmMode below.
     const needsDummyUser = (mode: "gateway" | "hybrid" | "legacy") =>
       mode !== "gateway";
+
+    // Recover the last user message's createdAt so the dummy can chain
+    // a sensible Δ in its tag — the shared builder doesn't expose it,
+    // but it's trivial to find from msgRows.
+    const timeTagsEnabled = conv.memoryEnabled !== false;
+    const lastUserAt: Date | null = (() => {
+      for (let i = msgRows.length - 1; i >= 0; i--) {
+        if (msgRows[i].role === "user") return msgRows[i].createdAt;
+      }
+      return null;
+    })();
 
     function withDummy(): WireMsg[] {
       const out = [...tagged];

@@ -37,7 +37,11 @@ import { getMemoryContext } from "../lib/memory";
 import { registerInactivityCompile } from "../lib/memory-scheduler";
 import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
 import { getProjectMemoryContext } from "../lib/project-memory";
-import { buildTag } from "../lib/timetag";
+import {
+  buildSystemPrompt,
+  buildHermesRepoBinding,
+  tagUserMessages,
+} from "../lib/prompt-builder";
 import type { GuestTokenContext } from "../lib/guest-token";
 import {
   appendInferenceContent,
@@ -387,49 +391,27 @@ chatRoute.post("/completions", async (c) => {
   // models will spend cycles trying to justify (cf. Hy3, Hunyuan, Qwen3
   // in thinking mode). So when memory is disabled for this conversation,
   // we skip tagging entirely — pure user content goes to the model.
+  // Time tags + system composition routed through the shared
+  // prompt-builder so prewarm (conversations.ts) and chat stay byte-
+  // identical. The byte-stability invariant is what makes the upstream
+  // KV prefix cache actually hit on the second turn.
   const tz = userRow.timezone || "Europe/Brussels";
-  const taggedMessages: IncomingMessage[] = [];
-  let lastUserAt: Date | null = null;
-  const timeTagsEnabled = convMemoryEnabled;
-
-  for (const m of body.messages) {
-    if (m.role !== "user") {
-      taggedMessages.push(m);
-      continue;
-    }
-    if (!timeTagsEnabled) {
-      taggedMessages.push(m);
-      continue;
-    }
-    const stamp = m.createdAt ? new Date(m.createdAt) : now;
-    const previous = lastUserAt;
-    const tag = buildTag({ now: stamp, previous, timezone: tz });
-    taggedMessages.push({
-      ...m,
-      content: prependTagToContent(m.content, tag),
-    });
-    lastUserAt = stamp;
-  }
-
-  // ── 5. Compose system prompt: user prompt + memory + repo binding ───
-  const systemSegments: string[] = [];
-  if (body.system_prompt && body.system_prompt.trim().length > 0) {
-    systemSegments.push(body.system_prompt.trim());
-  }
-  if (memoryBlock.trim().length > 0) systemSegments.push(memoryBlock);
-  // Repo binding (kind='hermes' only). Tell the agent where to work —
-  // it's expected to `cd` there (or pass `cwd` to bash) before any
-  // filesystem / git / build operation. We don't enforce the path; if
-  // it doesn't exist Hermes will surface the failure and the user can
-  // correct it.
-  if (convKind === "hermes" && convRepoPath) {
-    systemSegments.push(
-      `# Working directory\n\nThis conversation is bound to the repo at: \`${convRepoPath}\`\n\n` +
-        `Operate inside that directory unless explicitly told otherwise. Use \`cd ${convRepoPath}\` ` +
-        `at the start of any bash command, or pass it as cwd to your tools.`,
-    );
-  }
-  const composedSystem = systemSegments.join("\n\n---\n\n");
+  const taggedMessages = tagUserMessages(body.messages, {
+    enabled: convMemoryEnabled,
+    timezone: tz,
+    nowFallback: now,
+  });
+  const composedSystem = buildSystemPrompt({
+    userSystemPrompt: body.system_prompt,
+    // Today chat.ts already collapsed project + global into a single
+    // memoryBlock above (joined with the same separator). Pass it as
+    // projectMemory so the builder doesn't double-join — globalMemory
+    // stays empty in this code path.
+    projectMemory: memoryBlock,
+    globalMemory: null,
+    hermesRepoBinding:
+      convKind === "hermes" ? buildHermesRepoBinding(convRepoPath) : null,
+  });
 
   const withSystem =
     composedSystem.length > 0
@@ -1035,28 +1017,9 @@ chatRoute.post("/completions", async (c) => {
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────
-
-function prependTagToContent(
-  content: string | ContentPart[],
-  tag: string,
-): string | ContentPart[] {
-  if (typeof content === "string") {
-    return `${tag} ${content}`;
-  }
-  // Multimodal: find the first text part and prepend; if none, add one.
-  const out: ContentPart[] = [];
-  let injected = false;
-  for (const part of content) {
-    if (!injected && part.type === "text") {
-      out.push({ type: "text", text: `${tag} ${part.text}` });
-      injected = true;
-    } else {
-      out.push(part);
-    }
-  }
-  if (!injected) out.unshift({ type: "text", text: tag });
-  return out;
-}
+// `prependTagToContent` moved to ../lib/prompt-builder; chat.ts now calls
+// it via the unified `tagUserMessages()` wrapper. Don't re-add here —
+// the audit explicitly warned that two copies will inevitably drift.
 
 // ── Tool-call streaming infrastructure ─────────────────────────────────────
 
