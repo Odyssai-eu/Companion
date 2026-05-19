@@ -683,11 +683,22 @@ function EditModal({
           >
             <input
               type="password"
+              autoComplete="off"
+              spellCheck={false}
               value={draft.authHeader}
-              onChange={(e) => {
-                set("authHeader", e.target.value);
-                set("authHeaderDirty", true);
-              }}
+              onChange={(e) =>
+                // Single onChange call — two consecutive set("authHeader",…)
+                // + set("authHeaderDirty",…) used to lose every keystroke
+                // because the second set() closed over the pre-update draft
+                // and React batched both into one render. Sophie 2026-05-19:
+                // "le auth header n'accepte pas le paste, impossible, pas
+                // éditable en fait, même le type ne marche pas."
+                onChange({
+                  ...draft,
+                  authHeader: e.target.value,
+                  authHeaderDirty: true,
+                })
+              }
               placeholder={
                 draft.id && !draft.authHeaderDirty
                   ? "•••••••• (saved)"
