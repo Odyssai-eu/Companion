@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { ProjectIcon } from "~/components/ProjectIcon";
+import { ProjectStatusIcons } from "~/components/ProjectStatusIcons";
 import Sidebar from "~/components/chat/Sidebar";
 import { api, type ApiConversation, type ApiProject } from "~/lib/api";
 
@@ -97,8 +98,13 @@ function ProjectTile({
       to={`/projects/${project.id}`}
       className="group flex aspect-square flex-col items-start justify-between rounded-2xl border border-gray-200 bg-white p-5 transition-all hover:border-cyan hover:shadow-md"
     >
-      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[rgba(79,179,217,0.10)] text-cyan transition-colors group-hover:bg-cyan group-hover:text-white">
-        <ProjectIcon name={project.icon} size={22} />
+      <div className="flex w-full items-start justify-between">
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[rgba(79,179,217,0.10)] text-cyan transition-colors group-hover:bg-cyan group-hover:text-white">
+          <ProjectIcon name={project.icon} size={22} />
+        </div>
+        {/* Status icons mirror the project page header: shows what's
+         *  wired up at a glance. Hidden when nothing is active. */}
+        <ProjectStatusIcons project={project} size={12} tone="ghost" />
       </div>
       <div className="flex w-full flex-col gap-1">
         <span className="line-clamp-2 text-[15px] font-medium text-ink">

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import Sidebar from "~/components/chat/Sidebar";
 import { ProjectIcon } from "~/components/ProjectIcon";
+import { ProjectStatusIcons } from "~/components/ProjectStatusIcons";
 import {
   api,
   type ApiConversation,
@@ -166,8 +167,12 @@ export default function ProjectPage() {
       />
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-[820px] flex-col gap-10 px-14 py-16">
-          <header className="flex items-start justify-between gap-6">
-            <div className="flex flex-col gap-2">
+          <header className="flex flex-col gap-3">
+            {/* Top row: back link (left) + action buttons (right). The
+             *  title block moved to its own row below so it can take
+             *  the full container width — used to wrap to 2 lines when
+             *  the buttons ate the right half. */}
+            <div className="flex items-start justify-between gap-6">
               <Link
                 to="/projects"
                 className="flex items-center gap-1.5 text-[13px] text-gray-500 hover:text-ink"
@@ -186,18 +191,6 @@ export default function ProjectPage() {
                 </svg>
                 Back to projects
               </Link>
-              <span className="font-sans text-[13px] font-medium tracking-[0.08em] text-cyan uppercase">
-                Project
-              </span>
-              <h1 className="flex items-center gap-3 font-display text-[40px] leading-[48px] font-light text-navy">
-                <ProjectIcon
-                  name={categoryIcon(categories, category)}
-                  size={32}
-                  className="text-navy"
-                />
-                {isNew ? "New project." : `${project?.name ?? "…"}.`}
-              </h1>
-            </div>
             {!isNew && project && (
               <div className="flex flex-shrink-0 gap-2">
                 <a
@@ -266,6 +259,42 @@ export default function ProjectPage() {
                 </button>
               </div>
             )}
+            </div>
+
+            {/* Status icons — appear below the action buttons,
+             *  right-aligned. Reads as a quick "what's wired up here"
+             *  glance: system-prompt set? global wiki on? read-only?
+             *  project corpus on? Empty / off settings stay hidden. */}
+            {!isNew && project && (
+              <div className="flex justify-end">
+                <ProjectStatusIcons
+                  project={{
+                    systemPrompt,
+                    memoryEnabled,
+                    globalMemoryReadOnly,
+                    dedicatedMemoryEnabled,
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Title row — full container width so long names don't
+             *  wrap awkwardly because of the buttons on the right. */}
+            <div className="flex flex-col gap-2">
+              <span className="font-sans text-[13px] font-medium tracking-[0.08em] text-cyan uppercase">
+                Project
+              </span>
+              <h1 className="flex items-center gap-3 font-display text-[40px] leading-[48px] font-light text-navy">
+                <ProjectIcon
+                  name={categoryIcon(categories, category)}
+                  size={32}
+                  className="flex-shrink-0 text-navy"
+                />
+                <span className="truncate">
+                  {isNew ? "New project." : `${project?.name ?? "…"}.`}
+                </span>
+              </h1>
+            </div>
           </header>
 
           {error && (
