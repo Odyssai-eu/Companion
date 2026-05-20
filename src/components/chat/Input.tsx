@@ -537,17 +537,33 @@ function ModelDropdown({
     [models, hiddenSet, inferenceMode],
   );
 
-  // Group by tag (first tag wins). Untagged → "Other".
+  // The "Auto" synthetic entry — picks chat / deep / code automatically
+  // via the semantic-router add-on. Always rendered first; if the add-on
+  // isn't configured, the server returns a clear 400 pointing to Settings.
+  const AUTO_MODEL: ApiGlobalModel = useMemo(
+    () => ({
+      id: "auto",
+      name: "Auto — pick best model per message",
+      tags: ["Smart"],
+      capabilities: { vision: false, tools: false },
+    }),
+    [],
+  );
+
+  // Group by tag (first tag wins). Untagged → "Other". Auto always
+  // sits at the top of the list in its own "Smart" group.
   const groups = useMemo(() => {
     const out = new Map<string, ApiGlobalModel[]>();
+    out.set("Smart", [AUTO_MODEL]);
     for (const m of visibleModels) {
+      if (m.id === "auto") continue; // dedupe if backend ever lists it
       const tag = m.tags[0] ?? "Models";
       const list = out.get(tag) ?? [];
       list.push(m);
       out.set(tag, list);
     }
     return Array.from(out.entries());
-  }, [visibleModels]);
+  }, [visibleModels, AUTO_MODEL]);
 
   useEffect(() => {
     if (!open) return;
@@ -558,8 +574,10 @@ function ModelDropdown({
     return () => window.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  const current = models.find((m) => m.id === value);
-  const label = current?.name ?? value ?? "Pick a model";
+  const current =
+    value === "auto" ? AUTO_MODEL : models.find((m) => m.id === value);
+  const label =
+    value === "auto" ? "Auto" : (current?.name ?? value ?? "Pick a model");
 
   return (
     <div ref={wrapperRef} className="relative">

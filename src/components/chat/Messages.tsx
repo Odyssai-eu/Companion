@@ -551,6 +551,15 @@ function StatsRow({
   if (stats.speed) items.push(["Speed", stats.speed]);
   if (stats.chunks !== undefined) items.push(["Chunks", String(stats.chunks)]);
   if (model) items.push(["Model", model]);
+  // Auto-router chip: when the picker was set to "auto" and the server
+  // routed the request, surface the decision so the user can verify
+  // (and tune the policy if the choice was wrong).
+  if (typeof stats.routedFrom === "string" && typeof stats.routedLabel === "string") {
+    const scoreStr = typeof stats.routedScore === "number"
+      ? ` ${stats.routedScore.toFixed(2)}`
+      : "";
+    items.push(["Routed", `${stats.routedLabel}${scoreStr}`]);
+  }
   if (stats.cost) items.push(["Cost", stats.cost]);
 
   if (items.length === 0) return null;

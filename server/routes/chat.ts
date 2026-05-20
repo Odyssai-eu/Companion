@@ -33,6 +33,11 @@ import { conversations, messages, projects, users } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { incrementGuestUsage } from "../lib/guest-token";
 import { authHeaders } from "../lib/litellm";
+import {
+  routeMessage,
+  EmbeddingServiceError,
+} from "../lib/semantic-router";
+import { loadRouterConfigForUser } from "./addon-router";
 import { getMemoryContext } from "../lib/memory";
 import { registerInactivityCompile } from "../lib/memory-scheduler";
 import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
@@ -136,6 +141,77 @@ chatRoute.post("/completions", async (c) => {
 
   const userId = c.get("userId");
   const guest: GuestTokenContext | undefined = c.get("guest");
+
+  // ── Auto-router pre-step ────────────────────────────────────────────────
+  // When the client picks "auto", we run the user's last message through
+  // the semantic router add-on (small embedding model on the cluster) to
+  // choose chat / deep / code → the configured model for that bucket.
+  // If the add-on is not configured, we 400 with a clear error rather
+  // than silently dispatching to a fallback — the user enabled "auto"
+  // expecting routing; pretending isn't help.
+  let routedDecision:
+    | { from: string; to: string; label: string; score: number; ms: number }
+    | null = null;
+  if (body.model === "auto") {
+    const routerCfg = await loadRouterConfigForUser(userId);
+    if (!routerCfg) {
+      return c.json(
+        {
+          error: "auto_router_not_configured",
+          detail:
+            "The Auto Router add-on is not enabled or not configured. " +
+            "Open Settings → Add-ons → Auto Router to set the embeddings URL " +
+            "and pick a model per bucket.",
+        },
+        400,
+      );
+    }
+    // Find the latest user message — that's what we route on. Going further
+    // back risks classifying on stale context (the conversation may have
+    // pivoted from a deep analysis to "tu te sens comment").
+    const lastUser = [...body.messages]
+      .reverse()
+      .find((m) => m.role === "user");
+    if (!lastUser) {
+      return c.json({ error: "auto_router_no_user_message" }, 400);
+    }
+    const userText = typeof lastUser.content === "string"
+      ? lastUser.content
+      : Array.isArray(lastUser.content)
+        ? lastUser.content
+            .map((p) => (typeof p === "string" ? p : (p as { text?: string }).text ?? ""))
+            .join("\n")
+        : "";
+    try {
+      const decision = await routeMessage(userText.slice(0, 4000), routerCfg);
+      console.log(
+        "[chat] auto-router → %s (label=%s score=%.3f) in %dms",
+        decision.model,
+        decision.label,
+        decision.score,
+        decision.ms,
+      );
+      body.model = decision.model;
+      routedDecision = {
+        from: "auto",
+        to: decision.model,
+        label: decision.label,
+        score: decision.score,
+        ms: decision.ms,
+      };
+    } catch (e) {
+      // Embedding service down → fail loud. Better than silently picking
+      // a wrong model the user can't see.
+      const msg =
+        e instanceof EmbeddingServiceError
+          ? e.message
+          : `auto_router_failed: ${(e as Error).message}`;
+      return c.json(
+        { error: "auto_router_unavailable", detail: msg },
+        503,
+      );
+    }
+  }
 
   // Guest budget pre-check — short-circuit before we stream anything.
   // tokenBudget = 0 means unlimited.
@@ -938,12 +1014,18 @@ chatRoute.post("/completions", async (c) => {
                 model: modelLabel,
               }
             : { chunks: totalChunkCount, durationMs: st.totalMs, model: modelLabel };
+          // Surface the auto-router decision so the UI can render a chip
+          // "via Auto → {model} ({label}, {score})". Stored on the
+          // assistant message so it's visible when the chat is reopened.
+          const statsWithRouting = routedDecision
+            ? { ...stats, routedFrom: "auto", routedLabel: routedDecision.label, routedScore: routedDecision.score, routedMs: routedDecision.ms }
+            : stats;
           try {
             await db.insert(messages).values({
               conversationId: convIdLocal,
               role: "assistant",
               content,
-              stats: stats as Record<string, unknown>,
+              stats: statsWithRouting as Record<string, unknown>,
             });
             await db
               .update(conversations)

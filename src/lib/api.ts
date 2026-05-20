@@ -1049,6 +1049,55 @@ export const api = {
 
   // Hermes Agent add-on retired 2026-05-19.
 
+  // Auto Router add-on (semantic routing via embeddings)
+  routerInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      configured: boolean;
+      embeddingsUrl: string;
+      embeddingsUrlDefault: string;
+      embeddingsModel: string;
+      policy: { chat: string; deep: string; code: string };
+      policyDefault: { chat: string; deep: string; code: string };
+      anchorsBuiltAt: string | null;
+    }>("/api/addons/router/info"),
+  routerSetConfig: (body: {
+    enabled?: boolean;
+    embeddingsUrl?: string;
+    embeddingsModel?: string | null;
+    policy?: { chat: string; deep: string; code: string };
+    rebuildAnchors?: boolean;
+  }) =>
+    request<{
+      ok: true;
+      enabled: boolean;
+      configured: boolean;
+      embeddingsUrl: string;
+      embeddingsModel: string;
+      policy: { chat: string; deep: string; code: string };
+      anchorsBuiltAt: string | null;
+    }>("/api/addons/router/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  routerRebuild: () =>
+    request<{ ok: true; anchorsBuiltAt: string }>(
+      "/api/addons/router/rebuild",
+      { method: "POST" },
+    ),
+  routerTest: (input: string) =>
+    request<{
+      label: "chat" | "deep" | "code";
+      model: string;
+      score: number;
+      scores: { chat: number; deep: number; code: number };
+      ms: number;
+    }>("/api/addons/router/test", {
+      method: "POST",
+      body: JSON.stringify({ input }),
+    }),
+
   // Voice (Gemini Live) add-on
   voiceLiveInfo: () =>
     request<{

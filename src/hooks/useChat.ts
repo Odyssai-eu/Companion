@@ -105,6 +105,12 @@ export type UIMessage = {
      *  reloaded and the live model picker state is gone. Set in chat.ts
      *  when the assistant message is persisted. */
     model?: string;
+    /** Auto-router decision. Set only when the picker was "auto" and the
+     *  server routed via the semantic-router add-on. */
+    routedFrom?: string;
+    routedLabel?: string;
+    routedScore?: number;
+    routedMs?: number;
   };
 };
 
