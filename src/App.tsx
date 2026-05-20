@@ -15,7 +15,7 @@ import AppearancePage from "./pages/settings/AppearancePage";
 // ComingSoonPage no longer routed for Security — section retired
 // 2026-05-19 per Sophie's UX brief.
 import ExternalAgentsPage from "./pages/settings/ExternalAgentsPage";
-import HelpPage from "./pages/settings/HelpPage";
+import UserGuidePage from "./pages/settings/UserGuidePage";
 import InferencePage from "./pages/settings/InferencePage";
 import McpServersPage from "./pages/settings/McpServersPage";
 import SkillsPage from "./pages/settings/SkillsPage";
@@ -104,7 +104,9 @@ export default function App() {
         <Route path="mcp-servers" element={<McpServersPage />} />
         <Route path="skills" element={<SkillsPage />} />
         <Route path="admin" element={<AdminPage />} />
-        <Route path="help" element={<HelpPage />} />
+        <Route path="user-guide" element={<UserGuidePage />} />
+        <Route path="user-guide/:slug" element={<UserGuidePage />} />
+        <Route path="help" element={<Navigate to="/settings/user-guide" replace />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

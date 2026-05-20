@@ -1,7 +1,7 @@
 import { NavLink } from "react-router";
 import { useAuth } from "~/hooks/useAuth";
 
-type NavItem = { to: string; label: string };
+type NavItem = { to: string; label: string; end?: boolean };
 type NavSection = { title: string; items: NavItem[] };
 
 // Settings nav — refactor 2026-05-19 per Sophie's UX brief:
@@ -44,7 +44,7 @@ const baseSections: NavSection[] = [
   },
   {
     title: "Reference",
-    items: [{ to: "/settings/help", label: "Help" }],
+    items: [{ to: "/settings/user-guide", label: "User Guide", end: false }],
   },
 ];
 
@@ -89,7 +89,7 @@ export default function SettingsNav() {
                     : "text-gray-600 hover:bg-gray-50 hover:text-ink"
                 }`
               }
-              end
+              end={item.end ?? true}
             >
               {item.label}
             </NavLink>

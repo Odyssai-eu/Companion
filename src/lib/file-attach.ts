@@ -11,7 +11,6 @@
 // `[Image: filename]` markers. Live multimodal payload goes to the model only.
 
 import * as pdfjs from "pdfjs-dist";
-// @ts-expect-error — Vite resolves the worker via ?url
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
