@@ -14,8 +14,6 @@ Companion is a universal client for AI inference. You bring the engine — local
 - **Companion** — the client you're reading this in.
 - **Odysseus** — Sophie's distributed MLX inference engine, OpenAI-compatible. Companion is happiest paired with it, but speaks plain OpenAI / Anthropic / OpenRouter just as well.
 
-## How this guide is organised
-
-Each topic on the left is a single markdown page in `src/content/user-guide/`. Edit a page and the next deploy ships the new copy — no DB, no build step beyond `./scripts/deploy-dev.sh`. The guide stays a living wiki rather than a fossil README.
+## How to use it
 
 Start with **Getting started** if this is your first session. Otherwise pick the topic that matches what you're stuck on — the topics are independent.
