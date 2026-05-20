@@ -512,21 +512,6 @@ export const api = {
   deleteInferencePreset: (id: string) =>
     request<void>(`/api/inference/presets/${id}`, { method: "DELETE" }),
 
-  // Skills — named system-prompt fragments stored server-side
-  listSkills: () => request<{ skills: ApiSkill[] }>("/api/skills"),
-  createSkill: (body: ApiSkillInput) =>
-    request<{ skill: ApiSkill }>("/api/skills", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  updateSkill: (id: string, body: Partial<ApiSkillInput>) =>
-    request<{ skill: ApiSkill }>(`/api/skills/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    }),
-  deleteSkill: (id: string) =>
-    request<void>(`/api/skills/${id}`, { method: "DELETE" }),
-
   // MCP servers — Companion as a client of remote MCP endpoints
   listMcpServers: () =>
     request<{ servers: ApiMcpServer[] }>("/api/mcp-servers"),

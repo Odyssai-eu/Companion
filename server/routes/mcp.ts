@@ -806,6 +806,7 @@ function buildServer(opts: {
           tags: agentSkills.tags,
           source: agentSkills.source,
           body: agentSkills.body,
+          files: agentSkills.files,
         })
         .from(agentSkills)
         .where(eq(agentSkills.userId, opts.userId))
@@ -817,6 +818,7 @@ function buildServer(opts: {
         source: r.source,
         preview: r.body.slice(0, 200) + (r.body.length > 200 ? "…" : ""),
         bodyLength: r.body.length,
+        fileCount: Object.keys(r.files ?? {}).length,
       }));
       return {
         content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
@@ -857,7 +859,11 @@ function buildServer(opts: {
         description: row.description,
         tags: row.tags,
         source: row.source,
+        license: row.license,
+        compatibility: row.compatibility,
         body: row.body,
+        files: row.files,
+        metadata: row.metadata,
         updatedAt: row.updatedAt,
       };
       return {
@@ -870,13 +876,21 @@ function buildServer(opts: {
     "companion_create_skill",
     {
       description:
-        "Persist a new agent skill. Fails on name collision — use companion_update_skill in that case. Set source='imported' when bulk-loading from an external library (e.g. Anthropic's published skills); otherwise the row is tagged 'agent'.",
+        "Persist a new agent skill (agentskills.io format). Name must be lowercase a-z/0-9/hyphen, 1-64 chars. Fails on name collision — use companion_update_skill in that case. Set source='imported' when bulk-loading from an external library (e.g. Anthropic's published skills); otherwise the row is tagged 'agent'. Supporting files (scripts/, references/, assets/) live in `files` as a map of relative path → contents.",
       inputSchema: {
-        name: z.string().min(1).max(120),
-        body: z.string().min(1).max(50_000),
-        description: z.string().max(500).optional(),
+        name: z
+          .string()
+          .min(1)
+          .max(64)
+          .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/),
+        body: z.string().min(1).max(200_000),
+        description: z.string().max(1024).optional(),
         tags: z.array(z.string().max(40)).max(20).optional(),
         source: z.enum(["agent", "user", "imported"]).optional(),
+        license: z.string().max(200).optional(),
+        compatibility: z.string().max(500).optional(),
+        files: z.record(z.string(), z.string()).optional(),
+        metadata: z.record(z.string(), z.unknown()).optional(),
       },
     },
     async (args) => {
@@ -890,6 +904,10 @@ function buildServer(opts: {
             description: args.description ?? null,
             tags: args.tags ?? [],
             source: args.source ?? "agent",
+            license: args.license ?? null,
+            compatibility: args.compatibility ?? null,
+            files: args.files ?? {},
+            metadata: args.metadata ?? {},
           })
           .returning({ id: agentSkills.id, name: agentSkills.name });
         return {
@@ -922,12 +940,16 @@ function buildServer(opts: {
     "companion_update_skill",
     {
       description:
-        "Edit an existing agent skill by name. Pass only the fields to change. Use this when refining a skill or fixing a typo.",
+        "Edit an existing agent skill by name. Pass only the fields to change. Use this when refining a skill, fixing a typo, or adding supporting files.",
       inputSchema: {
-        name: z.string().min(1).max(120),
-        body: z.string().min(1).max(50_000).optional(),
-        description: z.string().max(500).nullable().optional(),
+        name: z.string().min(1).max(64),
+        body: z.string().min(1).max(200_000).optional(),
+        description: z.string().max(1024).nullable().optional(),
         tags: z.array(z.string().max(40)).max(20).optional(),
+        license: z.string().max(200).nullable().optional(),
+        compatibility: z.string().max(500).nullable().optional(),
+        files: z.record(z.string(), z.string()).optional(),
+        metadata: z.record(z.string(), z.unknown()).optional(),
       },
     },
     async (args) => {
@@ -936,13 +958,18 @@ function buildServer(opts: {
       if (args.description !== undefined)
         patch.description = args.description;
       if (args.tags !== undefined) patch.tags = args.tags;
+      if (args.license !== undefined) patch.license = args.license;
+      if (args.compatibility !== undefined)
+        patch.compatibility = args.compatibility;
+      if (args.files !== undefined) patch.files = args.files;
+      if (args.metadata !== undefined) patch.metadata = args.metadata;
       if (Object.keys(patch).length === 1) {
         return {
           isError: true,
           content: [
             {
               type: "text",
-              text: "Nothing to update — pass at least one of body / description / tags.",
+              text: "Nothing to update — pass at least one of body / description / tags / license / compatibility / files / metadata.",
             },
           ],
         };

@@ -1,12 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { InferenceParams } from "~/hooks/useChat";
-import {
-  api,
-  type ApiInferencePreset,
-  type ApiSkill,
-} from "~/lib/api";
-import { downloadFile } from "~/lib/file-export";
-import { promptLibrary } from "~/lib/prompt-library";
+import { api, type ApiInferencePreset } from "~/lib/api";
 
 type Props = {
   params: InferenceParams;
@@ -131,113 +125,9 @@ function SystemPromptSection({
   params: InferenceParams;
   onChange: (next: Partial<InferenceParams>) => void;
 }) {
-  // Server-side "skills" library. Replaces the localStorage prompt-library
-  // (kept around for a one-shot migration import on first load).
-  const [library, setLibrary] = useState<ApiSkill[]>([]);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  async function refresh() {
-    try {
-      const { skills } = await api.listSkills();
-      setLibrary(skills);
-    } catch {
-      // ignore — empty list is fine
-    }
-  }
-
-  useEffect(() => {
-    void (async () => {
-      await refresh();
-      // One-shot migration of the legacy localStorage prompt-library.
-      // We import any local entries that don't already exist on the
-      // server (by name), then clear the local store so the migration
-      // doesn't re-run. Silent — no UI prompt, by design: the prompts
-      // were the user's, they want them back, no friction.
-      const local = promptLibrary.list();
-      if (local.length === 0) return;
-      const { skills } = await api.listSkills().catch(() => ({
-        skills: [] as ApiSkill[],
-      }));
-      const taken = new Set(skills.map((s) => s.name));
-      const toImport = local.filter((p) => !taken.has(p.name));
-      for (const p of toImport) {
-        await api
-          .createSkill({ name: p.name, body: p.content })
-          .catch(() => undefined);
-      }
-      if (toImport.length > 0) {
-        await refresh();
-      }
-      // Mark migration done so we don't retry on every panel open. The
-      // legacy library stays exportable until the user explicitly
-      // clears it via the existing migration utility.
-      promptLibrary.markMigrated?.();
-    })();
-  }, []);
-
-  async function onSaveCurrent() {
-    const name = window.prompt("Name this skill:", "")?.trim();
-    if (!name) return;
-    if (!params.systemPrompt.trim()) return;
-    try {
-      await api.createSkill({ name, body: params.systemPrompt });
-      await refresh();
-    } catch (e) {
-      alert(`Couldn't save: ${(e as Error).message}`);
-    }
-  }
-
-  function onLoad(id: string) {
-    const found = library.find((p) => p.id === id);
-    if (!found) return;
-    onChange({ systemPrompt: found.body, systemPromptEnabled: true });
-  }
-
-  function onExport() {
-    const payload = JSON.stringify(
-      library.map((s) => ({ name: s.name, content: s.body })),
-      null,
-      2,
-    );
-    downloadFile(
-      "companion-skills.json",
-      payload,
-      "application/json",
-    );
-  }
-
-  function onImport(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    file.text().then(async (text) => {
-      try {
-        const parsed = JSON.parse(text) as Array<{
-          name?: string;
-          content?: string;
-          body?: string;
-        }>;
-        if (!Array.isArray(parsed)) {
-          alert("Couldn't import — file format wasn't recognized.");
-          return;
-        }
-        let n = 0;
-        for (const p of parsed) {
-          const name = p.name?.trim();
-          const body = (p.body ?? p.content)?.trim();
-          if (!name || !body) continue;
-          await api.createSkill({ name, body }).catch(() => undefined);
-          n++;
-        }
-        await refresh();
-        if (n > 0) alert(`Imported ${n} skill${n > 1 ? "s" : ""}.`);
-        else alert("No valid entries found in file.");
-      } catch {
-        alert("Couldn't import — file format wasn't recognized.");
-      }
-    });
-  }
-
+  // Free-form, conversation-level system prompt. Named reusable
+  // prompts moved to agent_skills (Settings → Skills); the chat panel
+  // no longer save/loads named entries here.
   return (
     <div className="mt-5 border-t border-gray-100 pt-4">
       <div className="mb-2 flex items-center justify-between">
@@ -245,49 +135,6 @@ function SystemPromptSection({
           System prompt
         </span>
         <div className="flex items-center gap-3">
-          <select
-            value=""
-            onChange={(e) => {
-              if (e.target.value) onLoad(e.target.value);
-            }}
-            className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:border-gray-300"
-          >
-            <option value="">Load saved…</option>
-            {library.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={onSaveCurrent}
-            disabled={!params.systemPrompt.trim()}
-            className="text-[11px] text-cyan hover:text-navy disabled:opacity-40"
-          >
-            Save current
-          </button>
-          <button
-            type="button"
-            onClick={onExport}
-            className="text-[11px] text-gray-400 hover:text-ink"
-          >
-            Export
-          </button>
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            className="text-[11px] text-gray-400 hover:text-ink"
-          >
-            Import
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".json,application/json"
-            onChange={onImport}
-            className="hidden"
-          />
           <span className="text-[10px] text-gray-400">
             {params.systemPromptEnabled ? "included" : "not included"}
           </span>

@@ -30,7 +30,6 @@ import guestRoute from "./routes/guest";
 import inferenceRoute from "./routes/inference";
 import inferencePresetsRoute from "./routes/inference-presets";
 import mcpServersRoute, { handleOauthCallback } from "./routes/mcp-servers";
-import skillsRoute from "./routes/skills";
 import licenseRoute from "./routes/license";
 import modelsRoute from "./routes/models";
 import profileRoute from "./routes/profile";
@@ -96,8 +95,6 @@ app.use(
 app.use("/api/providers/*", licenseGate, requireUser);
 app.use("/api/mcp-servers/*", licenseGate, requireUser);
 app.use("/api/mcp-servers", licenseGate, requireUser);
-app.use("/api/skills/*", licenseGate, requireUser);
-app.use("/api/skills", licenseGate, requireUser);
 // Resolve bearer-token auth for the Obsidian plugin BEFORE requireUser runs,
 // so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
@@ -152,7 +149,6 @@ app.route("/api/mcp-servers", mcpServersRoute);
 // Notion's redirect lands here as a cross-origin top-level navigation
 // without our session cookie, so it can't sit under /api/mcp-servers/*.
 app.get("/api/mcp-oauth/callback", handleOauthCallback);
-app.route("/api/skills", skillsRoute);
 app.route("/api/admin/users", adminUsersRoute);
 app.route("/api/admin/guest-tokens", adminGuestTokensRoute);
 app.route("/api/agent-tokens", agentTokensRoute);

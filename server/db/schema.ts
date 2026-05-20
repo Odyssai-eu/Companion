@@ -731,38 +731,19 @@ export type NewMcpOauthPendingRow = typeof mcpOauthPending.$inferInsert;
 // reloads from the chat's InferencePanel. Different shape from
 // inference_presets (prose, no params) and different lifecycle
 // (model-agnostic), so kept separate.
-export const promptSkills = pgTable(
-  "prompt_skills",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    description: text("description"),
-    body: text("body").notNull(),
-    /** Free-text categories for filtering — "writing", "code-review", … */
-    tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .default(sql`now()`),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .default(sql`now()`),
-  },
-  (t) => ({
-    userIdx: index("prompt_skills_user_id_idx").on(t.userId),
-  }),
-);
-
-export type PromptSkillRow = typeof promptSkills.$inferSelect;
-export type NewPromptSkillRow = typeof promptSkills.$inferInsert;
-
-// Agent skills — markdown instruction packages the chat model loads on
-// demand. Distinct from prompt_skills (which the user picks via the
-// chat panel dropdown). Created / read / updated / deleted by the chat
-// model itself via the `skill_*` built-in tools and the corresponding
-// MCP gateway tools. See 0038_agent_skills.sql for the rationale.
+// Agent skills — Anthropic-compatible Agent Skills format. A skill is
+// a folder containing a SKILL.md (frontmatter + markdown body) plus
+// optional supporting files under scripts/, references/, assets/.
+// We persist the whole package in one row: name + description as
+// first-class columns (for the dropdown / index lookup), body as the
+// SKILL.md content, files as a map { relative_path: content } for
+// the supporting files, metadata as a jsonb stash for frontmatter
+// fields we don't promote to columns.
+//
+// The chat model curates these via skill_* built-in tools and the
+// corresponding companion_*_skill MCP gateway tools. Sophie's flow:
+// "Nemo, crée une skill X" → skill_create; "importe ce SKILL.md" →
+// skill_import_md; "exporte" → skill_export_zip.
 export const agentSkills = pgTable(
   "agent_skills",
   {
@@ -773,6 +754,18 @@ export const agentSkills = pgTable(
     name: text("name").notNull(),
     description: text("description"),
     body: text("body").notNull(),
+    license: text("license"),
+    compatibility: text("compatibility"),
+    /** { relative_path: content } — scripts/, references/, assets/ etc. */
+    files: jsonb("files")
+      .notNull()
+      .default(sql`'{}'::jsonb`)
+      .$type<Record<string, string>>(),
+    /** Extra YAML frontmatter fields (version, license, …). */
+    metadata: jsonb("metadata")
+      .notNull()
+      .default(sql`'{}'::jsonb`)
+      .$type<Record<string, unknown>>(),
     tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
     /** 'user' | 'agent' | 'imported' — who/what produced this row. */
     source: text("source").notNull().default("agent"),

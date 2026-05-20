@@ -51,6 +51,7 @@ import {
   startInference,
 } from "../lib/inference-state";
 import {
+  alwaysOnTools,
   executeTool,
   toolsForUser,
   type ToolResult,
@@ -479,8 +480,11 @@ chatRoute.post("/completions", async (c) => {
   // chat does NOT inject any tool defs, so the prompt stays ~250 tokens
   // (vs 1000+ with FS/RAG/Web schemas) and the engine can stream freely
   // (no `shouldUseNonStream` forcing on jaccl).
-  const tools =
-    supportsTools && convAgentMode ? await toolsForUser(userId) : [];
+  const tools = supportsTools
+    ? convAgentMode
+      ? [...alwaysOnTools(), ...(await toolsForUser(userId))]
+      : alwaysOnTools()
+    : [];
   const toolsEnabled = tools.length > 0;
 
   // Probe routing — gateway mode only. If this request looks like a

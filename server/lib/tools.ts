@@ -245,32 +245,50 @@ const SKILL_TOOLS = [
     function: {
       name: "skill_create",
       description:
-        "Persist a new agent skill. Call this when the user explicitly " +
-        "asks you to save a skill ('save this as a skill named X', " +
-        "'crée une skill X qui …'). The body is the markdown the " +
-        "future you will load when invoked. The description should " +
-        "explain WHEN to use the skill (the trigger), not what it does " +
-        "internally. Fails on name collision — use skill_update " +
-        "instead in that case.",
+        "Persist a new agent skill (agentskills.io format). Call this " +
+        "when the user explicitly asks you to save a skill ('save this " +
+        "as a skill named X', 'crée une skill X qui …'). Name must be " +
+        "lowercase a-z/0-9/hyphen, 1-64 chars. Description (when to " +
+        "invoke) capped at 1024 chars. Fails on name collision — use " +
+        "skill_update instead in that case.",
       parameters: {
         type: "object",
         properties: {
           name: {
             type: "string",
-            description: "Short identifier, e.g. 'Code review strict'.",
+            description:
+              "Slug-style identifier, lowercase a-z/0-9/hyphen, e.g. 'code-review-strict'.",
           },
           body: {
             type: "string",
-            description: "Markdown instructions the skill carries.",
+            description: "Markdown body of SKILL.md (instructions).",
           },
           description: {
             type: "string",
-            description: "When to invoke this skill (the trigger).",
+            description: "When to invoke this skill (the trigger). ≤1024 chars.",
           },
           tags: {
             type: "array",
             items: { type: "string" },
             description: "Free-form categories.",
+          },
+          license: {
+            type: "string",
+            description: "Optional license name or file reference.",
+          },
+          compatibility: {
+            type: "string",
+            description: "Optional environment/runtime requirements (≤500 chars).",
+          },
+          files: {
+            type: "object",
+            description:
+              "Optional supporting files: map of relative path (e.g. 'scripts/foo.py', 'references/notes.md') to file content as string. Keeps the skill package self-contained.",
+            additionalProperties: { type: "string" },
+          },
+          metadata: {
+            type: "object",
+            description: "Arbitrary frontmatter extensions (version, author, …).",
           },
         },
         required: ["name", "body"],
@@ -292,6 +310,13 @@ const SKILL_TOOLS = [
           body: { type: "string" },
           description: { type: "string" },
           tags: { type: "array", items: { type: "string" } },
+          license: { type: "string" },
+          compatibility: { type: "string" },
+          files: {
+            type: "object",
+            additionalProperties: { type: "string" },
+          },
+          metadata: { type: "object" },
         },
         required: ["name"],
       },
@@ -315,14 +340,23 @@ const SKILL_TOOLS = [
 
 export const TOOL_SCHEMAS = WEB_SEARCH_TOOLS;  // legacy export for places that still reference it
 
-/** All tools exposed to the model.
- *  - fs_* are always on (workspace files, scoped per user).
- *  - rag_search is always on when RAG_QDRANT_URL is reachable (env-gated).
+/** Skill tools — always on (per Sophie's Q3 commitment 2026-05-20).
+ *  The model needs to be able to list/load/create/update/delete skills
+ *  on any turn, regardless of agentMode. Tiny schema (~5 tools, no
+ *  large enums) — adds <500 tokens to the prompt and doesn't force
+ *  non-streaming on jaccl. */
+export function alwaysOnTools(): unknown[] {
+  return [...SKILL_TOOLS];
+}
+
+/** Agent-mode tools exposed to the model.
+ *  - fs_* (workspace files, scoped per user).
+ *  - rag_search when RAG_QDRANT_URL is reachable (env-gated).
  *  - web_* require the Web Search addon (Tavily key).
  *  - MCP servers are per-user (dynamic, see collectMcpTools).
- */
+ *  Note: SKILL_TOOLS are NOT here — see alwaysOnTools(). */
 export async function toolsForUser(userId: string): Promise<unknown[]> {
-  const out: unknown[] = [...FS_TOOLS, ...SKILL_TOOLS];
+  const out: unknown[] = [...FS_TOOLS];
   if (isRagConfigured()) out.push(...RAG_TOOLS);
   if (await isWebSearchEnabled(userId)) out.push(...WEB_SEARCH_TOOLS);
 
@@ -800,10 +834,15 @@ async function executeSkillTool(
     return skillCreate(userId, {
       name: String(args.name ?? ""),
       body: String(args.body ?? ""),
-      description: args.description
-        ? String(args.description)
-        : null,
+      description: args.description ? String(args.description) : null,
       tags: Array.isArray(args.tags) ? (args.tags as string[]) : [],
+      license: typeof args.license === "string" ? args.license : null,
+      compatibility:
+        typeof args.compatibility === "string" ? args.compatibility : null,
+      files: asStringMap(args.files),
+      metadata: isPlainObject(args.metadata)
+        ? (args.metadata as Record<string, unknown>)
+        : {},
     });
   }
   if (name === "skill_update") {
@@ -813,6 +852,13 @@ async function executeSkillTool(
       description:
         typeof args.description === "string" ? args.description : undefined,
       tags: Array.isArray(args.tags) ? (args.tags as string[]) : undefined,
+      license: typeof args.license === "string" ? args.license : undefined,
+      compatibility:
+        typeof args.compatibility === "string" ? args.compatibility : undefined,
+      files: args.files === undefined ? undefined : asStringMap(args.files),
+      metadata: isPlainObject(args.metadata)
+        ? (args.metadata as Record<string, unknown>)
+        : undefined,
     });
   }
   if (name === "skill_delete") {
@@ -829,6 +875,7 @@ async function skillList(userId: string): Promise<ToolResult> {
       tags: agentSkills.tags,
       source: agentSkills.source,
       body: agentSkills.body,
+      files: agentSkills.files,
       updatedAt: agentSkills.updatedAt,
     })
     .from(agentSkills)
@@ -840,6 +887,7 @@ async function skillList(userId: string): Promise<ToolResult> {
     tags: r.tags,
     source: r.source,
     bodyLength: r.body.length,
+    fileCount: Object.keys(r.files ?? {}).length,
     updatedAt: r.updatedAt,
   }));
   return { ok: true, data: summary };
@@ -865,7 +913,11 @@ async function skillGet(userId: string, name: string): Promise<ToolResult> {
       description: row.description,
       tags: row.tags,
       source: row.source,
+      license: row.license,
+      compatibility: row.compatibility,
       body: row.body,
+      files: row.files,
+      metadata: row.metadata,
       updatedAt: row.updatedAt,
     },
   };
@@ -878,6 +930,10 @@ async function skillCreate(
     body: string;
     description: string | null;
     tags: string[];
+    license: string | null;
+    compatibility: string | null;
+    files: Record<string, string>;
+    metadata: Record<string, unknown>;
   },
 ): Promise<ToolResult> {
   if (!input.name.trim() || !input.body.trim()) {
@@ -893,6 +949,10 @@ async function skillCreate(
         description: input.description?.trim() || null,
         tags: input.tags,
         source: "agent",
+        license: input.license?.trim() || null,
+        compatibility: input.compatibility?.trim() || null,
+        files: input.files,
+        metadata: input.metadata,
       })
       .returning({ id: agentSkills.id, name: agentSkills.name });
     return {
@@ -918,6 +978,10 @@ async function skillUpdate(
     body?: string;
     description?: string;
     tags?: string[];
+    license?: string;
+    compatibility?: string;
+    files?: Record<string, string>;
+    metadata?: Record<string, unknown>;
   },
 ): Promise<ToolResult> {
   if (!input.name.trim()) {
@@ -928,8 +992,17 @@ async function skillUpdate(
   if (input.description !== undefined)
     patch.description = input.description.trim() || null;
   if (input.tags !== undefined) patch.tags = input.tags;
+  if (input.license !== undefined) patch.license = input.license.trim() || null;
+  if (input.compatibility !== undefined)
+    patch.compatibility = input.compatibility.trim() || null;
+  if (input.files !== undefined) patch.files = input.files;
+  if (input.metadata !== undefined) patch.metadata = input.metadata;
   if (Object.keys(patch).length === 1) {
-    return { ok: false, error: "nothing to update — pass at least one of body / description / tags" };
+    return {
+      ok: false,
+      error:
+        "nothing to update — pass at least one of body / description / tags / license / compatibility / files / metadata",
+    };
   }
   const [row] = await db
     .update(agentSkills)
@@ -943,6 +1016,24 @@ async function skillUpdate(
     .returning({ id: agentSkills.id, name: agentSkills.name });
   if (!row) return { ok: false, error: `skill not found: ${input.name}` };
   return { ok: true, data: { ok: true, id: row.id, name: row.name } };
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    !Array.isArray(v) &&
+    Object.getPrototypeOf(v) === Object.prototype
+  );
+}
+
+function asStringMap(v: unknown): Record<string, string> {
+  if (!isPlainObject(v)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, val] of Object.entries(v)) {
+    if (typeof val === "string") out[k] = val;
+  }
+  return out;
 }
 
 async function skillDelete(userId: string, name: string): Promise<ToolResult> {
