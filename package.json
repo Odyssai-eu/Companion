@@ -30,6 +30,7 @@
     "react-dom": "^19.0.0",
     "react-router": "^7.1.1",
     "undici": "^8.3.0",
+    "yaml": "^2.9.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

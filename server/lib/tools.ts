@@ -23,6 +23,7 @@ import {
   parseMcpToolName,
   type McpToolSpec,
 } from "./mcp-client";
+import { parseSkillMd, SkillParseError } from "./skill-format";
 import { fsEdit, fsList, fsRead, fsWrite, WorkspaceError } from "./workspace";
 
 const ADDON_NAME = "Web Search";
@@ -336,9 +337,61 @@ const SKILL_TOOLS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "skill_import_md",
+      description:
+        "Parse a SKILL.md document (YAML frontmatter + markdown body, " +
+        "agentskills.io spec) and persist it as a new skill. Use this " +
+        "when the user pastes a SKILL.md or asks you to load one from " +
+        "an external library. Fails on name collision.",
+      parameters: {
+        type: "object",
+        properties: {
+          content: {
+            type: "string",
+            description: "Full SKILL.md content including --- frontmatter.",
+          },
+        },
+        required: ["content"],
+      },
+    },
+  },
 ];
 
 export const TOOL_SCHEMAS = WEB_SEARCH_TOOLS;  // legacy export for places that still reference it
+
+/** Compact agent-skills catalog — progressive-disclosure tier 1
+ *  per agentskills.io. We emit one line per skill (name + description)
+ *  capped at ~32 entries so the prompt overhead stays ≤2KB even for
+ *  power users. The model uses `skill_get` (or `companion_get_skill`)
+ *  to load the full body of any skill that looks relevant.
+ *
+ *  Returns null when the user has no skills (so we don't emit an
+ *  empty section header that would just add noise to the prompt). */
+export async function buildSkillsIndex(userId: string): Promise<string | null> {
+  const rows = await db
+    .select({
+      name: agentSkills.name,
+      description: agentSkills.description,
+    })
+    .from(agentSkills)
+    .where(eq(agentSkills.userId, userId))
+    .orderBy(asc(agentSkills.name))
+    .limit(32);
+  if (rows.length === 0) return null;
+  const lines = rows.map((r) =>
+    r.description ? `- ${r.name}: ${r.description}` : `- ${r.name}`,
+  );
+  return [
+    "## Agent skills available",
+    "",
+    "Use `skill_get` to load the full body of a skill when its description matches the user's request. Don't replace your system prompt — apply the body as task-specific instructions.",
+    "",
+    ...lines,
+  ].join("\n");
+}
 
 /** Skill tools — always on (per Sophie's Q3 commitment 2026-05-20).
  *  The model needs to be able to list/load/create/update/delete skills
@@ -864,7 +917,34 @@ async function executeSkillTool(
   if (name === "skill_delete") {
     return skillDelete(userId, String(args.name ?? ""));
   }
+  if (name === "skill_import_md") {
+    return skillImportMd(userId, String(args.content ?? ""));
+  }
   return { ok: false, error: `unknown skill tool: ${name}` };
+}
+
+async function skillImportMd(
+  userId: string,
+  content: string,
+): Promise<ToolResult> {
+  if (!content.trim()) return { ok: false, error: "missing 'content'" };
+  let parsed;
+  try {
+    parsed = parseSkillMd(content);
+  } catch (e) {
+    if (e instanceof SkillParseError) return { ok: false, error: e.message };
+    throw e;
+  }
+  return skillCreate(userId, {
+    name: parsed.name,
+    body: parsed.body,
+    description: parsed.description,
+    tags: [],
+    license: parsed.license,
+    compatibility: parsed.compatibility,
+    files: {},
+    metadata: parsed.metadata,
+  });
 }
 
 async function skillList(userId: string): Promise<ToolResult> {

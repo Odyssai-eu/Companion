@@ -145,6 +145,9 @@ export function buildSystemPrompt(opts: {
   userSystemPrompt?: string | null;
   projectMemory?: string | null;
   globalMemory?: string | null;
+  /** Compact catalog of the user's agent skills (name + description),
+   *  emitted as progressive-disclosure tier-1 per agentskills.io. */
+  skillsIndex?: string | null;
   /** @deprecated retained for call-site compat; ignored. */
   hermesRepoBinding?: string | null;
 }): string {
@@ -156,6 +159,7 @@ export function buildSystemPrompt(opts: {
     segments.push(trimmed);
   };
   push(opts.userSystemPrompt);
+  push(opts.skillsIndex);
   // Project + global memory used to be concatenated together and pushed
   // as a single segment. That subtle difference vs. pushing them as two
   // separate segments would shift bytes; we preserve the original layout

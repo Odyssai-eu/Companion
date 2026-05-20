@@ -18,6 +18,7 @@ import ExternalAgentsPage from "./pages/settings/ExternalAgentsPage";
 import HelpPage from "./pages/settings/HelpPage";
 import InferencePage from "./pages/settings/InferencePage";
 import McpServersPage from "./pages/settings/McpServersPage";
+import SkillsPage from "./pages/settings/SkillsPage";
 import ProfilePage from "./pages/settings/ProfilePage";
 import ShortcutsPage from "./pages/settings/ShortcutsPage";
 
@@ -101,6 +102,7 @@ export default function App() {
         <Route path="add-ons" element={<AddonsPage />} />
         <Route path="external-agents" element={<ExternalAgentsPage />} />
         <Route path="mcp-servers" element={<McpServersPage />} />
+        <Route path="skills" element={<SkillsPage />} />
         <Route path="admin" element={<AdminPage />} />
         <Route path="help" element={<HelpPage />} />
       </Route>

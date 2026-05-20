@@ -38,6 +38,7 @@ const baseSections: NavSection[] = [
     items: [
       { to: "/settings/add-ons", label: "Add-ons" },
       { to: "/settings/mcp-servers", label: "MCP servers" },
+      { to: "/settings/skills", label: "Skills" },
       { to: "/settings/external-agents", label: "Agents tokens" },
     ],
   },

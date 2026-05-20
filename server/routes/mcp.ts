@@ -47,6 +47,7 @@ import {
   projects,
 } from "../db/schema";
 import { ragRetrieve } from "../lib/memory";
+import { parseSkillMd, SkillParseError } from "../lib/skill-format";
 
 type Env = { Variables: { userId: string } };
 const mcpRoute = new Hono<Env>();
@@ -1038,6 +1039,73 @@ function buildServer(opts: {
           },
         ],
       };
+    },
+  );
+
+  server.registerTool(
+    "companion_import_skill_md",
+    {
+      description:
+        "Parse a SKILL.md document (agentskills.io frontmatter+body) and persist it as a new skill. Use when the user pastes a SKILL.md or asks you to load one from an external library. Fails on name collision.",
+      inputSchema: {
+        content: z.string().min(1).max(500_000),
+      },
+    },
+    async (args) => {
+      let parsed;
+      try {
+        parsed = parseSkillMd(args.content);
+      } catch (e) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                e instanceof SkillParseError
+                  ? e.message
+                  : (e as Error).message,
+            },
+          ],
+        };
+      }
+      try {
+        const [row] = await db
+          .insert(agentSkills)
+          .values({
+            userId: opts.userId,
+            name: parsed.name,
+            body: parsed.body,
+            description: parsed.description,
+            license: parsed.license,
+            compatibility: parsed.compatibility,
+            metadata: parsed.metadata,
+            source: "imported",
+          })
+          .returning({ id: agentSkills.id, name: agentSkills.name });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ ok: true, id: row.id, name: row.name }),
+            },
+          ],
+        };
+      } catch (e) {
+        const msg = (e as Error).message;
+        const collision = /unique|duplicate/i.test(msg);
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: collision
+                ? `A skill named "${parsed.name}" already exists. Use companion_update_skill to refine it.`
+                : msg,
+            },
+          ],
+        };
+      }
     },
   );
 

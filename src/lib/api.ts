@@ -189,7 +189,25 @@ export type ApiSkill = {
   description: string | null;
   body: string;
   tags: string[];
+  source: "user" | "agent" | "imported";
+  license: string | null;
+  compatibility: string | null;
+  files: Record<string, string>;
+  metadata: Record<string, unknown>;
   createdAt: string;
+  updatedAt: string;
+};
+
+export type ApiSkillSummary = {
+  id: string;
+  name: string;
+  description: string | null;
+  tags: string[];
+  source: "user" | "agent" | "imported";
+  license: string | null;
+  compatibility: string | null;
+  bodyLength: number;
+  fileCount: number;
   updatedAt: string;
 };
 
@@ -198,6 +216,10 @@ export type ApiSkillInput = {
   description?: string | null;
   body: string;
   tags?: string[];
+  license?: string | null;
+  compatibility?: string | null;
+  files?: Record<string, string>;
+  metadata?: Record<string, unknown>;
 };
 
 export type ApiInferenceStatus = {
@@ -511,6 +533,43 @@ export const api = {
     }),
   deleteInferencePreset: (id: string) =>
     request<void>(`/api/inference/presets/${id}`, { method: "DELETE" }),
+
+  // Agent skills (agentskills.io format) — used by Settings → Skills.
+  listSkills: () => request<{ skills: ApiSkillSummary[] }>("/api/skills"),
+  getSkill: (id: string) =>
+    request<{ skill: ApiSkill }>(`/api/skills/${id}`),
+  createSkill: (body: ApiSkillInput) =>
+    request<{ skill: ApiSkill }>("/api/skills", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateSkill: (id: string, body: Partial<ApiSkillInput>) =>
+    request<{ skill: ApiSkill }>(`/api/skills/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteSkill: (id: string) =>
+    request<void>(`/api/skills/${id}`, { method: "DELETE" }),
+  importSkillMd: (content: string) =>
+    request<{ skill: ApiSkill }>("/api/skills/import/md", {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    }),
+  importSkillZip: async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/skills/import/zip", {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error(t || `HTTP ${res.status}`);
+    }
+    return (await res.json()) as { skill: ApiSkill };
+  },
+  exportSkillUrl: (id: string) => `/api/skills/${id}/export`,
 
   // MCP servers — Companion as a client of remote MCP endpoints
   listMcpServers: () =>

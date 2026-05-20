@@ -52,6 +52,7 @@ import {
 } from "../lib/inference-state";
 import {
   alwaysOnTools,
+  buildSkillsIndex,
   executeTool,
   toolsForUser,
   type ToolResult,
@@ -370,6 +371,7 @@ chatRoute.post("/completions", async (c) => {
     timezone: tz,
     nowFallback: now,
   });
+  const skillsIndex = await buildSkillsIndex(userId);
   const composedSystem = buildSystemPrompt({
     userSystemPrompt: body.system_prompt,
     // Today chat.ts already collapsed project + global into a single
@@ -378,6 +380,7 @@ chatRoute.post("/completions", async (c) => {
     // stays empty in this code path.
     projectMemory: memoryBlock,
     globalMemory: null,
+    skillsIndex,
   });
 
   const withSystem =
