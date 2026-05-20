@@ -596,6 +596,22 @@ conversationsRoute.post(
       );
       return c.json({ ok: false, reason: "cache_recent", age_s: ageS });
     }
+    // Skip when an inference is ALREADY in flight on this conv. The
+    // frontend refires prewarm on every `sending → false` transition,
+    // and on heavy models (Argo 397B, 4-node pipeline, etc.) successive
+    // turns can overlap: turn N's prewarm fires while turn N-1 is still
+    // prefilling. The result is the screenshot Sophie reported —
+    // 3 concurrent runs on argo-2, two with max_tokens=1, all stuck in
+    // prefill behind each other because the pool serializes. Dropping
+    // the redundant prewarm clears the queue and the real chat lands
+    // immediately.
+    const inflight = getInferenceStatus(id, userId);
+    if (inflight.active) {
+      console.log(
+        `[prewarm] conv=${id.slice(0, 8)} skipped — inference in flight`,
+      );
+      return c.json({ ok: false, reason: "inference_active" });
+    }
     console.log(
       `[prewarm] conv=${id.slice(0, 8)} model=${opts.model} msgs=${msgRows.length}`,
     );
