@@ -69,14 +69,20 @@ const chatRoute = new Hono<Env>();
 // a "ghost answer" (the partial response disappears on reload because
 // nothing got persisted to the DB).
 //
-// We disable bodyTimeout entirely (0 = no timeout) and keep a reasonable
-// headers/connect bound. The chat route already has its own client-side
-// heartbeat + finishInference cleanup if the upstream actually dies, so
-// removing the dispatcher timeout doesn't risk runaway connections —
-// the orphans get GC'd via the writer.close() + setTimeout fallback.
+// We disable bodyTimeout entirely (0 = no timeout). headersTimeout was
+// 60s but that's too tight for the tools+jaccl path: `shouldUseNonStream`
+// forces `stream: false` to avoid the XML tool-call leak on Qwen3/Hy3,
+// and Odysseus then doesn't send any HTTP headers until the entire
+// response is generated. On slow models (GLM-5.1 on 4-node pipeline-AP
+// at ~7 tok/s with max_tokens 64k) that's >> 60s before first byte and
+// undici fails the fetch with HeadersTimeoutError before generation
+// completes. Bump to 600s (10 min) — generous for non-stream paths,
+// invisible for streaming paths which see their first byte in <5s
+// regardless. The chat route's heartbeat + finishInference cleanup
+// still catches genuine dead connections.
 const upstreamDispatcher = new Agent({
   connect: { timeout: 10_000 },   // 10s to TCP+TLS connect
-  headersTimeout: 60_000,          // 60s to receive response headers
+  headersTimeout: 600_000,         // 10 min — generous for non-stream slow models
   bodyTimeout: 0,                  // unbounded body — long prefills OK
   keepAliveTimeout: 60_000,
   keepAliveMaxTimeout: 600_000,
