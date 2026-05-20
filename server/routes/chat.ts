@@ -486,15 +486,23 @@ chatRoute.post("/completions", async (c) => {
     ? modelCaps.supports_tools !== false
     : modelSupportsTools(body.model);
   // Tools are gated on per-conv `agentMode`. Default is OFF — a normal
-  // chat does NOT inject any tool defs, so the prompt stays ~250 tokens
-  // (vs 1000+ with FS/RAG/Web schemas) and the engine can stream freely
-  // (no `shouldUseNonStream` forcing on jaccl).
-  const tools = supportsTools
-    ? convAgentMode
-      ? [...alwaysOnTools(), ...(await toolsForUser(userId))]
-      : alwaysOnTools()
+  // chat does NOT inject any FS/RAG/Web/MCP tool defs (~250 tok prompt
+  // instead of 1000+). But "always-on" tools (skill_*) are always
+  // injected so the user can ask the assistant to curate skills from
+  // any chat.
+  const alwaysOn = supportsTools ? alwaysOnTools() : [];
+  const agentTools = supportsTools && convAgentMode
+    ? await toolsForUser(userId)
     : [];
+  const tools = [...alwaysOn, ...agentTools];
   const toolsEnabled = tools.length > 0;
+  // `agentToolsEnabled` = real agent-mode tools (FS/RAG/Web/MCP) — the
+  // ones that trigger the XML tool-call leak on Qwen3/Hy3 streaming.
+  // Skill tools alone don't warrant forcing non-stream because the model
+  // only calls them on explicit user request (rare, not mid-response).
+  // Without this distinction, every chat would non-stream on jaccl,
+  // which kills TTFT on slow models like GLM-5.1 4-node.
+  const agentToolsEnabled = agentTools.length > 0;
 
   // Probe routing — gateway mode only. If this request looks like a
   // probe (small max_tokens, no tools), route it to Odysseus' `probe`
@@ -504,10 +512,12 @@ chatRoute.post("/completions", async (c) => {
   // responses. See BRIEF-companion-prefix-cache-and-probes.md.
   //
   // Skipped for hybrid/legacy modes (the `probe` alias is published
-  // by Odysseus only — LiteLLM won't know it).
+  // by Odysseus only — LiteLLM won't know it). Probe routing tolerates
+  // the always-on skill tools in the request (the probe model just
+  // ignores them); only real agent-mode tools disqualify probe routing.
   if (
     effectiveMode === "gateway" &&
-    !toolsEnabled &&
+    !agentToolsEnabled &&
     typeof baseBody.max_tokens === "number" &&
     baseBody.max_tokens <= 20 &&
     body.model !== "probe"
@@ -609,7 +619,10 @@ chatRoute.post("/completions", async (c) => {
      *                                              name heuristic
      */
     function shouldUseNonStream(): boolean {
-      if (!toolsEnabled) return false;
+      // Only real agent-mode tools (fs/rag/web/MCP) trigger the XML leak
+      // workaround. Skill tools alone stream fine — they're meta-curation,
+      // the model doesn't emit them mid-response.
+      if (!agentToolsEnabled) return false;
       if (modelCaps) {
         const backend = modelCaps.backend;
         const pool = modelCaps.pool;
