@@ -149,17 +149,53 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   );
   const [project, setProject] = useState<ApiProject | null>(null);
 
-  // Selected model — a single LiteLLM model id. Persisted in localStorage so
-  // it survives reloads. Default falls back to inference settings → first
-  // available model.
+  // Selected model — bound to the active conversation when one is loaded,
+  // else to localStorage as the "default for new chats". Switching to a
+  // conversation that has a `conversations.model` set restores it; picking
+  // a new model from the picker writes both to localStorage AND PATCHes
+  // the active conversation so the choice survives navigation away and back.
   const [model, setModel] = useState<string>(() => {
     if (typeof window === "undefined") return "";
     return window.localStorage.getItem(MODEL_LS_KEY) ?? "";
   });
+  // Tracks the conversation the current `model` state belongs to. Used to
+  // PATCH only when the user CHANGES the picker mid-conversation, not when
+  // the conversation load restores its own saved model (which would be a
+  // pointless self-PATCH and a write-amplification spiral on refresh).
+  const conversationIdForModelRef = useRef<string | null>(null);
+
+  // Restore a model from a conversation load: state-only, no localStorage,
+  // no PATCH. The conv-id ref tracks which conversation this `model` belongs
+  // to, so the next picker change knows whether to persist to that conv.
+  const restoreModelFromConv = useCallback(
+    (m: string, convId: string | null) => {
+      setModel(m);
+      conversationIdForModelRef.current = convId;
+    },
+    [],
+  );
+
+  // The picker calls this. Updates state, localStorage (so new chats inherit
+  // the choice), AND PATCHes the active conversation (so future visits land
+  // on the same model). Fire-and-forget on the PATCH — failure to persist
+  // is non-blocking, the user can re-pick.
   const setModelAndPersist = useCallback((m: string) => {
     setModel(m);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(MODEL_LS_KEY, m);
+    }
+    const convId = conversationIdForModelRef.current;
+    if (convId) {
+      api
+        .setConversationModel(convId, m)
+        .catch((e) => {
+          // Non-fatal — log and move on. Next page load will fall back to
+          // localStorage / inferenceSettings.default.
+          console.warn(
+            `[useChat] failed to persist model=${m} on conv ${convId}:`,
+            e,
+          );
+        });
     }
   }, []);
 
@@ -266,6 +302,19 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       .getConversation(conversationId)
       .then(({ conversation, messages: msgs, inference }) => {
         setConversation(conversation);
+        // Restore the conv's saved model (if any). When absent, the
+        // existing `model` state (= localStorage default) stays. The
+        // ref binds the active model to this conv so the next picker
+        // change PATCHes the right row.
+        if (conversation.model) {
+          restoreModelFromConv(conversation.model, conversationId);
+        } else {
+          // No saved model on this conv yet — bind the current default
+          // to it. The first user message will land with whatever the
+          // picker shows; chat.ts persists conversations.model on first
+          // send too (so this is mostly back-fill UX).
+          conversationIdForModelRef.current = conversationId;
+        }
         if (conversation.projectId) {
           api
             .getProject(conversation.projectId)
@@ -487,6 +536,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         try {
           const created = await api.createConversation({
             title: titleSeed.slice(0, 80),
+            // Persist the currently-picked model on the new conv so future
+            // visits restore it (the picker is per-conversation now).
+            ...(model ? { model } : {}),
             // Honour the TopBar memory toggle if the user flipped it
             // before sending the first message. Otherwise the server
             // inherits from the project (or defaults to true).
@@ -497,6 +549,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           convId = created.conversation.id;
           setConversation(created.conversation);
           loadedIdRef.current = convId;
+          // Bind the picker's model state to this newly-created conv id,
+          // so the next picker change PATCHes the right row.
+          conversationIdForModelRef.current = convId;
           // Reset pending state — it's now persisted on the conversation.
           setPendingMemoryEnabled(null);
         } catch (e) {

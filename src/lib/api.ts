@@ -719,6 +719,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ agentMode }),
     }),
+  setConversationModel: (id: string, model: string) =>
+    request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ model }),
+    }),
   setConversationRepoPath: (id: string, repoPath: string | null) =>
     request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
       method: "PATCH",
