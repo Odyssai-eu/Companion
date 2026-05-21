@@ -272,12 +272,20 @@ hermesAgentRoute.post("/invoke", zValidator("json", invokeSchema), async (c) => 
               const kind = parsed.sessionUpdate;
               if (kind === "agent_message_chunk") {
                 agentText += parsed.content?.text ?? "";
-              } else if (kind === "tool_call" || kind === "bridge_auto_approved") {
+              } else if (kind === "tool_call") {
+                // ACP `tool_call` is flat: `title` is the user-facing
+                // label ("write: /tmp/foo.txt"), `kind` is the category
+                // (edit/read/exec), `toolCallId` is the dedup key.
+                // No `name` field at this level — bridge_auto_approved
+                // carries the raw tool name later but we skip that event.
                 toolEntries.push({
-                  name: parsed.tool?.name ?? parsed.toolName ?? "(unknown)",
-                  args: parsed.tool?.rawInput ?? parsed.tool?.arguments ?? null,
+                  name: parsed.title ?? parsed.kind ?? "(unknown)",
+                  args: parsed.locations ?? parsed.content ?? null,
                 });
               }
+              // bridge_auto_approved is metadata about permission flow,
+              // not a tool action — the tool_call right before already
+              // surfaced the user-visible action. Skip to avoid duplication.
             }
           } catch {
             /* ignore non-JSON */

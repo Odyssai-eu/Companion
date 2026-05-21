@@ -620,22 +620,36 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
                       m.id === agentLineId ? { ...m, content: agentText } : m,
                     ),
                   );
-                } else if (
-                  kind === "tool_call" ||
-                  kind === "bridge_auto_approved"
-                ) {
-                  const tool = parsed.tool ?? {};
-                  setAgentMessages((prev) => [
-                    ...prev,
-                    {
-                      id: `local-tool-${Date.now()}-${Math.random()}`,
-                      role: "tool",
-                      content:
-                        tool.name ?? tool.title ?? tool.label ?? "(unknown)",
-                      stats: { args: tool.rawInput ?? tool.arguments ?? null },
-                    },
-                  ]);
+                } else if (kind === "tool_call") {
+                  // ACP `tool_call` is flat — `title` is the human-readable
+                  // action ("write: /tmp/foo.txt"). `locations` lists the
+                  // paths involved. We dedup-insert on toolCallId so a
+                  // future `tool_call_update` (status change) doesn't add
+                  // a second line.
+                  const callId = parsed.toolCallId ?? `${Date.now()}-${Math.random()}`;
+                  setAgentMessages((prev) => {
+                    if (prev.some((m) => m.id === `tool-${callId}`)) return prev;
+                    return [
+                      ...prev,
+                      {
+                        id: `tool-${callId}`,
+                        role: "tool",
+                        content:
+                          parsed.title ?? parsed.kind ?? "(unknown)",
+                        stats: {
+                          kind: parsed.kind,
+                          args:
+                            parsed.locations ??
+                            parsed.content ??
+                            null,
+                        },
+                      },
+                    ];
+                  });
                 }
+                // bridge_auto_approved is auto-permission metadata, not
+                // a user-visible tool action. The preceding `tool_call`
+                // already shows the action — skip to avoid noise.
               } else if (event === "error") {
                 setAgentError(
                   (parsed as { message?: string }).message ?? "stream error",
