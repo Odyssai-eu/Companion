@@ -1,6 +1,6 @@
 # Slash commands & agents
 
-Slash commands turn the chat composer into a command palette. Type `/hermes` (or, later, `/pi`, `/openclaude`, etc.) and the next thing you send goes to an agent that can act on your machine — read files, write files, run shell — instead of going to the LLM. Type `/exit` and you're back to normal chat.
+Slash commands turn the chat composer into a command palette. Type `/hermes` (or, later, `/pi`, `/openclaw`, etc.) and the next thing you send goes to an agent that can act on your machine — read files, write files, run shell — instead of going to the LLM. Type `/exit` and you're back to normal chat.
 
 > You have an army on your OdyssAI.
 
@@ -72,7 +72,7 @@ The setup above is Companion → Hermes (you type `/hermes …` and Companion se
 The slash command pattern is generic. Future drops will add:
 
 - **`/pi`** — Pi-AI, conversational and reflective
-- **`/openclaude`** — Claude via a Pi-style local layer
+- **`/openclaw`** — generalist agent with strong messaging gateway (WhatsApp, Slack, Discord, Telegram)
 - whatever else fits
 
 Each agent registers as its own add-on with its own bridge URL. The `/exit` command works for all of them. You can have only one agent active per conversation at a time — but different conversations can sit in different modes simultaneously.
