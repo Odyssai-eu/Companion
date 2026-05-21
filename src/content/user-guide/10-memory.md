@@ -8,11 +8,11 @@ Companion has two memory layers — both optional, both searchable, both editabl
 
 A markdown wiki that captures **who you are** across all conversations. The agent that lives in Companion calls itself Némo and treats this wiki as its memory.
 
-- **Where it lives** — Postgres in the `thecompai-memory` service (rpi-dev:8001). Table `memory_articles`. Per-user, scoped by `user_id`.
-- **What goes in** — anything you'd want any conversation in any project to remember. Identity, preferences, expertise, working style, ongoing context. Sophie's articles cover identity, expertise, partnerships, gardening, infrastructure, projects, decisions.
-- **Structure** — articles have a `path` (`profile/identity.md`, `relationship/partnership.md`, `projects/thecomp-ai.md`), `title`, `summary`, `body`. Wiki-link `[[path]]` syntax for cross-references.
+- **Where it lives** — Postgres in the `thecompai-memory` service. Table `memory_articles`. Per-user, scoped by `user_id`.
+- **What goes in** — anything you'd want any conversation in any project to remember. Identity, preferences, expertise, working style, ongoing context. Typical articles: profile, expertise, key relationships, infrastructure, ongoing projects, decisions.
+- **Structure** — articles have a `path` (`profile/identity.md`, `relationship/partnership.md`, `projects/your-project.md`), `title`, `summary`, `body`. Wiki-link `[[path]]` syntax for cross-references.
 - **How the agent reads it** — full wiki concatenated and capped at ~50 KB before injection into the system prompt. Snapshotted per conversation (see lifecycle below).
-- **Who writes it** — you (manually) **and** an LLM compiler (Qwen3.6 on oMLX) that periodically reads recent conversations and emits diffs.
+- **Who writes it** — you (manually) **and** an LLM compiler (a small auxiliary model) that periodically reads recent conversations and emits diffs.
 
 ### Project wiki
 
@@ -137,7 +137,7 @@ The agent searches automatically via:
 You can also search manually:
 
 - *Settings → Extensions → Add-ons → Obsidian* — export the vault ZIP and grep locally.
-- Direct Qdrant query if you have access to `m4pro-24:6333`.
+- Direct Qdrant query if you have access to the vector store endpoint.
 
 ## What memory is *not*
 

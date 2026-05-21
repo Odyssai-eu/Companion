@@ -1,11 +1,11 @@
 # FAQ
 
-Common questions with direct answers. If your question isn't here, check *Troubleshooting* (20) or ask Sophie.
+Common questions with direct answers. If your question isn't here, check *Troubleshooting* (20) or ping your workspace admin.
 
 ## General
 
 **Do I need to install anything?**
-No. Companion runs in your browser at `dev.thecomp.ai`. Pin it as a PWA if you want a desktop-like app icon.
+No. Companion runs in your browser at your Companion host. Pin it as a PWA if you want a desktop-like app icon.
 
 **Does Companion ship its own model?**
 No. Companion is a **client**. You bring the engine (local cluster Odysseus, or cloud keys for OpenRouter / Anthropic / OpenAI). One client, every backend.
@@ -25,7 +25,7 @@ The workspace admin mints accounts. No self-serve sign-up — sovereignty trade-
 Yes. Same account on phone, laptop, desktop. Conversations + memory + skills sync. See *Account & devices* (03).
 
 **How do I delete my account?**
-Admin-only today. Email Sophie. The cascade deletes everything (conversations, memory, skills, tokens, …).
+Admin-only today. Contact your workspace admin. The cascade deletes everything (conversations, memory, skills, tokens, …).
 
 **Can I share an account with someone?**
 Technically yes, but each chat compiles into the **same memory wiki**. The wiki will quickly become incoherent because it represents "the account holder", not "this specific user". Better: mint two accounts.
@@ -53,20 +53,22 @@ No UI today. Possible via the API. Tell us if you need it.
 ## Models
 
 **Which model should I use?**
-Depends on the task:
-- **Local fast** : `om:qwen-35b` (35B Qwen3.6 on oMLX) — strong default, vision-capable.
-- **Local heavy reasoner** : `argo` → Hy3-preview-MLX-9bit (~38 tok/s on 1-node ultra-512).
-- **Local code** : `om:coder-next` (Qwen3-Coder-Next on `.32`).
-- **Cheap probe** : `probe` (Qwen2.5-Coder-1.5B autocomplete, sub-second).
-- **Cloud fallback** : `or:claude-haiku` / `or:hy3-preview`.
+Depends on the task. A typical Odysseus deployment publishes aliases along these axes:
+- **Local fast conversational** — a 30–40B chat model on oMLX. Vision-capable. Good default.
+- **Local heavy reasoner** — a big MoE (100B+ active) on a multi-node pool for hard analysis.
+- **Local code** — a code-tuned model (Qwen3-Coder-Next, MiniMax-M2, etc.) on a dedicated pool.
+- **Probe** — a 1-2B model for autocomplete and tiny lookups (sub-second TTFT).
+- **Cloud fallback** — `or:claude-haiku`, `or:hy3-preview`, or any other OpenRouter passthrough alias.
+
+The exact names depend on your deployment — check the model picker. The Auto Router (see *Semantic routing*) can pick for you per-message.
 
 **Can I change model mid-conversation?**
 Yes. The picker is per-turn. The conversation can span multiple models. Past replies stay attached to their original model.
 
-**What's the difference between `argo` and `or:hy3-preview`?**
-Both serve Hy3-preview, but:
-- `argo` runs on your local cluster (jaccl backend, 3-node ultra-512 + ultra-256a/b). No cloud bill.
-- `or:hy3-preview` is OpenRouter passthrough. Counts against your OpenRouter budget. Useful when local is loaded with something else.
+**What's the difference between a local alias and the OpenRouter passthrough of the same model?**
+Both can serve the same model family, but:
+- A **local alias** runs on your cluster. No cloud bill, no data leaves the LAN, throughput depends on your hardware.
+- A **`or:`-prefixed alias** is OpenRouter passthrough. Counts against your OpenRouter budget. Useful when local is loaded with something else, or when you need a model your cluster doesn't host.
 
 **Why is the picker empty?**
 Engine not paired, or pairing failed. See *Engine pairing* (16).
@@ -176,7 +178,7 @@ Recommended. The full-screen Talk UI is designed for thumb-only operation.
 Not for Companion. But you can drive everything via the API (`/api/conversations`, `/api/chat`, …) — bring your own client. The MCP brain endpoint also gives a clean RPC interface.
 
 **Roadmap?**
-Not public. Ask Sophie if you have a specific need.
+Not public. Ask your workspace admin if you have a specific need.
 
 ## Related
 

@@ -14,8 +14,8 @@ What stays local, what travels, what's encrypted, what's deleted on delete.
 
 | Data | Storage | Encryption | Notes |
 |---|---|---|---|
-| Conversations + messages | Postgres on rpi-dev | At rest (FDE on disk) | Per-user scoped via `user_id` FK |
-| Memory wiki | Postgres on rpi-dev (`memory_articles` in `thecompai-memory` service) | At rest | Per-user; LLM-compiled from your conversations |
+| Conversations + messages | Postgres (Companion's DB) | At rest (FDE on the host disk) | Per-user scoped via `user_id` FK |
+| Memory wiki | Postgres (`memory_articles` in the `thecompai-memory` service) | At rest | Per-user; LLM-compiled from your conversations |
 | Project memory | Postgres (`project_memory_files`) | At rest | Per-project scoped |
 | Skills | Postgres (`agent_skills`) | At rest | Per-user, includes body + files |
 | MCP server bearer tokens | Postgres, encrypted col | AES-256 at column level | Decrypted server-side at request time |
@@ -57,7 +57,7 @@ When you pick a cloud alias (`or:claude-haiku`, `or:hy3-preview`, etc.) in gatew
 
 ### LiteLLM (hybrid/legacy)
 
-Same as cloud passthrough but via LiteLLM as intermediary. LiteLLM logs are on `m4pro-24:4000` — Sophie owns that box. If you don't trust the operator (it's Sophie, but conceptually): don't use hybrid/legacy with cloud aliases.
+Same as cloud passthrough but via LiteLLM as intermediary. LiteLLM logs to wherever its operator hosts it. If you don't trust the LiteLLM operator: don't use hybrid/legacy with cloud aliases — use gateway mode (Odysseus direct) or pure local.
 
 ## What the memory compiler sees
 
@@ -113,10 +113,10 @@ TTS is different — see *Voice & talk* (08). Voxtral over LAN stays local; Gemi
 
 ## Encryption details
 
-- **At rest**: the rpi-dev disk uses full-disk encryption (LUKS). All Postgres rows therefore inherit it.
-- **Column-level**: MCP bearer tokens, engine token, LiteLLM key encrypted with a server-side master key. The master key is at deploy time, not in the DB.
+- **At rest**: depends on the deployment — recommended to deploy the host disk with full-disk encryption (LUKS / FileVault). All Postgres rows then inherit it.
+- **Column-level**: MCP bearer tokens, engine token, LiteLLM key encrypted with a server-side master key set at deploy time (env var), not stored in the DB.
 - **Hashed** (one-way): account passwords (bcrypt), agents tokens (`hms_…` bcrypted).
-- **In transit**: Companion is served over HTTPS via Cloudflare Tunnel (TLS 1.3). Internal LAN traffic to the engine is HTTP by default (no TLS termination on the Mac Studios) — acceptable because the LAN is sovereignty-bound.
+- **In transit**: Companion is served over HTTPS (the recommended deployment is behind a reverse proxy or Cloudflare Tunnel with TLS 1.3). Internal LAN traffic to the inference engine may be HTTP — that's a deployment decision; if your engine isn't on a trusted LAN, terminate TLS there too.
 
 ## Deletion
 

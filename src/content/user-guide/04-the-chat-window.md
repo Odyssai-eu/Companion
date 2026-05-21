@@ -4,37 +4,7 @@ Tour of the chat UI, region by region. Once you know what each element does, the
 
 ## Layout overview
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│ Sidebar (collapsible on mobile)                              │
-│  ─────────────────────                                       │
-│  [ Chat ] [ Project ]   ← top buttons                        │
-│  ┌─ search input ─┐                                          │
-│  └────────────────┘                                          │
-│  Today                                                       │
-│   • New chat                          (active = bold)        │
-│   • Bench des middle TMB T01                                 │
-│  Yesterday                                                   │
-│   • RAG test 2 — Karpathy wiki                               │
-│  ...                                                         │
-│                                                              │
-│  ─────────────────────                                       │
-│  [ 🎙 Talk ]                          ← pinned bottom        │
-└──────────────────────────────────────────────────────────────┘
-┌──────────────────────────────────────────────────────────────┐
-│  Header :   [model picker]  [agent ON/OFF]  [memory ON/OFF]  │
-│                                       [voice icon]  [⚙]      │
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│   Messages (scrollable)                                      │
-│    user bubble (right)                                       │
-│    assistant bubble (left) + stats row + action row          │
-│    ...                                                       │
-│                                                              │
-├──────────────────────────────────────────────────────────────┤
-│  Input :  📎 [ text input ........... ]  [ Send ]            │
-└──────────────────────────────────────────────────────────────┘
-```
+[The chat window with the model picker open](./screenshots/chat.png)
 
 ## Sidebar
 

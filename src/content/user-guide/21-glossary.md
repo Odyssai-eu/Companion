@@ -14,7 +14,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## B
 
-**Bge-m3** — Embedding model (1024-dim) used by Qdrant for the RAG / wiki search. Lives on m4pro-24.
+**Bge-m3** — Embedding model (1024-dim) commonly used by Qdrant for the RAG / wiki search.
 
 **bcrypt** — Password / token hashing used for account passwords and `hms_…` agents tokens.
 
@@ -28,7 +28,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Cloud passthrough** — Engine feature that lets the engine route to cloud providers (OpenRouter, Anthropic, OpenAI) under unified aliases. Drives gateway mode.
 
-**Companion** — The web client. React + Hono + Postgres on rpi-dev.
+**Companion** — The web client. React + Hono + Postgres, packaged as a single Docker image.
 
 **Compile (memory)** — Process by which the Karpathy compiler reads recent conversations and emits diffs to the wiki. Triggered by inactivity (10 min) or cron slots (06:00 / 12:30 / 19:00). See *Memory* (10).
 
@@ -66,7 +66,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## H
 
-**Hades** — One of Odysseus's cluster pools. Solo, ultra-256c (.32). Deprecated as a Companion target — now serves oMLX direct (`om:coder-next`).
+**Hades** — Conventional name for an Odysseus cluster pool dedicated to a code model. One of several pools an Odysseus deployment can publish.
 
 **Hermes Agent** — Standalone CLI tool on .50, used to be integrated as a Companion conversation kind. Retired 2026-05-19. See session-doc-2026-05-19 in repo docs.
 
@@ -96,7 +96,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Legacy mode** — Engine mode with no engine paired, LiteLLM only. See *Engine pairing* (16).
 
-**LiteLLM** — Generic LLM proxy. Deployed at `m4pro-24:4000` as a fallback rail for clients that haven't migrated to gateway mode. See *Engine pairing* (16).
+**LiteLLM** — Generic LLM proxy. Sometimes deployed alongside Odysseus as a fallback rail for clients that haven't migrated to gateway mode. See *Engine pairing* (16).
 
 ## M
 
@@ -116,7 +116,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Named models** — `users.named_models`. The 4 slots (conversation / analyse / engineer / expert) used in Advanced mode.
 
-**Némo** — Sophie's name for the assistant. Not a single model — an orchestrator above all models, defined by memory + relationship. See `profile/assistant-name.md` in the wiki.
+**Némo** — A name some users give their assistant persona. The principle: the assistant isn't a single model, it's an orchestrator above all models, defined by memory + relationship. See `profile/assistant-name.md` in the wiki for how to set your own.
 
 ## O
 
@@ -124,9 +124,9 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Odyssai** — Brand umbrella for the family: Odysseus (engine) + Companion (client) + odyssai-services (sidecar cockpit).
 
-**Odysseus** — Sophie's distributed MLX inference engine. Lives on mini-i3:8000. OpenAI / Anthropic compatible.
+**Odysseus** — Open-source distributed MLX inference engine. OpenAI / Anthropic compatible. The default engine target for Companion.
 
-**oMLX** — Continuous batching MLX inference server (Python + FastAPI). Runs on `.32` and `.49` in Sophie's cluster.
+**oMLX** — Continuous batching MLX inference server (Python + FastAPI). Often deployed alongside Odysseus on Apple Silicon hosts.
 
 **OpenRouter** — Cloud LLM aggregator. Aliased as `or:*` in the picker.
 
@@ -144,11 +144,11 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## Q
 
-**Qdrant** — Vector database used for the RAG over the Obsidian vault. Collection `obsidian-context`. Lives on m4pro-24:6333.
+**Qdrant** — Vector database used for the RAG over the Obsidian vault. Default collection name: `obsidian-context`.
 
 **Quantization** — Reducing model weight precision (8-bit, 9-bit oQ, 4-bit, …) to fit in less RAM. Trade-off: less RAM, slight quality loss.
 
-**Qwen3** — Family of open-source LLMs from Alibaba (Qwen3-Coder-Next, Qwen3.5, Qwen3.6, …). Widely used in Sophie's cluster.
+**Qwen3** — Family of open-source LLMs from Alibaba (Qwen3-Coder-Next, Qwen3.5, Qwen3.6, …). A common choice for local Apple Silicon deployments via MLX.
 
 ## R
 
@@ -194,7 +194,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Vault** — Obsidian-formatted markdown directory holding your wiki. Synced via the Obsidian plugin's bearer-token bridge.
 
-**VLM** — Vision-Language Model. In Sophie's setup, also a cluster name (`vlm` alias served by mlx-vlm on ultra-96A:8080).
+**VLM** — Vision-Language Model. Also a common Odysseus pool name (`vlm` alias) when mlx-vlm is deployed on a dedicated host.
 
 **Voxtral-Realtime** — Local LAN TTS server used by Voice mode. Streams ~100ms first audio.
 

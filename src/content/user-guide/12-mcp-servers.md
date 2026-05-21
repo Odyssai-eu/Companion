@@ -122,7 +122,7 @@ To force a retry: click **Refresh** on the row.
 The state token expired (10-min TTL) or the OAuth scope wasn't granted. Click **Reconnect** to retry.
 
 **Notion shows "couldn't reach the server"**
-Companion's OAuth callback is hosted at the same origin as the app. If `dev.thecomp.ai` is behind a tunnel that's dropped, the callback never completes. Reload the page, retry sign-in.
+Companion's OAuth callback is hosted at the same origin as the app. If your Companion host is behind a tunnel that's dropped, the callback never completes. Reload the page, retry sign-in.
 
 **Token revoked on the provider side**
 Click **Reconnect** to re-run the OAuth dance.

@@ -12,7 +12,7 @@ If you don't have an account yet, ask the workspace admin to mint you one. Compa
 
 Open **Settings → Infrastructure → Engine**. You need at least one server reachable from Companion. Three shapes:
 
-- **Local Odysseus** (recommended) — Sophie's distributed MLX engine. Host + port + bearer token. Companion runs a discovery probe over LAN and a manual entry as fallback.
+- **Local Odysseus** (recommended) — open-source distributed MLX engine. Host + port + bearer token. Companion runs a discovery probe over LAN and a manual entry as fallback.
 - **Other local engine** (Ollama, LM Studio, vLLM, MLX bare) — same shape, manual entry. As long as it speaks OpenAI / Anthropic, it pairs.
 - **Cloud** (OpenRouter, Anthropic, OpenAI) — base URL + bearer key.
 
@@ -21,7 +21,7 @@ Hit **Test endpoint**. The handshake probes `/.well-known/inference-engine.json`
 Three engine modes derived from the probe:
 
 - **`gateway`** — engine reports `features.cloud-passthrough`. 100% via the engine, no LiteLLM at all.
-- **`hybrid`** — engine doesn't pass through cloud. Caps come from engine, inference goes through LiteLLM (deployed at `:44:4000` in Sophie's setup).
+- **`hybrid`** — engine doesn't pass through cloud. Caps come from engine, inference goes through LiteLLM (deployed alongside if you keep that rail).
 - **`legacy`** — no engine paired. LiteLLM only.
 
 See *Engine pairing* (16) for the deeper guide.

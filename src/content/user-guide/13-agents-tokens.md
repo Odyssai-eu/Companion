@@ -9,7 +9,7 @@ Same MCP protocol, flipped direction.
 
 ## What the brain exposes
 
-Tools live at `<companion-host>/api/mcp` (dev: `https://dev.thecomp.ai/api/mcp`).
+Tools live at `<companion-host>/api/mcp` (dev: `https://<your-companion-host>/api/mcp`).
 
 ### Memory & skills
 
@@ -70,7 +70,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 {
   "mcpServers": {
     "companion": {
-      "url": "https://dev.thecomp.ai/api/mcp",
+      "url": "https://<your-companion-host>/api/mcp",
       "headers": { "Authorization": "Bearer hms_…" }
     }
   }
@@ -86,7 +86,7 @@ Restart Claude Desktop. The tools appear under the 🔌 icon.
 ```yaml
 mcpServers:
   - name: companion
-    url: https://dev.thecomp.ai/api/mcp
+    url: https://<your-companion-host>/api/mcp
     requestOptions:
       headers:
         Authorization: Bearer hms_…
@@ -98,20 +98,20 @@ Restart VS Code. Tools land in Continue's tool picker.
 
 Cline → MCP Servers → Add → HTTP:
 
-- URL : `https://dev.thecomp.ai/api/mcp`
+- URL : `https://<your-companion-host>/api/mcp`
 - Header : `Authorization: Bearer hms_…`
 - Transport : Streamable HTTP
 
 ### Claude Code (CLI)
 
 ```bash
-claude mcp add companion https://dev.thecomp.ai/api/mcp \
+claude mcp add companion https://<your-companion-host>/api/mcp \
   --header "Authorization: Bearer hms_…"
 ```
 
 ### Hermes Agent
 
-Hermes is interesting because Companion already drives Hermes via the `/hermes` slash command (Companion → Hermes, see [Slash commands & agents](slash-commands)). Wiring Companion's MCP into Hermes closes the loop the other way (Hermes → Companion). Now Hermes can recall Sophie's memory, read past conversations, list saved skills, and send messages back into Companion from inside an agent turn.
+Hermes is interesting because Companion already drives Hermes via the `/hermes` slash command (Companion → Hermes, see [Slash commands & agents](slash-commands)). Wiring Companion's MCP into Hermes closes the loop the other way (Hermes → Companion). Now Hermes can recall your Companion memory, read past conversations, list saved skills, and send messages back into Companion from inside an agent turn.
 
 Mint a token in **Settings → Agents tokens** (see [Minting a token](#minting-a-token)) — note the `hms_…` string, it's only shown once.
 
@@ -119,7 +119,7 @@ Then on the machine where Hermes runs (today: your workstation):
 
 ```bash
 hermes mcp add companion \
-  --url https://dev.thecomp.ai/api/mcp \
+  --url https://<your-companion-host>/api/mcp \
   --auth header
 ```
 
@@ -128,7 +128,7 @@ The CLI prompts for the header value. Paste `Authorization: Bearer hms_…` (the
 ```yaml
 mcp_servers:
   companion:
-    url: https://dev.thecomp.ai/api/mcp
+    url: https://<your-companion-host>/api/mcp
     auth: header
     headers:
       Authorization: Bearer hms_…
@@ -156,7 +156,7 @@ Both can coexist. Both should be enabled if you want Hermes to act on your machi
 ### curl smoke test
 
 ```bash
-curl -s -X POST 'https://dev.thecomp.ai/api/mcp' \
+curl -s -X POST 'https://<your-companion-host>/api/mcp' \
   -H 'Authorization: Bearer hms_…' \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
@@ -171,7 +171,7 @@ You'll get a JSON-RPC response with the full tools array. If the response is HTM
 
 ```
 agent: I'm about to answer a question about X.
-       Let me check what Sophie's already said about X.
+       Let me check what the user has already said about X.
        → companion_search_memory("X")
        → [reads top 3 chunks]
        → answers with context anchored in her past notes.
@@ -184,7 +184,7 @@ Wire this into your IDE agent's pre-turn hook so it happens automatically. Cuts 
 After solving a sticky problem in the IDE:
 
 ```
-agent: Done. This was a one-off — but Sophie should remember it.
+agent: Done. This was a one-off — but the user should remember it.
        → companion_remember(projectId, "fix-xyz", "## TL;DR\n…")
 ```
 
@@ -222,11 +222,11 @@ Start a chat on desktop. Continue on phone via Companion. Jump back into VS Code
 ## Token lifecycle
 
 ```
-mint  →  Sophie copies hms_… once  →  IDE config gets it  →  IDE makes MCP calls
+mint  →  user copies hms_… once  →  IDE config gets it  →  IDE makes MCP calls
                                                                   ↓
-                                                       Companion validates & runs as Sophie
+                                                       Companion validates & runs as the user
                                                                   ↓
-                                                         Sophie revokes → calls 401 immediately
+                                                         user revokes → calls 401 immediately
 ```
 
 The middleware that resolves `Bearer hms_…` to a userId is `middleware/hermes-token.ts` (name is historical — kept to avoid churning a stable internal API). It's used for `/api/mcp` AND for `/api/conversations`, `/api/projects`, `/api/files`, `/api/models`, `/api/inference` — so the same token lets an external agent make raw HTTP calls AND use the MCP surface.

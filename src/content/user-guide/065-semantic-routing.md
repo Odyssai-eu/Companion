@@ -44,7 +44,7 @@ In any chat, open the model picker. **Auto** is in the group `Smart` at the top 
 That's it. The assistant replies. Below the reply, the stats row shows:
 
 ```
-TTFT 1.2s · Duration 4.5s · … · Model argo — Qwen3.5-397B · Routed deep 0.72
+TTFT 1.2s · Duration 4.5s · … · Model <alias> — <concrete-name> · Routed deep 0.72
 ```
 
 The chip means: the router classified this message as **deep** with a score of 0.72, and dispatched to whatever model you mapped `deep` to.

@@ -59,7 +59,7 @@ There's no key-rebinder UI today. If a shortcut clashes with a browser extension
 - **1Password / Bitwarden** — they sometimes grab ⌘\\ or ⌘.;
 - **Raindrop, Pocket** — they hook ⌘K on certain sites.
 
-Workaround: disable the extension on `dev.thecomp.ai` specifically (most extensions support per-domain disable).
+Workaround: disable the extension on your Companion host specifically (most extensions support per-domain disable).
 
 If a fundamental shortcut (Send, New chat, Search) clashes for you on every browser extension you have: tell us, the layer is small enough that we can rework it.
 

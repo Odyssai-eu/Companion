@@ -31,7 +31,7 @@ The mode is **auto-set** during the pairing handshake. You can override it manua
 *Settings → Infrastructure → Engine* → **Pair** button. The flow:
 
 1. **Discovery probe** — Companion does an LAN scan for OD discovery (Odysseus's discovery beacon). If found, the engine URL is pre-filled.
-2. **Manual entry** — you can paste the engine URL directly (e.g. `http://192.168.86.141:8000`). Used when the engine isn't on the same LAN as the browser.
+2. **Manual entry** — you can paste the engine URL directly (e.g. `http://<engine-host>:8000`). Used when the engine isn't on the same LAN as the browser.
 3. **Auth** — optional bearer token. Required if the engine has admin auth enabled.
 4. **Test endpoint** — Companion hits two URLs:
    - `GET /.well-known/inference-engine.json` — capability contract. Returns the engine name/version + features array.
@@ -45,7 +45,7 @@ The mode is stored in `users.engine_mode`. Visible (and editable) in *Settings �
 
 ## LiteLLM (fallback rail)
 
-LiteLLM (`192.168.86.44:4000` in Sophie's setup) remains deployed as a **fallback rail** for clients that haven't migrated to gateway mode.
+LiteLLM (typically deployed at `<litellm-host>:4000`) remains supported as a **fallback rail** for clients that haven't migrated to gateway mode.
 
 When to keep LiteLLM enabled:
 
@@ -84,7 +84,7 @@ On the roadmap: per-project engine override (route a coding project to a fast lo
 
 In `users` table:
 
-- `engine_url` — the URL (`http://192.168.86.141:8000`).
+- `engine_url` — the URL (e.g. `http://<engine-host>:8000`).
 - `engine_token` — bearer for admin endpoints (encrypted).
 - `engine_meta` — cached `.well-known` body.
 - `engine_mode` — `gateway` / `hybrid` / `legacy`.

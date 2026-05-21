@@ -100,8 +100,8 @@ The conversation freezes a memory snapshot at creation. New entries written *aft
 RAG ingestion may have lagged behind a vault edit. Wait ~30s, retry. If still empty, check the RAG status:
 
 ```bash
-curl -s http://192.168.86.44:8080/status
-curl -s http://192.168.86.44:6333/collections
+curl -s http://<rag-host>:8080/status      # Docling ingestion service
+curl -s http://<rag-host>:6333/collections # Qdrant vector store
 ```
 
 **Némo writes in a register I didn't expect** (Baudelaire-mystic, robot-functional, anything weird)
@@ -127,7 +127,7 @@ Server-side tool name mismatch. Verify the exact tool name returned by `tools/li
 Tap the dimmed backdrop, or press Esc.
 
 **⌘K doesn't focus search**
-A browser extension may be intercepting it (1Password, Raindrop, …). Disable on `dev.thecomp.ai` or use the mouse.
+A browser extension may be intercepting it (1Password, Raindrop, …). Disable on your Companion host or use the mouse.
 
 **Sidebar shows duplicates of a conversation**
 Polling race — refresh. If persistent, report with the conversation id.
@@ -147,14 +147,14 @@ Long prompts → long prefill. Reasons:
 Fixes: turn off Agent mode if you don't need tools, disable unused MCP servers, prune the wiki, fork into a fresh conversation when one drags on.
 
 **TTFT degrades over a long session on the cluster**
-JACCL queue pair degradation — known upstream MLX/JACCL bug. Reboot the affected nodes. Sophie's running Argo with 2-node Hy3 for stability over speed.
+JACCL queue pair degradation — known upstream MLX/JACCL bug on RDMA-backed pools. Reboot the affected nodes. Smaller cluster sizes (2-node pipeline-AP) tend to be more stable than larger ones for long-running sessions.
 
 ## Still stuck
 
 - Check *Settings → User Guide* for the topic that matches your situation.
 - Look at the network panel — the API returns explicit error messages, not generic 500s.
 - Look at `docker logs thecompai-app` (admin access).
-- Tell Sophie. The bear listens.
+- Open an issue on the repo with the failing request id (`req_…` in network panel) — admins can grep logs by that id.
 
 ## Related
 

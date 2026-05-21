@@ -52,7 +52,7 @@ The transcript is persisted server-side. Reload the page, switch conversations a
 
 The Hermes Agent add-on lives in **Settings → Add-ons → Hermes Agent**. Two fields:
 
-- **Bridge URL** — where Companion sends agent commands. The bridge is a small service running on your machine that talks ACP to a local Hermes runtime. Default in this setup: `http://192.168.86.79:8003` for Sophie's workstation. For other users, point it at wherever you host the bridge.
+- **Bridge URL** — where Companion sends agent commands. The bridge is a small service running on your machine that talks ACP to a local Hermes runtime. Format is `http://<your-workstation>:<port>` (default port `8003`). Companion server needs to be able to reach this URL — on the same LAN, or via a VPN/tunnel if Companion is hosted elsewhere.
 - **Bridge token** (optional) — a static bearer. Add one when the bridge isn't on a trusted LAN.
 
 Click **Test connection** to confirm the bridge answers `/health`. If it doesn't, the `/hermes` calls will return a clear 503 with a pointer back to this Settings page — Companion never silently falls back to "no agent".

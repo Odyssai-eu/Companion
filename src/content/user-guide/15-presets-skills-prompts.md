@@ -10,7 +10,7 @@ Companion has several "instruction" mechanisms. Choosing the right one saves fri
 | **Project system prompt** | Static prompt for every conversation in a project | Per-project | Persona / context that applies to everything in a domain (a codebase, a research area). |
 | **Conversation system prompt** | One-off override for the current chat | Per-conversation | Throwaway. Test a prompt, fork a personality for one chat. |
 | **Inference preset** | Sampling parameters (temp, top_p, max_tokens, thinking) | Per-user, applicable any chat | When you have a vibes-tuning bundle. NOT for prompts. |
-| **Memory wiki article** | Always-injected per-user context | Per-user | "Who Sophie is" — preferences, expertise, identity, working style. Always visible to the model. |
+| **Memory wiki article** | Always-injected per-user context | Per-user | "Who the user is" — preferences, expertise, identity, working style. Always visible to the model. |
 | **Project memory** | Always-injected per-project context | Per-project | Project-specific vocabulary, decisions, gotchas. |
 
 ## Long-form decision tree
@@ -82,7 +82,7 @@ If the agent should always have the project's domain knowledge: put it in the **
 
 ### Don't put your identity in a skill
 
-"I am Sophie, I prefer direct French" goes in **memory wiki** (`profile/identity.md`, `profile/preferences.md`). Not in a skill that the agent might forget to load.
+"I am <name>, I prefer direct French" goes in **memory wiki** (`profile/identity.md`, `profile/preferences.md`). Not in a skill that the agent might forget to load.
 
 ### Don't conflate prompts and presets
 
@@ -98,17 +98,17 @@ The wiki compiler reads your conversations and emits diffs. If you chat about so
 
 ## Worked example
 
-> Sophie wants the agent to always speak French, with technical-but-warm-no-Baudelaire register, and additionally to be in "code review mode" for a current PR she's looking at.
+> A user wants the agent to always speak French, with a technical-but-warm register, and additionally to be in "code review mode" for a current PR they're looking at.
 
-- "Always French, technical-but-warm-no-Baudelaire" → **wiki article** `profile/preferences.md` + `profile/writing-guide.md`. Always visible to every chat. Locked with `edited_by_user=true` after editing manually.
-- "In code review mode for this PR" → **skill** `code-review-strict`. Loaded by the agent on demand when Sophie pastes a diff.
+- "Always French, technical-but-warm register" → **wiki article** `profile/preferences.md` + `profile/writing-guide.md`. Always visible to every chat. Locked with `edited_by_user=true` after editing manually.
+- "In code review mode for this PR" → **skill** `code-review-strict`. Loaded by the agent on demand when the user pastes a diff.
 - "Sampling: deterministic, short replies" → **preset** "Code review tuning" (temp 0, max_tokens 4000).
 
-When Sophie opens a chat:
-- The chat header has her wiki snapshot already (preferences, writing-guide visible to the model).
-- She pastes a diff and says "review this".
+When the user opens a chat:
+- The chat header has the wiki snapshot already (preferences, writing-guide visible to the model).
+- They paste a diff and say "review this".
 - The model recognises the request, calls `skill_get("code-review-strict")`, loads the body for this turn.
-- Sophie applies her "Code review tuning" preset from the cogwheel → temp 0 + cap.
+- The user applies the "Code review tuning" preset from the cogwheel → temp 0 + cap.
 
 Three orthogonal mechanisms, each at the right scope.
 

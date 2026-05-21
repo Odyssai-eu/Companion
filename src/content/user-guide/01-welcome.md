@@ -19,8 +19,8 @@ This guide is the canonical reference. Pick the topic that matches what you're t
 
 ## Two minds, one stack
 
-- **Companion** — the client you're reading this in. React + Hono + Postgres. Lives on `dev.thecomp.ai` (dev) or your own deployment.
-- **Odysseus** — Sophie's distributed MLX inference engine. OpenAI / Anthropic compatible. Companion is happiest paired with it, but speaks plain OpenAI / Anthropic / OpenRouter just as well via the legacy rail.
+- **Companion** — the client you're reading this in. React + Hono + Postgres, packaged as a Docker image you deploy where you want.
+- **Odysseus** — Open-source distributed MLX inference engine. OpenAI / Anthropic compatible. Companion is happiest paired with it, but speaks plain OpenAI / Anthropic / OpenRouter just as well via the legacy rail.
 
 Companion does **not** ship its own model. It's a client. You decide what's behind the chat window.
 

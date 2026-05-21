@@ -28,7 +28,7 @@ Top-right avatar → **Sign out**. Drops the local cookie. Server-side session i
 
 ## Forgot password
 
-Admin-resettable today (no self-serve reset flow). Ping Sophie / the workspace admin.
+Admin-resettable today (no self-serve reset flow). Ping your workspace admin.
 
 ## Multiple devices
 
@@ -72,7 +72,7 @@ Default `Europe/Brussels`. Change it once when you set up; it doesn't auto-detec
 
 ## Deleting your account
 
-Admin-only today. Email Sophie. The cascade is:
+Admin-only today. Contact your workspace admin. The cascade is:
 
 - Hard-delete: users row, sessions, agents tokens, inference settings, presets, MCP servers.
 - Cascade-delete via FK: conversations, messages, projects, project_memory_files, memory_articles, addons.
