@@ -1,6 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { InferenceParams } from "~/hooks/useChat";
 import { api, type ApiInferencePreset } from "~/lib/api";
+import { downloadFile } from "~/lib/file-export";
+
+type SavedPrompt = Awaited<ReturnType<typeof api.listSavedPrompts>>["prompts"][number];
 
 type Props = {
   params: InferenceParams;
@@ -125,9 +128,97 @@ function SystemPromptSection({
   params: InferenceParams;
   onChange: (next: Partial<InferenceParams>) => void;
 }) {
-  // Free-form, conversation-level system prompt. Named reusable
-  // prompts moved to agent_skills (Settings → Skills); the chat panel
-  // no longer save/loads named entries here.
+  // Server-side saved prompts library. The textarea below remains for
+  // one-off conv-level overrides; the dropdown loads a named entry
+  // INTO the textarea (the choice doesn't persist back automatically).
+  const [library, setLibrary] = useState<SavedPrompt[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function refresh() {
+    try {
+      const { prompts } = await api.listSavedPrompts();
+      setLibrary(prompts);
+    } catch {
+      // Empty list is the harmless default.
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  async function onSaveCurrent() {
+    const name = window.prompt("Name this prompt:", "")?.trim();
+    if (!name) return;
+    if (!params.systemPrompt.trim()) return;
+    try {
+      await api.createSavedPrompt({ name, body: params.systemPrompt });
+      await refresh();
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (/name_taken/.test(msg)) {
+        alert(`A saved prompt called "${name}" already exists.`);
+      } else {
+        alert(`Couldn't save: ${msg}`);
+      }
+    }
+  }
+
+  function onLoad(id: string) {
+    const found = library.find((p) => p.id === id);
+    if (!found) return;
+    onChange({ systemPrompt: found.body, systemPromptEnabled: true });
+  }
+
+  function onExport() {
+    const payload = JSON.stringify(
+      library.map((p) => ({ name: p.name, body: p.body })),
+      null,
+      2,
+    );
+    downloadFile(
+      "companion-saved-prompts.json",
+      payload,
+      "application/json",
+    );
+  }
+
+  function onImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    file.text().then(async (text) => {
+      try {
+        const parsed = JSON.parse(text) as Array<{
+          name?: string;
+          body?: string;
+          content?: string;
+        }>;
+        if (!Array.isArray(parsed)) {
+          alert("Couldn't import — file format wasn't recognized.");
+          return;
+        }
+        let n = 0;
+        for (const p of parsed) {
+          const name = p.name?.trim();
+          const body = (p.body ?? p.content)?.trim();
+          if (!name || !body) continue;
+          // createSavedPrompt 409s on duplicates — we swallow and keep going
+          await api.createSavedPrompt({ name, body }).catch(() => undefined);
+          n++;
+        }
+        await refresh();
+        if (n > 0) {
+          alert(`Imported ${n} prompt${n > 1 ? "s" : ""}.`);
+        } else {
+          alert("No valid entries found in file.");
+        }
+      } catch {
+        alert("Couldn't import — file format wasn't recognized.");
+      }
+    });
+  }
+
   return (
     <div className="mt-5 border-t border-gray-100 pt-4">
       <div className="mb-2 flex items-center justify-between">
@@ -135,6 +226,50 @@ function SystemPromptSection({
           System prompt
         </span>
         <div className="flex items-center gap-3">
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) onLoad(e.target.value);
+            }}
+            className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:border-gray-300"
+          >
+            <option value="">Load saved…</option>
+            {library.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={onSaveCurrent}
+            disabled={!params.systemPrompt.trim()}
+            className="text-[11px] text-cyan hover:text-navy disabled:opacity-40"
+          >
+            Save current
+          </button>
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={library.length === 0}
+            className="text-[11px] text-gray-400 hover:text-ink disabled:opacity-40"
+          >
+            Export
+          </button>
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="text-[11px] text-gray-400 hover:text-ink"
+          >
+            Import
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,application/json"
+            onChange={onImport}
+            className="hidden"
+          />
           <span className="text-[10px] text-gray-400">
             {params.systemPromptEnabled ? "included" : "not included"}
           </span>

@@ -21,6 +21,7 @@ import voiceLiveAddonRoute from "./routes/addon-voice-live";
 import obsidianRoute, { obsidianBearerLoader } from "./routes/addon-obsidian";
 import tavilyRoute from "./routes/addon-tavily";
 import routerAddonRoute from "./routes/addon-router";
+import savedPromptsRoute from "./routes/saved-prompts";
 import adminGuestTokensRoute from "./routes/admin-guest-tokens";
 import adminUsersRoute from "./routes/admin-users";
 import authRoute from "./routes/auth";
@@ -99,6 +100,8 @@ app.use("/api/mcp-servers/*", licenseGate, requireUser);
 app.use("/api/mcp-servers", licenseGate, requireUser);
 app.use("/api/skills/*", licenseGate, requireUser);
 app.use("/api/skills", licenseGate, requireUser);
+app.use("/api/saved-prompts/*", licenseGate, requireUser);
+app.use("/api/saved-prompts", licenseGate, requireUser);
 // Resolve bearer-token auth for the Obsidian plugin BEFORE requireUser runs,
 // so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
@@ -148,6 +151,7 @@ app.route("/api/addons/router", routerAddonRoute);
 app.route("/api/models", modelsRoute);
 app.route("/api/inference", inferenceRoute);
 app.route("/api/inference/presets", inferencePresetsRoute);
+app.route("/api/saved-prompts", savedPromptsRoute);
 app.route("/api/providers", providersRoute);
 app.route("/api/mcp-servers", mcpServersRoute);
 app.route("/api/skills", skillsRoute);

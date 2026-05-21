@@ -1047,6 +1047,46 @@ export const api = {
   tavilyClearKey: () =>
     request<void>("/api/addons/tavily/key", { method: "DELETE" }),
 
+  // Saved prompts — user-owned library of named system prompts
+  listSavedPrompts: () =>
+    request<{
+      prompts: Array<{
+        id: string;
+        name: string;
+        body: string;
+        createdAt: string;
+        updatedAt: string;
+      }>;
+    }>("/api/saved-prompts"),
+  createSavedPrompt: (body: { name: string; body: string }) =>
+    request<{
+      prompt: {
+        id: string;
+        name: string;
+        body: string;
+        createdAt: string;
+        updatedAt: string;
+      };
+    }>("/api/saved-prompts", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateSavedPrompt: (id: string, body: { name?: string; body?: string }) =>
+    request<{
+      prompt: {
+        id: string;
+        name: string;
+        body: string;
+        createdAt: string;
+        updatedAt: string;
+      };
+    }>(`/api/saved-prompts/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteSavedPrompt: (id: string) =>
+    request<void>(`/api/saved-prompts/${id}`, { method: "DELETE" }),
+
   // Hermes Agent add-on retired 2026-05-19.
 
   // Auto Router add-on (semantic routing via embeddings)

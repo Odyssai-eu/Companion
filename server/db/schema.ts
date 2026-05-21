@@ -619,6 +619,38 @@ export const inferencePresets = pgTable(
 export type InferencePresetRow = typeof inferencePresets.$inferSelect;
 export type NewInferencePresetRow = typeof inferencePresets.$inferInsert;
 
+// Saved prompts — user-owned library of named system prompts. The chat
+// InferencePanel's System prompt section can load by name. Separate
+// from agent_skills (which are model-callable tools); a prompt is just
+// prose the user wants reusable across conversations.
+export const savedPrompts = pgTable(
+  "saved_prompts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userIdx: index("saved_prompts_user_id_idx").on(t.userId),
+    userNameUniq: uniqueIndex("saved_prompts_user_name_uniq").on(
+      t.userId,
+      t.name,
+    ),
+  }),
+);
+
+export type SavedPromptRow = typeof savedPrompts.$inferSelect;
+export type NewSavedPromptRow = typeof savedPrompts.$inferInsert;
+
 // External MCP servers — Companion is the client. Each row points at
 // an MCP-compatible HTTP endpoint the user wants Companion to expose
 // as tools to the LLM. The slug namespaces the tool names so a Notion
