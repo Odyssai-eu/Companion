@@ -651,6 +651,67 @@ export const savedPrompts = pgTable(
 export type SavedPromptRow = typeof savedPrompts.$inferSelect;
 export type NewSavedPromptRow = typeof savedPrompts.$inferInsert;
 
+// Agent sessions — `/hermes`, `/pi`, `/openclaude`, etc. spawn an inline
+// sub-thread against an external agent bridge (niveau-1: Hermes ACP on
+// Sophie's workstation, niveau-2: per-user node daemon). One persistent
+// session per (conversationId, agentKind).
+export const agentSessions = pgTable(
+  "agent_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    agentKind: text("agent_kind").notNull(),
+    bridgeSessionId: text("bridge_session_id"),
+    config: jsonb("config").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userIdx: index("agent_sessions_user_id_idx").on(t.userId),
+    convIdx: index("agent_sessions_conv_idx").on(t.conversationId),
+    convKindUniq: uniqueIndex("agent_sessions_conv_kind_uniq").on(
+      t.conversationId,
+      t.agentKind,
+    ),
+  }),
+);
+
+export type AgentSessionRow = typeof agentSessions.$inferSelect;
+export type NewAgentSessionRow = typeof agentSessions.$inferInsert;
+
+// Agent sub-thread transcript. Persisted so a page reload re-renders
+// the conversation with full history.
+export const agentMessages = pgTable(
+  "agent_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["user", "agent", "tool"] }).notNull(),
+    content: text("content").notNull().default(""),
+    stats: jsonb("stats").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    sessionIdx: index("agent_messages_session_idx").on(t.sessionId, t.createdAt),
+  }),
+);
+
+export type AgentMessageRow = typeof agentMessages.$inferSelect;
+export type NewAgentMessageRow = typeof agentMessages.$inferInsert;
+
 // External MCP servers — Companion is the client. Each row points at
 // an MCP-compatible HTTP endpoint the user wants Companion to expose
 // as tools to the LLM. The slug namespaces the tool names so a Notion

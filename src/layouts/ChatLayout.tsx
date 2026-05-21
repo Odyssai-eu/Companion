@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router";
 import InferencePanel from "~/components/chat/InferencePanel";
 import Input from "~/components/chat/Input";
 import Messages from "~/components/chat/Messages";
+import { AgentBubble } from "~/components/chat/AgentBubble";
 // RepoBindingBar (Hermes-only) retired 2026-05-19.
 import Sidebar from "~/components/chat/Sidebar";
 import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
@@ -233,6 +234,15 @@ export default function ChatLayout() {
           onRegenerate={chat.regenerate}
           onEdit={chat.editAndResend}
           showMetrics={chat.showMetrics}
+        />
+        {/* Agent sub-thread (/hermes etc.) — terminal-style inline panel
+         *  pinned below the message list. Renders only when there's a
+         *  transcript, a live stream, or an error to surface. */}
+        <AgentBubble
+          messages={chat.agentMessages}
+          streaming={chat.agentStreaming}
+          error={chat.agentError}
+          onReset={chat.hermesReset}
         />
         {chat.conversation?.kind === "talk" ? (
           <TalkInput

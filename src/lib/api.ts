@@ -1087,7 +1087,52 @@ export const api = {
   deleteSavedPrompt: (id: string) =>
     request<void>(`/api/saved-prompts/${id}`, { method: "DELETE" }),
 
-  // Hermes Agent add-on retired 2026-05-19.
+  // Hermes Agent add-on retired 2026-05-19. Reinstated 2026-05-21 with a
+  // new architecture: ACP bridge on the user's machine.
+  hermesAddonInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      configured: boolean;
+      bridgeUrl: string;
+      hasToken: boolean;
+    }>("/api/addons/hermes/info"),
+  hermesAddonSetConfig: (body: {
+    enabled?: boolean;
+    bridgeUrl?: string;
+    bridgeToken?: string | null;
+  }) =>
+    request<{
+      ok: true;
+      enabled: boolean;
+      configured: boolean;
+      bridgeUrl: string;
+      hasToken: boolean;
+    }>("/api/addons/hermes/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  hermesAddonProbe: () =>
+    request<{ ok: boolean; health?: unknown; error?: string; status?: number }>(
+      "/api/addons/hermes/probe",
+      { method: "POST" },
+    ),
+  hermesTranscript: (conversationId: string) =>
+    request<{
+      sessionId: string | null;
+      messages: Array<{
+        id: string;
+        sessionId: string;
+        role: "user" | "agent" | "tool";
+        content: string;
+        stats: Record<string, unknown> | null;
+        createdAt: string;
+      }>;
+    }>(`/api/agents/hermes/transcript/${conversationId}`),
+  hermesReset: (conversationId: string) =>
+    request<{ ok: true }>(`/api/agents/hermes/reset/${conversationId}`, {
+      method: "POST",
+    }),
 
   // Auto Router add-on (semantic routing via embeddings)
   routerInfo: () =>

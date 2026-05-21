@@ -127,6 +127,20 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Agent sub-thread (`/hermes`) — transcript loaded on conv switch,
+  // accumulates locally as user invokes more prompts.
+  const [agentMessages, setAgentMessages] = useState<
+    Array<{
+      id: string;
+      role: "user" | "agent" | "tool";
+      content: string;
+      stats?: Record<string, unknown> | null;
+      createdAt?: string;
+    }>
+  >([]);
+  const [agentStreaming, setAgentStreaming] = useState(false);
+  const [agentError, setAgentError] = useState<string | null>(null);
   const [inferenceMode, setInferenceMode] = useState<
     "easy" | "advanced" | "expert"
   >("expert");
@@ -292,6 +306,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     if (!conversationId) {
       setMessages([]);
       setConversation(null);
+      setAgentMessages([]);
+      setAgentError(null);
       // Clear any pre-conversation memory override when the user
       // returns to the "new chat" entry, so the next conv starts from
       // its project default (or true) instead of a stale pending flip.
@@ -299,6 +315,16 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       loadedIdRef.current = null;
       return;
     }
+    // Load the Hermes agent transcript if there's a sub-thread for this
+    // conv. Silent fallback to empty — most convs won't have one.
+    api
+      .hermesTranscript(conversationId)
+      .then(({ messages: agentMsgs }) => {
+        setAgentMessages(agentMsgs);
+      })
+      .catch(() => {
+        /* not configured or 404 — leave empty */
+      });
     if (loadedIdRef.current === conversationId) return;
 
     loadedIdRef.current = conversationId;
@@ -519,17 +545,184 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     globalModels.find((m) => m.id === model)?.capabilities ??
     { vision: true, tools: false };
 
+  /**
+   * Invoke the Hermes agent bridge with a free-form prompt. Streams
+   * SSE chunks into the local agentMessages state. The server persists
+   * the user prompt + agent reply + tool invocations so a page reload
+   * restores the transcript.
+   */
+  const hermesInvoke = useCallback(
+    async (convId: string, prompt: string) => {
+      setAgentError(null);
+      setAgentStreaming(true);
+
+      // Optimistic user line — server will mirror it but local feedback
+      // beats the round-trip.
+      const userLineId = `local-user-${Date.now()}`;
+      setAgentMessages((prev) => [
+        ...prev,
+        { id: userLineId, role: "user", content: prompt },
+      ]);
+
+      const agentLineId = `local-agent-${Date.now()}`;
+      let agentText = "";
+      // Placeholder agent line we'll grow as chunks arrive
+      setAgentMessages((prev) => [
+        ...prev,
+        { id: agentLineId, role: "agent", content: "" },
+      ]);
+
+      try {
+        const res = await fetch("/api/agents/hermes/invoke", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversationId: convId, prompt }),
+        });
+        if (!res.ok || !res.body) {
+          const err = await res.json().catch(() => ({
+            detail: res.statusText || `bridge error ${res.status}`,
+          }));
+          setAgentError(
+            (err as { detail?: string; error?: string }).detail ??
+              (err as { error?: string }).error ??
+              `bridge error ${res.status}`,
+          );
+          // Drop the placeholder agent line
+          setAgentMessages((prev) => prev.filter((m) => m.id !== agentLineId));
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split("\n\n");
+          buffer = blocks.pop() ?? "";
+          for (const block of blocks) {
+            let event = "message";
+            let data = "";
+            for (const line of block.split("\n")) {
+              if (line.startsWith("event:")) event = line.slice(6).trim();
+              else if (line.startsWith("data:")) data += line.slice(5).trim();
+            }
+            if (!data) continue;
+            try {
+              const parsed = JSON.parse(data);
+              if (event === "update") {
+                const kind = parsed.sessionUpdate;
+                if (kind === "agent_message_chunk") {
+                  agentText += parsed.content?.text ?? "";
+                  setAgentMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === agentLineId ? { ...m, content: agentText } : m,
+                    ),
+                  );
+                } else if (
+                  kind === "tool_call" ||
+                  kind === "bridge_auto_approved"
+                ) {
+                  const tool = parsed.tool ?? {};
+                  setAgentMessages((prev) => [
+                    ...prev,
+                    {
+                      id: `local-tool-${Date.now()}-${Math.random()}`,
+                      role: "tool",
+                      content:
+                        tool.name ?? tool.title ?? tool.label ?? "(unknown)",
+                      stats: { args: tool.rawInput ?? tool.arguments ?? null },
+                    },
+                  ]);
+                }
+              } else if (event === "error") {
+                setAgentError(
+                  (parsed as { message?: string }).message ?? "stream error",
+                );
+              }
+            } catch {
+              /* non-JSON SSE chunk, ignore */
+            }
+          }
+        }
+      } catch (e) {
+        setAgentError((e as Error).message);
+      } finally {
+        setAgentStreaming(false);
+      }
+    },
+    [],
+  );
+
+  /**
+   * Drop the Hermes session for the current conv. Next /hermes opens a
+   * fresh ACP session on the bridge.
+   */
+  const hermesReset = useCallback(async () => {
+    const convId = conversationId ?? conversation?.id;
+    if (!convId) return;
+    try {
+      await api.hermesReset(convId);
+      setAgentMessages([]);
+      setAgentError(null);
+    } catch (e) {
+      setAgentError((e as Error).message);
+    }
+  }, [conversationId, conversation?.id]);
+
   const sendMessage = useCallback(
     async (text: string, attachments: Attachment[] = []) => {
       if (sending) return;
+      const trimmed = text.trim();
+      if (!trimmed && attachments.length === 0) return;
+
+      // ── Slash commands ─────────────────────────────────────────────────
+      // /hermes <prompt> routes to the agent bridge instead of the
+      // chat-completions pipeline. Other slashes can be added here
+      // without touching the model picker / inference path.
+      const slashMatch =
+        trimmed.match(/^\/([a-z][\w-]*)\s+([\s\S]+)$/i) ??
+        trimmed.match(/^\/([a-z][\w-]*)\s*$/i);
+      if (slashMatch) {
+        const cmd = slashMatch[1].toLowerCase();
+        const rest = (slashMatch[2] ?? "").trim();
+        if (cmd === "hermes") {
+          if (!rest) {
+            setAgentError(
+              "Provide a prompt after /hermes — e.g. /hermes list files in ~/Documents",
+            );
+            return;
+          }
+          // Need a conv before invoking; create one if this is a fresh chat
+          let convId = conversationId ?? conversation?.id ?? null;
+          if (!convId) {
+            try {
+              const created = await api.createConversation({
+                title: rest.slice(0, 80) || "/hermes",
+                ...(model ? { model } : {}),
+              });
+              convId = created.conversation.id;
+              setConversation(created.conversation);
+              navigate(`/c/${convId}`, { replace: true });
+            } catch (e) {
+              setError((e as Error).message);
+              return;
+            }
+          }
+          await hermesInvoke(convId, rest);
+          return;
+        }
+        // Unknown slash — fall through to normal chat so the user can
+        // still send text starting with `/` if they really want.
+      }
+
       if (!model) {
         setError(
           "No model selected. Pick one from the model picker in the composer.",
         );
         return;
       }
-      const trimmed = text.trim();
-      if (!trimmed && attachments.length === 0) return;
 
       const built = buildUserMessage(trimmed, attachments);
       setError(null);
@@ -800,6 +993,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     toggleMemoryEnabled,
     toggleAgentMode,
     reload,
+    // Agent sub-thread (/hermes)
+    agentMessages,
+    agentStreaming,
+    agentError,
+    hermesInvoke,
+    hermesReset,
     /** Effective memory toggle: persisted conv value when the conv
      *  exists, else the pre-conversation pending override, else true. */
     memoryEnabled:
