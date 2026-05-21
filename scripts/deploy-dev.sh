@@ -12,6 +12,32 @@ APP_DIR='~/thecompai/app'
 
 cd "$(dirname "$0")/.."
 
+# ── Pre-flight: refuse to deploy when there are uncommitted code changes ──
+#
+# The script only auto-commits `package.json` (the version bump). Anything
+# else in the working tree won't get pushed and won't reach the server,
+# producing a "deployed bundle is missing your code" silent failure.
+#
+# We learned this the hard way 2026-05-20/21: five back-to-back deploys
+# shipped nothing but version bumps because the feature code (router add-on,
+# saved-prompts library) was sitting uncommitted in the working tree. Now
+# we abort with a clear list of what to commit first.
+#
+# Escape hatch: `git stash` before running, then `git stash pop` after.
+# Or commit the changes (recommended).
+DIRTY=$(git status --porcelain | grep -v -E '^.M package\.json$' || true)
+if [ -n "$DIRTY" ]; then
+  echo "✗ Refusing to deploy — uncommitted changes detected:"
+  echo
+  echo "$DIRTY" | sed 's/^/  /'
+  echo
+  echo "  The script only auto-commits package.json (the version bump);"
+  echo "  these other changes won't reach the server."
+  echo
+  echo "  Fix: commit them, or 'git stash' to set them aside."
+  exit 1
+fi
+
 if [ "$BUMP" != "skip" ]; then
   NEW_VERSION=$(node scripts/bump-version.js "$BUMP")
   git add package.json
