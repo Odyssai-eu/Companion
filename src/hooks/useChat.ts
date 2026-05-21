@@ -315,17 +315,26 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       loadedIdRef.current = null;
       return;
     }
-    // Load the Hermes agent transcript if there's a sub-thread for this
-    // conv. Silent fallback to empty — most convs won't have one.
+    if (loadedIdRef.current === conversationId) return;
+    // Load the Hermes agent transcript ONCE per conv — gated behind the
+    // loaded-id ref above so it doesn't re-fire on every render. Without
+    // this guard, the load races the live stream (when /hermes was just
+    // sent on a new conv, navigate(/c/:id) re-triggers this effect; the
+    // server doesn't have the persisted messages yet, so the empty
+    // response would wipe the optimistic state mid-stream).
     api
       .hermesTranscript(conversationId)
       .then(({ messages: agentMsgs }) => {
-        setAgentMessages(agentMsgs);
+        // Skip if a stream landed first OR if we got more messages
+        // locally than the server reports (the server persists at the
+        // END of the stream, not chunk-by-chunk).
+        setAgentMessages((prev) =>
+          prev.length > agentMsgs.length ? prev : agentMsgs,
+        );
       })
       .catch(() => {
         /* not configured or 404 — leave empty */
       });
-    if (loadedIdRef.current === conversationId) return;
 
     loadedIdRef.current = conversationId;
     let serverPollAbort: (() => void) | null = null;
