@@ -201,7 +201,7 @@ export async function runSsh(
  * negotiation that bare ssh + echo gets wrong on macOS sshd
  * (which advertises both `password` and `keyboard-interactive`).
  *
- * Mirrors what Starbase does and ships in production on rpi-dev.
+ * Mirrors what Starbase does and ships in production on the Companion host.
  */
 export async function runSshCopyId(
   node: SshNode,

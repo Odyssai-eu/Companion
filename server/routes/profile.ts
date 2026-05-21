@@ -291,7 +291,7 @@ profileRoute.post(
 
     const target = {
       baseUrl: (
-        u.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
+        u.litellmUrl ?? process.env.LITELLM_URL ?? ""
       ).replace(/\/+$/, ""),
       apiKey: u.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
     };
@@ -543,7 +543,7 @@ profileRoute.post(
 
     const target = {
       baseUrl: (
-        u.litellmUrl ?? process.env.LITELLM_URL ?? "http://192.168.86.44:4000"
+        u.litellmUrl ?? process.env.LITELLM_URL ?? ""
       ).replace(/\/+$/, ""),
       apiKey: u.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
     };

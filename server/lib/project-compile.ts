@@ -49,13 +49,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  *   3. 'agent-fast' (Qwen3.6-35B-A3B-MLX-8bit local on the cluster)
  *
  * Cloud fallback: 'Qwen3.6-flash' (routes to OpenRouter via LiteLLM
- * on Sophie's setup). Only used if the primary path fails — keeps
+ * on a typical deployment). Only used if the primary path fails — keeps
  * normal traffic on the local cluster but doesn't drop the compile
  * when the cluster is down for maintenance.
  */
 const COMPILE_MODEL_LOCAL_FALLBACK = "agent-fast";
 const COMPILE_MODEL_CLOUD_FALLBACK = "Qwen3.6-flash";
-const DEFAULT_LITELLM = process.env.LITELLM_URL ?? "http://192.168.86.44:4000";
+const DEFAULT_LITELLM = process.env.LITELLM_URL ?? "";
 const DEFAULT_KEY = process.env.LITELLM_API_KEY ?? null;
 /** Match the per-file cap in project-memory.ts so a single compile
  *  result never blows past it. */

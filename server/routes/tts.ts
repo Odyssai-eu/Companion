@@ -3,25 +3,18 @@ import { Hono } from "hono";
 const ttsRoute = new Hono();
 
 /**
- * Minimal TTS proxy. The user's Voxtral (or any OpenAI-compatible
- * /v1/audio/speech endpoint) is set via env `TTS_BASE_URL` — defaults to
- * http://192.168.86.42:8890 (Voxtral MLX on ultra-96b). Client POSTs text,
- * we forward and stream the WAV back.
- */
-
-/**
- * TTS proxy. Targets the mlx-audio server (Blaizzy/mlx-audio) running on
- * ultra-96b:8892, hosting the **VibeVoice-Realtime-0.5B** MLX model.
+ * Minimal TTS proxy. The TTS endpoint (any OpenAI-compatible
+ * /v1/audio/speech server) is set via env `TTS_BASE_URL`. Recommended
+ * targets: mlx-audio (Blaizzy/mlx-audio) hosting VibeVoice-Realtime,
+ * or any other OpenAI-compat TTS. Client POSTs text, we forward and
+ * stream the WAV back.
  *
- * VibeVoice-Realtime is HTTP chunked-transfer streaming (no WebSocket needed),
- * OpenAI-compat /v1/audio/speech, TTFB sub-millisecond, audio gen ~6× realtime.
- * See `shared-memory/knowledge/concepts/vibevoice-realtime.md` for the spec.
- *
- * The Voxtral 4B-TTS model on the same server stays as the FR fallback (better
- * French quality) — clients can request it explicitly via `model:` in the body.
+ * VibeVoice-Realtime is HTTP chunked-transfer streaming (no WebSocket
+ * needed), TTFB sub-millisecond, audio gen ~6× realtime. The Voxtral
+ * 4B-TTS model works as a French fallback (better French quality) —
+ * clients can request it explicitly via `model:` in the body.
  */
-const TTS_BASE_URL =
-  process.env.TTS_BASE_URL ?? "http://192.168.86.42:8892";
+const TTS_BASE_URL = process.env.TTS_BASE_URL ?? "";
 const TTS_DEFAULT_MODEL =
   process.env.TTS_DEFAULT_MODEL ??
   "mlx-community/VibeVoice-Realtime-0.5B-8bit";

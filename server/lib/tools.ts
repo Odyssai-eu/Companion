@@ -207,7 +207,7 @@ const FS_TOOLS = [
 // the user picks from the chat panel dropdown). The chat model
 // curates these itself: when the user says "save this as a skill",
 // "use the X skill", "list my skills", etc., the model invokes the
-// relevant tool below. Sophie said: "le skill c'est D … et il doit
+// relevant tool below. The product brief: "le skill c'est D … et il doit
 // pouvoir créér lui meme un skill si je le demande."
 const SKILL_TOOLS = [
   {
@@ -393,7 +393,7 @@ export async function buildSkillsIndex(userId: string): Promise<string | null> {
   ].join("\n");
 }
 
-/** Skill tools — always on (per Sophie's Q3 commitment 2026-05-20).
+/** Skill tools — always on (per product brief 2026-05-20).
  *  The model needs to be able to list/load/create/update/delete skills
  *  on any turn, regardless of agentMode. Tiny schema (~5 tools, no
  *  large enums) — adds <500 tokens to the prompt and doesn't force
@@ -664,8 +664,8 @@ async function executeWebTool(
 /** Public dispatcher — routes by tool name to the right backend. */
 // ── RAG (Qdrant + bge-m3) ─────────────────────────────────────────────────
 
-const RAG_QDRANT_URL = process.env.RAG_QDRANT_URL ?? "http://192.168.86.44:6333";
-const RAG_EMBED_URL = process.env.RAG_EMBED_URL ?? "http://192.168.86.44:8082";
+const RAG_QDRANT_URL = process.env.RAG_QDRANT_URL ?? "";
+const RAG_EMBED_URL = process.env.RAG_EMBED_URL ?? "";
 const RAG_COLLECTION = process.env.RAG_COLLECTION ?? "obsidian-context";
 
 function isRagConfigured(): boolean {

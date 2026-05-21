@@ -133,7 +133,7 @@ export default function AddonsPage() {
       )}
 
       {/* LiteLLM add-on — backed by users.litellm* fields, not by an addons
-       *  row. Lives here (per Sophie 2026-05-19) because it's an optional
+       *  row. Lives here (per UX brief 2026-05-19) because it's an optional
        *  routing layer that the user adds or removes from their chain, just
        *  like the DB-backed plugins/MCP entries below. */}
       <LiteLLMAddon />
@@ -1057,7 +1057,7 @@ function PackageIcon() {
 
 // LiteLLM as an add-on — moved here from Inference page 2026-05-19.
 // Backed by `users.litellm{Url,ApiKey,Disabled}` so flipping the toggle
-// persists across logins. When off, all sub-fields are hidden (Sophie's
+// persists across logins. When off, all sub-fields are hidden (the user's
 // 'en off, on n'affiche pas les info comme actuellement').
 function LiteLLMAddon() {
   const [s, setS] = useState<ApiInferenceSettings | null>(null);
@@ -1229,9 +1229,9 @@ function LiteLLMAddon() {
 //
 // Picks chat / deep / code automatically by embedding the user's last
 // message and comparing it against per-bucket centroids. The embedding
-// service runs on the cluster (max-64 by default). The user supplies
-// the URL + the three target model ids. Anchors are rebuilt whenever
-// the URL changes.
+// service can run anywhere the user hosts an OpenAI-compatible
+// embeddings endpoint. The user supplies the URL + the three target
+// model ids. Anchors are rebuilt whenever the URL changes.
 
 function RouterPanel() {
   type Info = Awaited<ReturnType<typeof api.routerInfo>>;

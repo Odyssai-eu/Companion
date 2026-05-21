@@ -625,7 +625,7 @@ export const api = {
 
   // ── Join the Odyssai (Odysseus gateway pairing) ───────────────────────
   // Server-side LAN scan returns the engines reachable from the backend's
-  // network. In dev this is rpi-dev's LAN — same as Sophie's home LAN —
+  // network. In a typical deployment this is the Companion server's LAN — same as the deployment's LAN —
   // so it finds Odysseus on .141. Multi-tenant cloud users on other
   // networks need the manual URL fallback (or the future Tauri desktop).
   searchOdyssai: (body?: { subnets?: string[]; timeoutMs?: number }) =>

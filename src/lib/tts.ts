@@ -1,8 +1,9 @@
 /**
- * Streaming TTS player. Reads HTTP chunked WAV from /api/tts/speak (proxy →
- * mlx-audio's VibeVoice-Realtime on ultra-96b:8892), strips the 44-byte WAV
- * header, parses Int16 PCM samples at 24 kHz mono, and pipes them into the
- * Web Audio API as soon as enough samples are buffered.
+ * Streaming TTS player. Reads HTTP chunked WAV from /api/tts/speak
+ * (proxy → an OpenAI-compatible TTS endpoint, e.g. mlx-audio's
+ * VibeVoice-Realtime), strips the 44-byte WAV header, parses Int16 PCM
+ * samples at 24 kHz mono, and pipes them into the Web Audio API as
+ * soon as enough samples are buffered.
  *
  * Why streaming rather than HTMLAudioElement + Blob:
  *   - VibeVoice TTFB is sub-millisecond — the UI can be audible before the

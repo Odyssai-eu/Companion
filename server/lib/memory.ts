@@ -103,8 +103,8 @@ function stripWikilinks(md: string): string {
 // hit), and only the (RAG block + user msg) tail re-prefills.
 // ──────────────────────────────────────────────────────────────────────────
 
-const RAG_QDRANT_URL = process.env.RAG_QDRANT_URL ?? "http://192.168.86.44:6333";
-const RAG_EMBED_URL = process.env.RAG_EMBED_URL ?? "http://192.168.86.44:8082";
+const RAG_QDRANT_URL = process.env.RAG_QDRANT_URL ?? "";
+const RAG_EMBED_URL = process.env.RAG_EMBED_URL ?? "";
 const RAG_COLLECTION = process.env.RAG_COLLECTION ?? "obsidian-context";
 
 export type RagHit = {

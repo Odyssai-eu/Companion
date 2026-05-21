@@ -47,7 +47,7 @@ inferenceRoute.get("/settings", async (c) => {
     litellmUrl: u.litellmUrl,
     timezone: u.timezone,
     hasApiKey: Boolean(u.hasApiKey),
-    envDefaultUrl: process.env.LITELLM_URL ?? "http://192.168.86.44:4000",
+    envDefaultUrl: process.env.LITELLM_URL ?? "",
     inferenceMode: u.inferenceMode as "easy" | "advanced" | "expert",
     easyModel: u.easyModel,
     namedModels: u.namedModels ?? {},

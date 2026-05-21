@@ -6,7 +6,7 @@ import { useAuth } from "~/hooks/useAuth";
 type NavItem = { to: string; label: string; end?: boolean };
 type NavSection = { title: string; items: NavItem[] };
 
-// Settings nav — refactor 2026-05-19 per Sophie's UX brief:
+// Settings nav — refactor 2026-05-19 per a UX refactor:
 //   - dropped: Security / Devices & sync / Learning Center
 //   - renamed: Inference → "Inference & gateway" (Provider section becomes
 //              "Odysseus Gateway", LiteLLM moves out to Add-ons)

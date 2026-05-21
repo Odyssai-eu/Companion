@@ -34,7 +34,7 @@ export default function ProjectPage() {
   // Project settings panel — gates the system prompt + memory + vault
   // controls. Default closed so the project view stays focused on
   // chats; user opens it when they actually want to tune. Instructions
-  // stays outside the panel (always visible per Sophie's UX call).
+  // stays outside the panel (always visible per UX brief).
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -499,7 +499,7 @@ function categoryIcon(
 }
 
 /**
- * Two-toggle memory controls (Sophie's layout, 13 May 2026).
+ * Two-toggle memory controls (UX brief, May 2026).
  *
  *   [ Global wiki ]   ( Read only )      [ Project wiki ]
  *

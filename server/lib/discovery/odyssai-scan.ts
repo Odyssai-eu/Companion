@@ -13,8 +13,8 @@
  * (1.5s) so a typical /24 finishes in ~5-10s on a healthy LAN.
  *
  * Caveat for the SaaS deploy: in dev this code runs inside the Docker
- * container on rpi-dev, so it scans the rpi-dev LAN — which happens to
- * be Sophie's home LAN. For multi-tenant cloud users on different
+ * container on the Companion host, so it scans the Companion server's LAN — which happens to
+ * be the deployment's LAN. For multi-tenant cloud users on different
  * networks, the scan won't find their local Odysseus. That's a known
  * limitation — Tauri desktop will solve it natively. Manual URL entry
  * stays available as the fallback.

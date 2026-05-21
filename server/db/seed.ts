@@ -9,7 +9,7 @@ import { addons, users } from "./schema";
  *
  * v0.1.0 — no more servers/endpoints seed. Inference is now via LiteLLM,
  * configured per-user in Settings → Inference (or via the LITELLM_URL env
- * default). The default URL points at Sophie's home cluster proxy.
+ * default). The default URL points at the operator's LiteLLM proxy.
  */
 export async function seedIfEmpty() {
   const [{ count }] = await db
@@ -20,17 +20,20 @@ export async function seedIfEmpty() {
 
   console.log("→ seeding empty DB with dev data");
 
-  // Dev account — Sophie logs in with `dev` initially, can change via API.
-  const passwordHash = await hashPassword("dev");
-  const [sophie] = await db
+  // Dev account — seeded only on an empty DB. Email + name + LiteLLM URL
+  // can be overridden via env vars; otherwise generic dev defaults land.
+  // The user can change all of these in Settings after first login.
+  const passwordHash = await hashPassword(
+    process.env.DEV_SEED_PASSWORD ?? "dev",
+  );
+  const [devUser] = await db
     .insert(users)
     .values({
-      email: "d.sophie27@gmail.com",
-      name: "Sophie",
+      email: process.env.DEV_SEED_EMAIL ?? "dev@example.local",
+      name: process.env.DEV_SEED_NAME ?? "Dev user",
       passwordHash,
-      // Personal default — falls back to env LITELLM_URL otherwise.
-      litellmUrl: "http://192.168.86.44:4000",
-      timezone: "Europe/Brussels",
+      litellmUrl: process.env.LITELLM_URL ?? null,
+      timezone: process.env.DEV_SEED_TIMEZONE ?? "UTC",
     })
     .returning();
 
@@ -46,7 +49,7 @@ export async function seedIfEmpty() {
   //                     standalone tool.
   await db.insert(addons).values([
     {
-      userId: sophie.id,
+      userId: devUser.id,
       name: "Voice Mode",
       kind: "plugin",
       description:
@@ -55,7 +58,7 @@ export async function seedIfEmpty() {
       enabled: false,
     },
     {
-      userId: sophie.id,
+      userId: devUser.id,
       name: "Voice (Gemini Live)",
       kind: "plugin",
       description:

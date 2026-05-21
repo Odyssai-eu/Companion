@@ -13,7 +13,7 @@ import AddonsPage from "./pages/settings/AddonsPage";
 import AdminPage from "./pages/settings/AdminPage";
 import AppearancePage from "./pages/settings/AppearancePage";
 // ComingSoonPage no longer routed for Security — section retired
-// 2026-05-19 per Sophie's UX brief.
+// 2026-05-19 per a UX refactor.
 import ExternalAgentsPage from "./pages/settings/ExternalAgentsPage";
 import UserGuidePage from "./pages/settings/UserGuidePage";
 import InferencePage from "./pages/settings/InferencePage";

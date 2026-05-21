@@ -657,7 +657,7 @@ export type NewSavedPromptRow = typeof savedPrompts.$inferInsert;
 
 // Agent sessions — `/hermes`, `/pi`, `/openclaude`, etc. spawn an inline
 // sub-thread against an external agent bridge (niveau-1: Hermes ACP on
-// Sophie's workstation, niveau-2: per-user node daemon). One persistent
+// the user's workstation, niveau-2: per-user node daemon). One persistent
 // session per (conversationId, agentKind).
 export const agentSessions = pgTable(
   "agent_sessions",
@@ -838,7 +838,7 @@ export type NewMcpOauthPendingRow = typeof mcpOauthPending.$inferInsert;
 // fields we don't promote to columns.
 //
 // The chat model curates these via skill_* built-in tools and the
-// corresponding companion_*_skill MCP gateway tools. Sophie's flow:
+// corresponding companion_*_skill MCP gateway tools. User flow:
 // "Nemo, crée une skill X" → skill_create; "importe ce SKILL.md" →
 // skill_import_md; "exporte" → skill_export_zip.
 export const agentSkills = pgTable(

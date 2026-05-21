@@ -2,11 +2,12 @@
  * Semantic router — picks the right model for a user message based on
  * embedding similarity to per-bucket anchors.
  *
- * Why: not all models are good at everything. MiniMax loops on
- * conversational prompts (Sophie called it a "mytho" — confidently
- * fabricates 4-paragraph loops). Qwen 3.6 35B is perfect for chat
- * but lighter on deep analysis. Qwen 3.5 397B has the quality but
- * is slow. We pick per-message instead of forcing one global choice.
+ * Why: not all models are good at everything. Code-tuned models
+ * sometimes loop on conversational prompts — emitting confident
+ * multi-paragraph rambles instead of a short reply. Mid-size
+ * conversational models are perfect for chat but lighter on deep
+ * analysis. The biggest reasoner has the quality but is slow. We
+ * pick per-message instead of forcing one global choice.
  *
  * How: a small embedding model (Qwen3-Embedding-0.6B-mxfp8 by default)
  * runs on the cluster. At config time we embed a dozen anchor
@@ -29,7 +30,7 @@ export interface RouterPolicy {
 
 export interface RouterConfig {
   /** OpenAI-compat embedding endpoint, e.g.
-   * `http://192.168.86.50:8002/v1/embeddings`. */
+   * `http://<embedding-host>:<port>/v1/embeddings`. */
   embeddingsUrl?: string;
   /** Optional override; the service serves one model so this is mostly cosmetic. */
   embeddingsModel?: string;
@@ -50,11 +51,10 @@ export interface RouteResult {
 
 /**
  * Anchor sentences. A dozen-ish per bucket, mixing FR/EN and
- * covering the dominant intents Sophie's usage exposes:
- *  - chat: small talk, identity ("starfleet", "tu te sens comment"),
- *    light creative prompts, Némo-style dialogue
- *  - deep: long-form analysis, comparison, essays, "explique en
- *    profondeur"
+ * covering the three dominant intent shapes:
+ *  - chat: small talk, identity questions, light creative prompts,
+ *    conversational openings
+ *  - deep: long-form analysis, comparison, essays, "explain in depth"
  *  - code: write/refactor/debug/test/implement
  *
  * Care taken: keep "écris-moi un poème" out of code (creative !=
@@ -277,10 +277,6 @@ export async function routeMessage(
   };
 }
 
-/**
- * Default policy — sensible mapping for Sophie's current cluster.
- * Exposed so the route handler can seed first-time configs.
- */
 /**
  * Default policy — empty by design so the user makes the call. The
  * Settings UI shows the user's available model ids as helpers; we don't

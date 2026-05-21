@@ -604,7 +604,7 @@ conversationsRoute.post(
     // frontend refires prewarm on every `sending → false` transition,
     // and on heavy models (Argo 397B, 4-node pipeline, etc.) successive
     // turns can overlap: turn N's prewarm fires while turn N-1 is still
-    // prefilling. The result is the screenshot Sophie reported —
+    // prefilling. The result was the screenshot users reported —
     // 3 concurrent runs on argo-2, two with max_tokens=1, all stuck in
     // prefill behind each other because the pool serializes. Dropping
     // the redundant prewarm clears the queue and the real chat lands
@@ -749,7 +749,7 @@ conversationsRoute.post(
             baseUrl: (
               user.litellmUrl ??
               process.env.LITELLM_URL ??
-              "http://192.168.86.44:4000"
+              ""
             ).replace(/\/+$/, ""),
             apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
           };

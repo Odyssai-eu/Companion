@@ -287,7 +287,7 @@ chatRoute.post("/completions", async (c) => {
           baseUrl: (
             userRow.litellmUrl ??
             process.env.LITELLM_URL ??
-            "http://192.168.86.44:4000"
+            ""
           ).replace(/\/+$/, ""),
           apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
         };
@@ -337,7 +337,7 @@ chatRoute.post("/completions", async (c) => {
         convMemoryEnabled = conv.memoryEnabled !== false;
         convAgentMode = conv.agentMode === true;
 
-        // Two-toggle composition (Sophie's simplified layout):
+        // Two-toggle composition (simplified layout):
         //   memoryEnabled            = "Global wiki" toggle. Conv-level
         //                              switch on whether the global user
         //                              wiki is injected at all.
@@ -582,7 +582,7 @@ chatRoute.post("/completions", async (c) => {
 
   // Probe routing — gateway mode only. If this request looks like a
   // probe (small max_tokens, no tools), route it to Odysseus' `probe`
-  // alias (Qwen2.5-Coder-1.5B on max-64) instead of letting it hit
+  // alias (Qwen2.5-Coder-1.5B on the autocomplete host) instead of letting it hit
   // Argo / Hades 3-node MLX which is wildly overprovisioned for 1-20
   // tokens of output. ~4× faster, frees the heavy cluster for real
   // responses. See BRIEF-companion-prefix-cache-and-probes.md.

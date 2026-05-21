@@ -690,7 +690,7 @@ function EditModal({
                 // Single onChange call — two consecutive set("authHeader",…)
                 // + set("authHeaderDirty",…) used to lose every keystroke
                 // because the second set() closed over the pre-update draft
-                // and React batched both into one render. Sophie 2026-05-19:
+                // and React batched both into one render. UX brief 2026-05-19:
                 // "le auth header n'accepte pas le paste, impossible, pas
                 // éditable en fait, même le type ne marche pas."
                 onChange({

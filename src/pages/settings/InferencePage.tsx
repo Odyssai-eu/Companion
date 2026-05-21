@@ -223,7 +223,7 @@ export default function InferencePage() {
               type="url"
               value={manualUrl}
               onChange={(e) => setManualUrl(e.target.value)}
-              placeholder="http://192.168.86.141:8000"
+              placeholder="http://your-engine-host:8000"
               className="flex-1 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
             />
             <button

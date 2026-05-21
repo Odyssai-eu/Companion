@@ -4,7 +4,8 @@
  * Precedence:
  *   1. user.litellmUrl / user.litellmApiKey  (per-user override)
  *   2. LITELLM_URL / LITELLM_API_KEY env vars (instance default)
- *   3. http://192.168.86.44:4000 — Sophie's home cluster, baked-in fallback
+ *   3. empty string — no LiteLLM proxy resolvable. Callers that need
+ *      a real URL must check and surface a user-facing config error.
  */
 
 import { eq } from "drizzle-orm";
@@ -13,7 +14,7 @@ import { users } from "../db/schema";
 
 const ENV_URL = process.env.LITELLM_URL;
 const ENV_KEY = process.env.LITELLM_API_KEY;
-const FALLBACK_URL = "http://192.168.86.44:4000";
+const FALLBACK_URL = "";
 
 export type LiteLLMTarget = {
   baseUrl: string;

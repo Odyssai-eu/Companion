@@ -11,8 +11,8 @@ import { api, ApiError } from "~/lib/api";
  * 4. Backend POSTs `/admin/pair` on the engine (no auth — gate is open).
  * 5. Engine returns a crew token, server persists it on the user row.
  *
- * Caveat: the scan runs on the *server* side. In dev this is rpi-dev's
- * LAN — same network as Sophie's home. For users on a different LAN
+ * Caveat: the scan runs on the *server* side — same network as the
+ * Companion deployment. For users whose engine sits on a different LAN
  * than the Companion backend, the scan won't find their engine and
  * they need the manual-URL fallback below the modal.
  */
@@ -184,7 +184,7 @@ export function JoinOdyssaiModal({
                 type="text"
                 value={userLabel}
                 onChange={(e) => setUserLabel(e.target.value)}
-                placeholder="Sophie's desktop"
+                placeholder="My desktop"
                 className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-cyan"
               />
               <span className="font-mono text-[11px] text-gray-400">

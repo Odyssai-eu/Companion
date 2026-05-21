@@ -93,10 +93,12 @@ export class GeminiLiveSession {
       );
       const sys =
         session.systemInstruction ||
-        // Default in French — Sophie's primary language. Native-audio
-        // models autodetect, but the system instruction biases the first
-        // turn until the user has actually spoken.
-        "Tu es l'assistant vocal de Sophie. Réponds toujours en français, naturel et concis, sauf si l'utilisateur passe explicitement à une autre langue.";
+        // Default — a neutral system instruction. The voice add-on
+        // exposes a config field so each user can set their own
+        // (preferred language, persona, register…). Native-audio
+        // models autodetect language anyway; this just biases the
+        // first turn until the user actually speaks.
+        "You are a helpful voice assistant. Be natural and concise. Respond in the user's language.";
 
       const ai = new GoogleGenAI({ apiKey: session.apiKey });
 
