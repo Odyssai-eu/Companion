@@ -55,6 +55,9 @@ const updateSchema = z.object({
   projectId: z.string().uuid().nullish(),
   memoryEnabled: z.boolean().optional(),
   agentMode: z.boolean().optional(),
+  /** 'hermes' | 'pi' | 'openclaude' | null. Null clears the persistent
+   *  agent-mode flag — composer goes back to normal LLM chat. */
+  activeAgent: z.string().max(40).nullish(),
   /** Pass empty string or null to clear. */
   repoPath: z.string().max(500).nullish(),
 });
@@ -252,6 +255,7 @@ conversationsRoute.patch(
       data.projectId !== undefined ||
       data.memoryEnabled !== undefined ||
       data.agentMode !== undefined ||
+      data.activeAgent !== undefined ||
       data.repoPath !== undefined;
     const patch: Record<string, unknown> = { ...data };
     if (!isMetadataOnly) patch.updatedAt = new Date();

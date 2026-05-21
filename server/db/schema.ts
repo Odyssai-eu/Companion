@@ -229,6 +229,10 @@ export const conversations = pgTable(
     // RAG search, MCP servers). Default OFF so the typical case (a chat
     // with a model) gets streaming + minimal prompt out of the box.
     agentMode: boolean("agent_mode").notNull().default(false),
+    // Persistent agent mode — when set, the composer routes every
+    // message to this agent's bridge instead of the chat-completions
+    // path. `/exit` (or `/<kind>_off`) clears it. Null = normal chat.
+    activeAgent: text("active_agent"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),

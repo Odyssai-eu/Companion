@@ -251,6 +251,10 @@ export type ApiConversation = {
    *  jaccl backends. User flips on per-conv when they want agentic
    *  capability. */
   agentMode?: boolean;
+  /** Persistent agent mode — when set, the composer routes every
+   *  message to this agent's bridge instead of the LLM chat path.
+   *  /exit (or /<kind>_off) clears it. */
+  activeAgent?: string | null;
   lastMessage?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -723,6 +727,11 @@ export const api = {
     request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ model }),
+    }),
+  setConversationActiveAgent: (id: string, activeAgent: string | null) =>
+    request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ activeAgent }),
     }),
   setConversationRepoPath: (id: string, repoPath: string | null) =>
     request<{ conversation: ApiConversation }>(`/api/conversations/${id}`, {

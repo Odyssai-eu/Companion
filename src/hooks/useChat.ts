@@ -700,29 +700,43 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       const trimmed = text.trim();
       if (!trimmed && attachments.length === 0) return;
 
-      // ── Slash commands ─────────────────────────────────────────────────
-      // /hermes <prompt> routes to the agent bridge instead of the
-      // chat-completions pipeline. Other slashes can be added here
-      // without touching the model picker / inference path.
+      // ── Slash commands + persistent agent mode ────────────────────────
+      // `/hermes` enters Hermes mode (with or without a prompt to run
+      // immediately). Once in mode, every message routes to the Hermes
+      // bridge until `/exit` (or `/hermes_off`) clears it.
       const slashMatch =
         trimmed.match(/^\/([a-z][\w-]*)\s+([\s\S]+)$/i) ??
         trimmed.match(/^\/([a-z][\w-]*)\s*$/i);
+      const currentAgent = conversation?.activeAgent ?? null;
+
       if (slashMatch) {
         const cmd = slashMatch[1].toLowerCase();
         const rest = (slashMatch[2] ?? "").trim();
-        if (cmd === "hermes") {
-          if (!rest) {
-            setAgentError(
-              "Provide a prompt after /hermes — e.g. /hermes list files in ~/Documents",
-            );
-            return;
+
+        // Exit any active agent mode. Works for `/exit` (universal) and
+        // the agent-specific `/<kind>_off` (e.g. `/hermes_off`).
+        if (cmd === "exit" || cmd.endsWith("_off")) {
+          const convId = conversationId ?? conversation?.id;
+          if (convId && currentAgent) {
+            try {
+              await api.setConversationActiveAgent(convId, null);
+              setConversation((prev) =>
+                prev ? { ...prev, activeAgent: null } : prev,
+              );
+            } catch (e) {
+              setError((e as Error).message);
+            }
           }
+          return;
+        }
+
+        if (cmd === "hermes") {
           // Need a conv before invoking; create one if this is a fresh chat
           let convId = conversationId ?? conversation?.id ?? null;
           if (!convId) {
             try {
               const created = await api.createConversation({
-                title: rest.slice(0, 80) || "/hermes",
+                title: (rest || "Hermes session").slice(0, 80),
                 ...(model ? { model } : {}),
               });
               convId = created.conversation.id;
@@ -733,11 +747,37 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
               return;
             }
           }
-          await hermesInvoke(convId, rest);
+          // Enter Hermes mode (persistent — stays until /exit)
+          if (currentAgent !== "hermes") {
+            try {
+              await api.setConversationActiveAgent(convId, "hermes");
+              setConversation((prev) =>
+                prev ? { ...prev, activeAgent: "hermes" } : prev,
+              );
+            } catch (e) {
+              setError((e as Error).message);
+              return;
+            }
+          }
+          // If the user typed a prompt on the same line, fire it now.
+          // Bare `/hermes` just enters the mode without sending.
+          if (rest) await hermesInvoke(convId, rest);
           return;
         }
-        // Unknown slash — fall through to normal chat so the user can
-        // still send text starting with `/` if they really want.
+        // Unknown slash — fall through to normal chat.
+      }
+
+      // Persistent agent mode: every plain message goes to the agent
+      // until `/exit`. The composer chip + the agent box are the visual
+      // reminders that we're not in normal chat.
+      if (currentAgent === "hermes") {
+        const convId = conversationId ?? conversation?.id;
+        if (!convId) {
+          // Shouldn't happen — agent mode is per-conv. Fall through.
+        } else {
+          await hermesInvoke(convId, trimmed);
+          return;
+        }
       }
 
       if (!model) {
@@ -1022,6 +1062,10 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     agentError,
     hermesInvoke,
     hermesReset,
+    /** Persistent agent mode for this conv ('hermes' | null). When set,
+     *  every plain message in the composer routes to that agent's
+     *  bridge instead of the LLM chat path. `/exit` clears it. */
+    activeAgent: conversation?.activeAgent ?? null,
     /** Effective memory toggle: persisted conv value when the conv
      *  exists, else the pre-conversation pending override, else true. */
     memoryEnabled:

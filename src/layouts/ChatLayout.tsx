@@ -244,6 +244,24 @@ export default function ChatLayout() {
           error={chat.agentError}
           onReset={chat.hermesReset}
         />
+        {/* Persistent agent-mode chip. Reminds the user that every
+         *  message in the composer goes to the agent (not the LLM),
+         *  and provides a one-click exit. */}
+        {chat.activeAgent && (
+          <div className="mx-auto my-2 flex w-full max-w-3xl items-center justify-between rounded-md border border-amber-700/60 bg-amber-950/40 px-3 py-1.5 font-mono text-[11px] text-amber-200">
+            <span>
+              ▶ <strong className="text-amber-100">{chat.activeAgent}</strong> mode — every message routes to the agent
+            </span>
+            <button
+              type="button"
+              onClick={() => chat.sendMessage("/exit", [])}
+              className="text-[11px] text-amber-300 hover:text-amber-100"
+              title="Exit agent mode and return to normal chat"
+            >
+              /exit
+            </button>
+          </div>
+        )}
         {chat.conversation?.kind === "talk" ? (
           <TalkInput
             onOpenVoiceLive={() => setVoiceLiveOpen(true)}
@@ -254,9 +272,13 @@ export default function ChatLayout() {
             onSend={chat.sendMessage}
             onCancel={chat.cancel}
             sending={chat.sending}
-            disabled={!chat.model}
+            disabled={chat.activeAgent ? false : !chat.model}
             placeholder={
-              chat.model ? "Ask anything…" : "Pick a model first"
+              chat.activeAgent
+                ? `Talk to ${chat.activeAgent}… (/exit to leave)`
+                : chat.model
+                  ? "Ask anything…"
+                  : "Pick a model first"
             }
             modelHasVision={chat.activeModelCapabilities.vision}
             model={chat.model}
