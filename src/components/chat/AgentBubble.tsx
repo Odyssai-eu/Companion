@@ -99,12 +99,24 @@ function AgentLine({ message }: { message: AgentMessage }) {
   }
   if (message.role === "tool") {
     const args = (message.stats as { args?: unknown } | null)?.args;
+    // Hide the args block when it's just a `locations` array of single
+    // {path} entries — the title already has the path. Show it when
+    // there's something genuinely supplementary (raw inputs, diffs).
+    const argsIsJustPaths =
+      Array.isArray(args) &&
+      args.every(
+        (a) =>
+          a != null &&
+          typeof a === "object" &&
+          Object.keys(a as object).length === 1 &&
+          "path" in (a as object),
+      );
     return (
       <div className="mb-3 border-l-2 border-amber-700 pl-3">
         <div className="text-[11px] uppercase tracking-wide text-amber-400">
           ⚒ tool · {message.content}
         </div>
-        {args != null && (
+        {args != null && !argsIsJustPaths && (
           <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-[11px] text-amber-200/70">
             {typeof args === "string" ? args : JSON.stringify(args, null, 2)}
           </pre>
