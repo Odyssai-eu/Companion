@@ -109,6 +109,50 @@ claude mcp add companion https://dev.thecomp.ai/api/mcp \
   --header "Authorization: Bearer hms_…"
 ```
 
+### Hermes Agent
+
+Hermes is interesting because Companion already drives Hermes via the `/hermes` slash command (Companion → Hermes, see [Slash commands & agents](slash-commands)). Wiring Companion's MCP into Hermes closes the loop the other way (Hermes → Companion). Now Hermes can recall Sophie's memory, read past conversations, list saved skills, and send messages back into Companion from inside an agent turn.
+
+Mint a token in **Settings → Agents tokens** (see [Minting a token](#minting-a-token)) — note the `hms_…` string, it's only shown once.
+
+Then on the machine where Hermes runs (today: your workstation):
+
+```bash
+hermes mcp add companion \
+  --url https://dev.thecomp.ai/api/mcp \
+  --auth header
+```
+
+The CLI prompts for the header value. Paste `Authorization: Bearer hms_…` (the full header, name included). Hermes writes the entry to `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  companion:
+    url: https://dev.thecomp.ai/api/mcp
+    auth: header
+    headers:
+      Authorization: Bearer hms_…
+```
+
+Verify the link:
+
+```bash
+hermes mcp test companion
+```
+
+Should print the 15 tools Companion exposes (`search_memory`, `remember`, `list_conversations`, `send_message`, `get_inference_status`, etc.). If you see "Unauthorized", regenerate the token in Settings — old ones can be revoked.
+
+Once linked, the next `/hermes` you fire from Companion can call back. Example: `/hermes search my memory for what I decided about Hermes architecture last week, then summarize`. The agent runs `search_memory("Hermes architecture")` via MCP, gets the wiki articles, summarizes them in the agent box. The round-trip is invisible — same agent box, same SSE stream.
+
+**Two-way wiring summary:**
+
+| Direction | Mechanism | Where configured |
+|---|---|---|
+| Companion → Hermes (slash command sends a prompt) | Hermes Agent add-on + ACP bridge | Settings → Add-ons → Hermes Agent |
+| Hermes → Companion (agent calls Companion's tools) | MCP server + `hms_…` token | `hermes mcp add` on the machine where Hermes runs |
+
+Both can coexist. Both should be enabled if you want Hermes to act on your machine AND read/write your Companion memory in the same turn.
+
 ### curl smoke test
 
 ```bash

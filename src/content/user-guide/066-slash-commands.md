@@ -63,6 +63,10 @@ Out of the box, Hermes ships with its toolset (file read/write, shell, browse, e
 
 The niveau-2 architecture (coming) ships a small daemon you can install on any machine — Linux, Windows, macOS — that connects out to Companion. Then `/hermes` from any browser session lands on the daemon's machine, and the agent acts there. Each user runs their own daemon; each daemon has its own allowlist of paths and commands.
 
+## Wiring Hermes the other way (Hermes → Companion)
+
+The setup above is Companion → Hermes (you type `/hermes …` and Companion sends the prompt to the bridge). Hermes can also call **back into Companion** via MCP — useful when the agent needs to recall something from your memory, list your saved skills, or post a message into another conversation. That direction is covered in [Agents tokens](agents-tokens#hermes-agent): mint a `hms_…` token in Settings, then `hermes mcp add companion --url …`. Once both sides are wired, a single `/hermes` turn can read your memory, write a file, and post a follow-up — all without leaving the agent box.
+
 ## Adding more agents
 
 The slash command pattern is generic. Future drops will add:
