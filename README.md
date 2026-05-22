@@ -35,29 +35,39 @@ You ── chat ──┐
 
 Full feature tour: [docs.odyssai.eu/docs/companion/](https://odyssai.eu/docs/companion/welcome/).
 
-## Quick start
+## Install
 
-Node 22+, Docker, Postgres (via the compose file).
+**Easiest path.** Open Claude Code, Codex, Cursor, or any other coding
+agent in this folder and tell it: *"install Companion on this machine."*
+The agent reads [`AGENTS.md`](AGENTS.md) — a step-by-step runbook with
+prerequisites, install phases, engine pairing, optional add-ons (Hermes,
+Auto Router, MCP servers), and recovery instructions — and walks the
+install on your actual machine.
+
+**Manual path** (Docker required, Node 22+ if you also want to dev):
 
 ```bash
 git clone https://github.com/odyssai/companion.git
 cd companion
 
 cp .env.example .env
-# edit .env — at minimum set DATABASE_URL and the engine you'll point at
+# edit .env — replace AUTH_JWT_SECRET with a real secret
 
 docker compose up -d
 
 # Open the app
-open http://localhost:3100
+open http://localhost:3000
 
-# First login: email/password are seeded on an empty DB.
-# Defaults are dev@example.local / dev — change them in Settings → Profile.
+# First login: dev@example.local / dev  (change in Settings → Profile)
 ```
 
-Then in **Settings → Inference**, pair an engine (any OpenAI- or Anthropic-compatible host). If you're running [Odysseus](https://github.com/odyssai/odysseus) on the same LAN, **Settings → Infrastructure → Engine → Discover** finds it automatically.
+Then in **Settings → Infrastructure → Engine**, pair an engine — any
+OpenAI- or Anthropic-compatible host. If you're running
+[Odysseus](https://github.com/odyssai/odysseus) on the same LAN,
+**Discover** finds it automatically.
 
-For everything else: [Getting started](https://odyssai.eu/docs/companion/getting-started/).
+For pairing details, add-ons, and the full guide:
+[`AGENTS.md`](AGENTS.md) or the [public user guide](https://odyssai.eu/docs/companion/getting-started/).
 
 ## Stack
 
