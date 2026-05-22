@@ -27,6 +27,11 @@ RUN pnpm install --prod --frozen-lockfile || pnpm install --prod
 
 COPY --from=builder /app/dist ./dist
 COPY drizzle ./drizzle
+# User-guide markdown corpus for /help BM25 search. Same files the
+# dev-time loader reads from src/content/user-guide/; in production
+# the runtime image gets them copied flat to /app/wiki so the server
+# can readdirSync them at boot.
+COPY src/content/user-guide ./wiki
 
 EXPOSE 3000
 ENV PORT=3000

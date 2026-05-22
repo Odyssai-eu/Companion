@@ -265,6 +265,17 @@ function AssistantMessage({
             <span className="inline-block h-4 w-0.5 animate-pulse bg-cyan align-middle" />
           )}
         </div>
+        {/* Help chip — always visible when this message came from /help,
+         *  regardless of showMetrics. The chip shows which wiki articles
+         *  the answer was synthesised from, with links to the public docs. */}
+        {message.stats?.isHelp &&
+          Array.isArray(message.stats.helpFrom) &&
+          message.stats.helpFrom.length > 0 && (
+            <HelpSourcesRow
+              slugs={message.stats.helpFrom}
+              titles={message.stats.helpTitles ?? []}
+            />
+          )}
         {showMetrics && message.stats && !message.streaming && (
           <StatsRow stats={message.stats} model={message.model} />
         )}
@@ -585,6 +596,53 @@ function StatsRow({
       >
         Copy
       </button>
+    </div>
+  );
+}
+
+/**
+ * Inline footer row for /help answers. Always visible (independent of
+ * the metrics toggle) so the user can immediately see which wiki
+ * articles informed the answer + click through to the public docs for
+ * the full version.
+ */
+function HelpSourcesRow({
+  slugs,
+  titles,
+}: {
+  slugs: string[];
+  titles: string[];
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-cyan/30 bg-cyan/5 px-4 py-2 font-mono text-[11px]">
+      <span className="rounded bg-cyan/15 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-cyan-700 uppercase">
+        Help
+      </span>
+      <span className="text-gray-500">from</span>
+      {slugs.map((slug, i) => (
+        <span key={slug} className="flex items-center">
+          <a
+            href={`https://odyssai.eu/docs/companion/${slug}/`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={titles[i] ?? slug}
+            className="text-cyan-700 underline-offset-2 hover:text-navy hover:underline"
+          >
+            {slug}
+          </a>
+          {i < slugs.length - 1 && (
+            <span className="ml-1.5 text-gray-400">·</span>
+          )}
+        </span>
+      ))}
+      <a
+        href="https://odyssai.eu/docs/"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="ml-auto text-[10px] text-gray-400 hover:text-cyan-700"
+      >
+        full docs ↗
+      </a>
     </div>
   );
 }

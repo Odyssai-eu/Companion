@@ -1096,6 +1096,16 @@ export const api = {
   deleteSavedPrompt: (id: string) =>
     request<void>(`/api/saved-prompts/${id}`, { method: "DELETE" }),
 
+  // /help slash command — BM25 over the user-guide wiki, conv context
+  // is stripped on the server side. Returns SSE stream of:
+  //   event: sources   data: { articles: [{slug, title, score}, …] }
+  //   event: chunk     (standard chat-completion delta stream)
+  //   event: done      data: { chars, model }
+  helpStatus: () =>
+    request<{ indexed: number; loadedFrom: string | null }>(
+      "/api/help/status",
+    ),
+
   // Hermes Agent add-on retired 2026-05-19. Reinstated 2026-05-21 with a
   // new architecture: ACP bridge on the user's machine.
   hermesAddonInfo: () =>

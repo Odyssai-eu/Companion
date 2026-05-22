@@ -15,7 +15,6 @@ import AppearancePage from "./pages/settings/AppearancePage";
 // ComingSoonPage no longer routed for Security — section retired
 // 2026-05-19 per a UX refactor.
 import ExternalAgentsPage from "./pages/settings/ExternalAgentsPage";
-import UserGuidePage from "./pages/settings/UserGuidePage";
 import InferencePage from "./pages/settings/InferencePage";
 import McpServersPage from "./pages/settings/McpServersPage";
 import SkillsPage from "./pages/settings/SkillsPage";
@@ -104,9 +103,13 @@ export default function App() {
         <Route path="mcp-servers" element={<McpServersPage />} />
         <Route path="skills" element={<SkillsPage />} />
         <Route path="admin" element={<AdminPage />} />
-        <Route path="user-guide" element={<UserGuidePage />} />
-        <Route path="user-guide/:slug" element={<UserGuidePage />} />
-        <Route path="help" element={<Navigate to="/settings/user-guide" replace />} />
+        {/* The in-app user-guide page was removed 2026-05-22. Help moved
+            to a `/help <question>` slash command in chat (RAG over the
+            wiki) + an external link to docs.odyssai.eu. Any stale
+            bookmarks redirect to Settings → root. */}
+        <Route path="user-guide" element={<Navigate to="/settings" replace />} />
+        <Route path="user-guide/:slug" element={<Navigate to="/settings" replace />} />
+        <Route path="help" element={<Navigate to="/settings" replace />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

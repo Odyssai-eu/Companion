@@ -24,6 +24,8 @@ import routerAddonRoute from "./routes/addon-router";
 import savedPromptsRoute from "./routes/saved-prompts";
 import hermesAddonRoute from "./routes/addon-hermes";
 import hermesAgentRoute from "./routes/agent-hermes";
+import helpRoute from "./routes/help";
+import { loadCorpus as loadHelpCorpus } from "./lib/help-search";
 import adminGuestTokensRoute from "./routes/admin-guest-tokens";
 import adminUsersRoute from "./routes/admin-users";
 import authRoute from "./routes/auth";
@@ -106,6 +108,8 @@ app.use("/api/saved-prompts/*", licenseGate, requireUser);
 app.use("/api/saved-prompts", licenseGate, requireUser);
 app.use("/api/agents/*", licenseGate, requireUser);
 app.use("/api/agents", licenseGate, requireUser);
+app.use("/api/help/*", licenseGate, requireUser);
+app.use("/api/help", licenseGate, requireUser);
 // Resolve bearer-token auth for the Obsidian plugin BEFORE requireUser runs,
 // so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
@@ -154,6 +158,7 @@ app.route("/api/addons/voice-live", voiceLiveAddonRoute);
 app.route("/api/addons/router", routerAddonRoute);
 app.route("/api/addons/hermes", hermesAddonRoute);
 app.route("/api/agents/hermes", hermesAgentRoute);
+app.route("/api/help", helpRoute);
 app.route("/api/models", modelsRoute);
 app.route("/api/inference", inferenceRoute);
 app.route("/api/inference/presets", inferencePresetsRoute);
@@ -181,6 +186,9 @@ async function main() {
   await runMigrations();
   await seedIfEmpty();
   await ensureAdminExists();
+  // Index the user-guide corpus for `/help` BM25 search. Cheap (~22 .md
+  // files, ~50 KB total) — done once at boot, cached in process memory.
+  loadHelpCorpus();
   startMemoryScheduler();
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`→ companion api listening on :${info.port}`);

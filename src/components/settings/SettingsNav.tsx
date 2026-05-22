@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react";
-import { NavLink, useLocation } from "react-router";
-import { USER_GUIDE_TOPICS } from "~/content/user-guide";
+import { NavLink } from "react-router";
 import { useAuth } from "~/hooks/useAuth";
 
 type NavItem = { to: string; label: string; end?: boolean };
@@ -48,17 +46,7 @@ const baseSections: NavSection[] = [
 
 export default function SettingsNav() {
   const { role } = useAuth();
-  const { pathname } = useLocation();
   const isAdminish = role === "admin" || role === "organiser";
-  const onUserGuide = pathname.startsWith("/settings/user-guide");
-
-  // Auto-expand the User Guide section when entering it, auto-collapse
-  // when navigating away. The chevron lets the user toggle manually
-  // while staying on a guide page.
-  const [guideOpen, setGuideOpen] = useState(onUserGuide);
-  useEffect(() => {
-    setGuideOpen(onUserGuide);
-  }, [onUserGuide]);
 
   const sections: NavSection[] = isAdminish
     ? baseSections.map((s) =>
@@ -103,54 +91,20 @@ export default function SettingsNav() {
 
       <div className="flex flex-col gap-1">
         <span className="px-2 font-sans text-[11px] font-medium tracking-[0.08em] text-gray-400 uppercase">
-          Reference
+          Help & docs
         </span>
-        <div className="flex items-stretch">
-          <NavLink
-            to={`/settings/user-guide/${USER_GUIDE_TOPICS[0]?.slug ?? ""}`}
-            className={({ isActive }) =>
-              `flex-1 rounded-md px-2 py-1.5 text-[13px] transition-colors ${
-                isActive || onUserGuide
-                  ? "bg-[rgba(79,179,217,0.12)] font-medium text-navy"
-                  : "text-gray-600 hover:bg-gray-50 hover:text-ink"
-              }`
-            }
-            end={false}
-          >
-            User Guide
-          </NavLink>
-          {onUserGuide && (
-            <button
-              type="button"
-              onClick={() => setGuideOpen((v) => !v)}
-              className="ml-1 rounded-md px-1.5 text-gray-400 hover:bg-gray-50 hover:text-ink"
-              aria-label={guideOpen ? "Collapse topics" : "Expand topics"}
-            >
-              {guideOpen ? "▾" : "▸"}
-            </button>
-          )}
-        </div>
-
-        {guideOpen && (
-          <div className="ml-2 mt-1 flex flex-col gap-0.5 border-l border-gray-200 pl-2">
-            {USER_GUIDE_TOPICS.map((t) => (
-              <NavLink
-                key={t.slug}
-                to={`/settings/user-guide/${t.slug}`}
-                className={({ isActive }) =>
-                  `rounded-md px-2 py-1 text-[12px] transition-colors ${
-                    isActive
-                      ? "font-medium text-navy"
-                      : "text-gray-500 hover:text-ink"
-                  }`
-                }
-                end
-              >
-                {t.title}
-              </NavLink>
-            ))}
-          </div>
-        )}
+        <a
+          href="https://odyssai.eu/docs/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-between rounded-md px-2 py-1.5 text-[13px] text-gray-600 transition-colors hover:bg-gray-50 hover:text-ink"
+        >
+          <span>Open docs site</span>
+          <span className="text-[11px] text-gray-400">↗</span>
+        </a>
+        <span className="px-2 text-[11px] text-gray-400">
+          Or type <code className="rounded bg-gray-100 px-1 font-mono text-[10px]">/help &lt;question&gt;</code> in chat.
+        </span>
       </div>
     </nav>
   );
