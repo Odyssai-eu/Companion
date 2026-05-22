@@ -2,7 +2,7 @@
 
 **The universal client for local AI inference.** Companion is a web app that pairs with any OpenAI- or Anthropic-compatible engine — local clusters, hosted proxies, cloud providers — and adds the things a serious assistant needs: persistent memory, named projects, an editable skills library, MCP server hosting, semantic routing, embedded agents.
 
-Part of [**OdyssAI**](https://odyssai.eu) — the open-source local AI ecosystem. Companion is the **client** layer (this repo). Its sibling engine is [**Odysseus**](https://github.com/odyssai/odysseus).
+Part of [**OdyssAI**](https://odyssai.eu) — the open-source local AI ecosystem. Companion is the **client** layer (this repo). Its sibling engine is [**Odysseus**](https://github.com/Odyssai-eu/Odysseus).
 
 ```
 You ── chat ──┐
@@ -47,7 +47,7 @@ install on your actual machine.
 **Manual path** (Docker required, Node 22+ if you also want to dev):
 
 ```bash
-git clone https://github.com/odyssai/companion.git
+git clone https://github.com/Odyssai-eu/Companion.git
 cd companion
 
 cp .env.example .env
@@ -63,7 +63,7 @@ open http://localhost:3000
 
 Then in **Settings → Infrastructure → Engine**, pair an engine — any
 OpenAI- or Anthropic-compatible host. If you're running
-[Odysseus](https://github.com/odyssai/odysseus) on the same LAN,
+[Odysseus](https://github.com/Odyssai-eu/Odysseus) on the same LAN,
 **Discover** finds it automatically.
 
 For pairing details, add-ons, and the full guide:
@@ -89,4 +89,4 @@ We welcome pull requests — UI polish, new add-ons, MCP server integrations, en
 
 ## Acknowledgments
 
-Pairs naturally with [Odysseus](https://github.com/odyssai/odysseus) (this project's sibling engine) but works with any OpenAI- or Anthropic-compatible host. Memory architecture inspired by Andrej Karpathy's wiki-compile pattern. MCP server + client built on [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk).
+Pairs naturally with [Odysseus](https://github.com/Odyssai-eu/Odysseus) (this project's sibling engine) but works with any OpenAI- or Anthropic-compatible host. Memory architecture inspired by Andrej Karpathy's wiki-compile pattern. MCP server + client built on [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk).

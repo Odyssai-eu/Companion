@@ -23,7 +23,7 @@ Thanks for considering a contribution. This document explains what we welcome, t
 Node 22+, pnpm 9+, Docker.
 
 ```bash
-git clone https://github.com/odyssai/companion.git
+git clone https://github.com/Odyssai-eu/Companion.git
 cd companion
 
 # Install

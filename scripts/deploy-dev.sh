@@ -1,14 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy current branch to rpi-dev.
-# Usage: ./scripts/deploy-dev.sh [patch|minor|major|skip]
+# Deploy current branch to a dev host running the Companion container.
+#
+# Usage:
+#   ./scripts/deploy-dev.sh [patch|minor|major|skip]
+#
 #   patch (default) / minor / major: bump package.json then push then deploy
 #   skip: don't bump, just push + deploy whatever is committed
+#
+# Configure your deploy target via env vars (put them in your shell rc
+# or a local `.env.deploy` you source before running):
+#
+#   COMPANION_DEPLOY_HOST   SSH target, e.g. user@dev.example.com  (required)
+#   COMPANION_DEPLOY_DIR    Path on the host where this repo is checked out
+#                           (default: ~/companion)
+#   COMPANION_DEPLOY_URL    URL the script prints at the end for verification
+#                           (default: https://${COMPANION_DEPLOY_HOST_NAME})
 
 BUMP=${1:-patch}
-HOST=admin@192.168.86.18
-APP_DIR='~/thecompai/app'
+HOST=${COMPANION_DEPLOY_HOST:?Set COMPANION_DEPLOY_HOST=user@your-dev-host}
+APP_DIR=${COMPANION_DEPLOY_DIR:-'~/companion'}
+VERIFY_URL=${COMPANION_DEPLOY_URL:-"https://${HOST#*@}"}
 
 cd "$(dirname "$0")/.."
 
@@ -51,5 +64,5 @@ git push
 ssh "$HOST" "cd $APP_DIR && git pull && docker compose up -d --build 2>&1 | tail -10 && docker ps --filter name=thecompai --format 'table {{.Names}}\t{{.Status}}'"
 
 echo ""
-echo "→ deployed to https://dev.thecomp.ai"
-echo "  verify: curl -s https://dev.thecomp.ai/api/health"
+echo "→ deployed to $VERIFY_URL"
+echo "  verify: curl -s $VERIFY_URL/api/health"

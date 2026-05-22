@@ -55,7 +55,7 @@ Ask the user before installing:
 | **C — Companion against a cloud key only** | No local inference. The user only wants Companion's UX over OpenRouter / Anthropic / OpenAI. Cheapest install, no LAN required. |
 
 If the user picks **A**, install Odysseus first (see
-https://github.com/odyssai/odysseus / `AGENTS.md` there), come back here,
+https://github.com/Odyssai-eu/Odysseus / `AGENTS.md` there), come back here,
 then in step 5 discovery wires the two together.
 
 ## 2. Prerequisites — check before installing
@@ -111,7 +111,7 @@ review:
 | `PORT` | `3000` | Different port if `:3000` is taken on the host |
 | `DATABASE_URL` | `postgres://thecompai:thecompai@db:5432/thecompai` | Leave alone unless the user already runs Postgres elsewhere |
 | `AUTH_JWT_SECRET` | random literal in compose file | **Replace** with `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` for any non-dev deploy |
-| `ODYSSAI_SCAN_SUBNETS` | `192.168.86.0/24` | The user's LAN CIDR if they want engine auto-discovery to work. Ask. |
+| `ODYSSAI_SCAN_SUBNETS` | `192.168.1.0/24` | The user's LAN CIDR if they want engine auto-discovery to work. Ask. Common values: `192.168.1.0/24`, `192.168.0.0/24`, `10.0.0.0/24`. |
 | `MEMORY_SERVICE_URL` | `http://host.docker.internal:8001` | Leave default if you skip the memory service (compiler doesn't run, the rest of Companion still does). To enable, install `thecompai-memory` separately. |
 
 Edit `.env` accordingly. **Do not** check it into git — `.env` is in
@@ -379,7 +379,7 @@ Generate a bcrypt hash with `node -e "console.log(require('bcryptjs').hashSync('
 - **docs/** — internal architecture notes (in-repo).
 - **https://odyssai.eu/docs/companion/** — the public user guide.
   Comprehensive; sync'd from `src/content/user-guide/*.md`.
-- **Odysseus** — the engine. Clone https://github.com/odyssai/odysseus
+- **Odysseus** — the engine. Clone https://github.com/Odyssai-eu/Odysseus
   and run its `AGENTS.md`.
 - **In-app `/help`** — once Companion is running, type `/help <question>`
   in any chat for a BM25 search over the user guide.

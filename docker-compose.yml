@@ -8,17 +8,26 @@ services:
       PORT: 3000
       DATABASE_URL: postgres://thecompai:thecompai@db:5432/thecompai
       NODE_ENV: production
-      DEV_LICENSE_BYPASS: "1"
-      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-3u20k0CdiFcCWfkYzRn8fpCSCgDxpOBwCv8kh_FTBf6R93aRJ_8G-9QSRJa52vKn}
+      # DEV_LICENSE_BYPASS=1 disables the license gate on /api/*. Set in
+      # the default docker-compose so the open-source self-host works
+      # out of the box. The license gate is only meaningful in a hosted
+      # multi-tenant deploy.
+      DEV_LICENSE_BYPASS: "${DEV_LICENSE_BYPASS:-1}"
+      # AUTH_JWT_SECRET: replace the literal below with a real secret
+      # before exposing Companion beyond localhost. Generate one with:
+      #   python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-replace-me-with-a-real-secret-before-deploy}
       # The memory service is deployed independently (see thecompai-memory
       # repo). Defaults assume it runs on the same host on port 8001.
+      # Companion runs fine without it — the memory wiki just won't
+      # auto-compile.
       MEMORY_SERVICE_URL: ${MEMORY_SERVICE_URL:-http://host.docker.internal:8001}
       # LAN subnets to scan for Odysseus engines when the user clicks
-      # "Join the Odyssai". The container sits on the Docker bridge
-      # (172.x), so it can't auto-detect the host's LAN — we inject it.
-      # Comma-separated CIDRs. Set to the LAN where Odysseus actually
-      # runs (rpi-dev sits on 192.168.86.0/24 alongside the cluster).
-      ODYSSAI_SCAN_SUBNETS: ${ODYSSAI_SCAN_SUBNETS:-192.168.86.0/24}
+      # "Discover". The container sits on the Docker bridge (172.x), so
+      # it can't auto-detect the host's LAN — we inject it. Comma-
+      # separated CIDRs. Set to your own LAN (commonly 192.168.1.0/24,
+      # 192.168.0.0/24, or 10.0.0.0/24).
+      ODYSSAI_SCAN_SUBNETS: ${ODYSSAI_SCAN_SUBNETS:-192.168.1.0/24}
     ports:
       - "${HOST_PORT:-3000}:3000"
     extra_hosts:
