@@ -60,11 +60,9 @@ docker compose up -d
 # Open the app
 open http://localhost:3000
 
-# First login: the seeded operator account is logged at boot — read it
-# with:
-#   docker logs companion-app | grep -A6 "Companion first-boot account"
-# A random password is printed ONCE. Copy it, log in, then change the
-# password in Settings → Profile.
+# First-boot: the DB is empty. Click "Sign up", enter your email +
+# password. The first user on an empty DB becomes the operator (admin)
+# automatically — no docker-log password fishing.
 ```
 
 Then in **Settings → Infrastructure → Engine**, pair an engine — any

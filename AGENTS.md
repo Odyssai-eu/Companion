@@ -137,28 +137,25 @@ Expected response from `/api/health`:
 
 `engines: 0` is normal at this point — you haven't paired any yet.
 
-Open `http://localhost:${PORT:-3000}/` in the user's browser. The first
-load shows the login screen.
+Open `http://localhost:${PORT:-3000}/` in the user's browser.
 
-**First-boot account:** the seed creates one operator account on an
-empty DB with a **randomly-generated password** logged to stdout once —
-read it with:
+**First-boot account — create your operator account yourself:**
 
-```bash
-docker logs companion-app | grep -A6 "Companion first-boot account"
-# →   email    : admin@example.local
-#     password : <a fresh random string, only shown here>
-```
+On an empty database, Companion's signup endpoint is open exactly once.
+The first visitor to `/signup` creates the operator account and is
+automatically marked `role=admin`. No password to fish out of logs.
 
-Tell the user to copy the password immediately (it's not persisted in
-the log buffer indefinitely), log in with it, and **change the password
-right away** in Settings → Profile. The default email is
-`admin@example.local` — override with `DEV_SEED_EMAIL` if you want
-something else seeded.
+Tell the user:
 
-To add more accounts later: either set `ALLOW_SIGNUP=1` and use
-self-serve, or insert them directly via `psql` against the `companion`
-database with a bcrypt-hashed password.
+> Open http://localhost:3000/, click **Sign up**, fill in email +
+> password + name (8-char minimum on the password). You'll be logged in
+> as the workspace admin immediately.
+
+After this first signup, `/api/auth/signup` returns `403
+signup_disabled` unless you also set `ALLOW_SIGNUP=1`. To add more
+accounts on a closed install, either flip the env var temporarily and
+restart, or insert directly via `psql` against the `companion`
+database with a bcrypt-hashed `password_hash`.
 
 ## 5. Pair an inference engine
 
@@ -384,7 +381,7 @@ replace it with a real value.
 
 ```bash
 docker exec -it companion-db psql -U companion -d companion
-# In psql: UPDATE users SET password_hash = '<new-bcrypt-hash>' WHERE email = 'admin@example.local';
+# In psql: UPDATE users SET password_hash = '<new-bcrypt-hash>' WHERE email = '<the-operator-email>';
 ```
 
 Generate a bcrypt hash with `node -e "console.log(require('bcryptjs').hashSync('NEW_PASSWORD', 12))"`.
@@ -427,7 +424,7 @@ When step 9d returns a streaming reply, tell the user in this shape:
 > Companion is installed and running.
 >
 > - URL: http://localhost:<port>/
-> - Login: admin@example.local / <password from boot log> (change in Settings → Profile)
+> - Login: the email + password you just created at signup
 > - Engine paired: `<engine-name>` (`<gateway|hybrid|legacy>` mode)
 > - Model loaded: `<model-id>` (try sending it a message)
 >

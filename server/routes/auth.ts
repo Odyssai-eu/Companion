@@ -1,5 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { deleteCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
@@ -36,10 +36,19 @@ function setSessionCookie(c: Parameters<typeof setCookie>[0], token: string) {
 }
 
 authRoute.post("/signup", zValidator("json", signupSchema), async (c) => {
-  // Self-serve sign-up is off by default — the operator seeds the first
-  // account on an empty DB and adds more accounts manually. Set
-  // ALLOW_SIGNUP=1 in your environment if you actually want self-serve.
-  if (process.env.ALLOW_SIGNUP !== "1") {
+  // Signup is gated except on a fresh install: the very first user who
+  // signs up on an empty DB becomes the operator (role=admin). After
+  // that, /api/auth/signup is closed unless ALLOW_SIGNUP=1.
+  //
+  // This avoids the docker-logs password fishing of the seed approach —
+  // the user just opens http://<host>:3000/, sees "Create your operator
+  // account", and registers normally.
+  const [{ count: userCount }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(users);
+  const isBootstrap = userCount === 0;
+
+  if (!isBootstrap && process.env.ALLOW_SIGNUP !== "1") {
     return c.json(
       {
         error: "signup_disabled",
@@ -69,7 +78,13 @@ authRoute.post("/signup", zValidator("json", signupSchema), async (c) => {
   const passwordHash = await hashPassword(password);
   const [user] = await db
     .insert(users)
-    .values({ email: normalized, name, passwordHash })
+    .values({
+      email: normalized,
+      name,
+      passwordHash,
+      // First user on an empty DB becomes the operator (admin).
+      ...(isBootstrap ? { role: "admin" as const } : {}),
+    })
     .returning({
       id: users.id,
       email: users.email,
@@ -77,6 +92,12 @@ authRoute.post("/signup", zValidator("json", signupSchema), async (c) => {
       role: users.role,
       active: users.active,
     });
+
+  if (isBootstrap) {
+    console.log(
+      `→ first-boot signup: promoted ${normalized} to admin (no operator existed).`,
+    );
+  }
 
   const token = await createSessionToken({
     userId: user.id,
