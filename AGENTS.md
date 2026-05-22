@@ -103,19 +103,19 @@ anything without asking.
 cp .env.example .env
 ```
 
-`.env.example` is intentionally minimal. The values the user must
-review:
+`.env.example` ships with sensible defaults; review these before `docker compose up`:
 
 | Variable | Default | Set to |
 |---|---|---|
-| `PORT` | `3000` | Different port if `:3000` is taken on the host |
-| `DATABASE_URL` | `postgres://thecompai:thecompai@db:5432/thecompai` | Leave alone unless the user already runs Postgres elsewhere |
-| `AUTH_JWT_SECRET` | random literal in compose file | **Replace** with `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` for any non-dev deploy |
-| `ODYSSAI_SCAN_SUBNETS` | `192.168.1.0/24` | The user's LAN CIDR if they want engine auto-discovery to work. Ask. Common values: `192.168.1.0/24`, `192.168.0.0/24`, `10.0.0.0/24`. |
-| `MEMORY_SERVICE_URL` | `http://host.docker.internal:8001` | Leave default if you skip the memory service (compiler doesn't run, the rest of Companion still does). To enable, install `thecompai-memory` separately. |
+| `PORT` | `3000` | Different port if `:3000` is already taken on the host |
+| `DATABASE_URL` | `postgres://companion:companion@localhost:5432/companion` | Leave alone unless you already run Postgres elsewhere — docker-compose serves Postgres on `db:5432`, which the in-container default resolves correctly |
+| `AUTH_JWT_SECRET` | `replace-me-with-a-real-secret-before-deploy` | **Replace** with `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` before exposing Companion beyond localhost |
+| `ALLOW_SIGNUP` | `0` (closed) | `1` only if you want self-serve sign-up. Default closed: operator adds accounts manually |
+| `ODYSSAI_SCAN_SUBNETS` | `192.168.1.0/24` | Your LAN CIDR if you want engine auto-discovery (`Discover` in Settings). Common: `192.168.1.0/24`, `192.168.0.0/24`, `10.0.0.0/24` |
+| `MEMORY_SERVICE_URL` | unset | Optional — URL of the Karpathy memory compiler service (separate repo). Leave unset to skip; Companion runs fine without |
 
-Edit `.env` accordingly. **Do not** check it into git — `.env` is in
-`.gitignore` and must stay there.
+Edit `.env` accordingly. **Do not** check it into git — `.env` is
+already in `.gitignore`.
 
 ## 4. Start the app
 
@@ -137,12 +137,22 @@ Expected response from `/api/health`:
 `engines: 0` is normal at this point — you haven't paired any yet.
 
 Open `http://localhost:${PORT:-3000}/` in the user's browser. The first
-load shows a sign-up screen.
+load shows the login screen.
 
-**First user creation:** Companion has no public sign-up. The first time
-the app starts on an empty DB it auto-creates a dev account
-(`dev@example.local` / `dev`). Tell the user to log in with that and
-**change the password immediately** in Settings → Profile.
+**First-boot account:** the seed creates one operator account on an
+empty DB and logs the credentials to stdout — read them with:
+
+```bash
+docker logs companion-app | grep "seeded first-boot account"
+# → admin@example.local / change-me-now
+```
+
+Tell the user to log in with that and **change the password
+immediately** in Settings → Profile.
+
+To add more accounts later: either set `ALLOW_SIGNUP=1` and use
+self-serve, or insert them directly via `psql` against the `companion`
+database with a bcrypt-hashed password.
 
 ## 5. Pair an inference engine
 
@@ -305,7 +315,7 @@ Run these as a final pass:
 curl -sf http://localhost:${PORT:-3000}/api/health | jq
 
 # 9b. The DB seeded
-docker exec thecompai-db psql -U thecompai -d thecompai \
+docker exec companion-db psql -U companion -d companion \
   -c "SELECT count(*) FROM users;"
 # → should be >= 1 (the dev account)
 
@@ -324,7 +334,7 @@ If 9a–9d all pass: **Companion is installed**.
 ## 10. Common failure modes
 
 **`docker compose up` exits immediately**
-→ `docker logs thecompai-app` to see the boot error. Most common: DB
+→ `docker logs companion-app` to see the boot error. Most common: DB
 unreachable (the `db` service hasn't passed healthcheck yet — wait
 30 s and retry) or invalid `DATABASE_URL`.
 
@@ -347,12 +357,12 @@ Companion container.
 **Auto Router returns 503 "embedding service unreachable"**
 → The embedding URL Companion has is wrong, or the embedding service
 isn't running. Verify with `curl <url>/embeddings` from the Companion
-host (or `docker exec thecompai-app curl <url>/embeddings` if URL is
+host (or `docker exec companion-app curl <url>/embeddings` if URL is
 LAN-internal).
 
 **Memory compile never runs**
 → The memory service is optional and runs separately
-(`thecompai-memory` repo). If it's not installed,
+(`companion-memory` repo). If it's not installed,
 `MEMORY_SERVICE_URL` points at nothing and the compiler is silently
 disabled. Chat still works; the memory wiki just won't auto-update.
 Install the memory service if the user wants that.
@@ -365,8 +375,8 @@ before deploying anywhere reachable beyond `localhost`.
 → Reset directly in Postgres:
 
 ```bash
-docker exec -it thecompai-db psql -U thecompai -d thecompai
-# In psql: UPDATE users SET password_hash = '<new-bcrypt-hash>' WHERE email = 'dev@example.local';
+docker exec -it companion-db psql -U companion -d companion
+# In psql: UPDATE users SET password_hash = '<new-bcrypt-hash>' WHERE email = 'admin@example.local';
 ```
 
 Generate a bcrypt hash with `node -e "console.log(require('bcryptjs').hashSync('NEW_PASSWORD', 12))"`.
@@ -392,13 +402,12 @@ Generate a bcrypt hash with `node -e "console.log(require('bcryptjs').hashSync('
 - **Do not edit files under `src/content/user-guide/`** — they're the
   user guide source, also shipped to the public docs site at build time.
   Touching them rewrites public docs you may not have intended.
-- **Do not enable `DEV_LICENSE_BYPASS=1` in production.** It's set in
-  `docker-compose.yml` for local dev. Remove it for any production
-  deploy.
-- **Do not seed the Postgres directly to create users.** Use the sign-in
-  flow; the password hashing convention matters.
+- **Do not seed the Postgres directly to create users.** Either set
+  `ALLOW_SIGNUP=1` and use the sign-up flow, or insert via
+  `bcrypt`-hashed `password_hash` (see step 7 of "Common failure
+  modes" below) — the hashing convention matters.
 - **Do not assume the user has the memory service running.** It's a
-  separate repo (`thecompai-memory`). Companion runs fine without it —
+  separate repo (`companion-memory`). Companion runs fine without it —
   the memory wiki just stays manually-edited.
 - **Do not install Hermes / Auto Router / MCP servers if the user didn't
   ask.** They're each opt-in add-ons.
@@ -410,7 +419,7 @@ When step 9d returns a streaming reply, tell the user in this shape:
 > Companion is installed and running.
 >
 > - URL: http://localhost:<port>/
-> - Login: dev@example.local / dev (change the password in Settings → Profile)
+> - Login: admin@example.local / change-me-now (change the password in Settings → Profile)
 > - Engine paired: `<engine-name>` (`<gateway|hybrid|legacy>` mode)
 > - Model loaded: `<model-id>` (try sending it a message)
 >

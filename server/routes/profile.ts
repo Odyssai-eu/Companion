@@ -2,7 +2,7 @@
  * User persona — 5 reserved memory_articles under the `profile/` namespace.
  *
  * The memory wiki normally compiles itself from conversations (the Python
- * `thecompai-memory` service runs an LLM to keep articles fresh). The
+ * `companion-memory` service runs an LLM to keep articles fresh). The
  * `profile/*` articles are different: they're authored manually by the user
  * (here, in the app, or via Obsidian later). The compiler honours
  * `edited_by_user=true` so it never overwrites them.

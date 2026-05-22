@@ -380,7 +380,7 @@ chatRoute.post("/completions", async (c) => {
             : "";
 
         // Global wiki (Karpathy-style compiled articles from PG, served by
-        // thecompai-memory at :8001/context/{userId}). This is the "what
+        // companion-memory at :8001/context/{userId}). This is the "what
         // do I remember about you" store, auto-maintained by the LLM
         // compiler after each assistant turn. NOT the Obsidian vault and
         // NOT the RAG/Qdrant index — those serve different purposes:

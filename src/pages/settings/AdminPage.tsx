@@ -3,7 +3,7 @@
  *
  * Replaces the previous `/admin` full-page with four tabs (Users, Nodes &
  * Groups, Files / Sync, Guest tokens). Nodes / Groups / Sync moved out of
- * TheCompAI scope into the mlx-odyss.eu inference engine — see D-18 in
+ * Companion scope into the mlx-odyss.eu inference engine — see D-18 in
  * the decisions log. Only user lifecycle + guest-token minting belong to
  * the client app itself.
  *

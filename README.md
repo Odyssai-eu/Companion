@@ -48,17 +48,19 @@ install on your actual machine.
 
 ```bash
 git clone https://github.com/Odyssai-eu/Companion.git
-cd companion
+cd Companion
 
 cp .env.example .env
-# edit .env — replace AUTH_JWT_SECRET with a real secret
+# edit .env — at minimum replace AUTH_JWT_SECRET with a real secret
 
 docker compose up -d
 
 # Open the app
 open http://localhost:3000
 
-# First login: dev@example.local / dev  (change in Settings → Profile)
+# First login uses the seeded operator account printed in the boot logs:
+#   docker logs companion-app | grep "seeded first-boot account"
+# → admin@example.local / change-me-now  (CHANGE in Settings → Profile)
 ```
 
 Then in **Settings → Infrastructure → Engine**, pair an engine — any
@@ -74,7 +76,7 @@ For pairing details, add-ons, and the full guide:
 - **Frontend** — React 19, Vite, TypeScript, Tailwind 4
 - **Server** — Hono on Node 22, served from the same container
 - **DB** — Postgres 17 (via docker-compose), Drizzle ORM
-- **Memory service** — separate FastAPI service (`thecompai-memory`) that compiles conversations into the wiki
+- **Memory service** — separate FastAPI service (`companion-memory`) that compiles conversations into the wiki
 - **Dev** — `pnpm install && pnpm dev`
 
 ## Status

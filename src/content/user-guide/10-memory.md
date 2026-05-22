@@ -8,7 +8,7 @@ Companion has two memory layers — both optional, both searchable, both editabl
 
 A markdown wiki that captures **who you are** across all conversations. The agent that lives in Companion calls itself Némo and treats this wiki as its memory.
 
-- **Where it lives** — Postgres in the `thecompai-memory` service. Table `memory_articles`. Per-user, scoped by `user_id`.
+- **Where it lives** — Postgres in the `companion-memory` service. Table `memory_articles`. Per-user, scoped by `user_id`.
 - **What goes in** — anything you'd want any conversation in any project to remember. Identity, preferences, expertise, working style, ongoing context. Typical articles: profile, expertise, key relationships, infrastructure, ongoing projects, decisions.
 - **Structure** — articles have a `path` (`profile/identity.md`, `relationship/partnership.md`, `projects/your-project.md`), `title`, `summary`, `body`. Wiki-link `[[path]]` syntax for cross-references.
 - **How the agent reads it** — full wiki concatenated and capped at ~50 KB before injection into the system prompt. Snapshotted per conversation (see lifecycle below).
@@ -122,7 +122,7 @@ These are backstops in case inactivity-based fires were missed (server restart, 
 
 Two paths today:
 
-1. **Direct PG** — admin SSH into `thecompai-db`, `UPDATE memory_articles ...`. Quick, requires box access.
+1. **Direct PG** — admin SSH into `companion-db`, `UPDATE memory_articles ...`. Quick, requires box access.
 2. **Obsidian vault sync** — *Settings → Extensions → Add-ons → Obsidian* gives you a vault ZIP. Edit in Obsidian, push back via the plugin (Bearer-token authenticated). Re-index runs automatically.
 
 No in-app wiki editor today. On the roadmap.

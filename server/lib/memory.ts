@@ -1,5 +1,5 @@
 /**
- * Client for the thecompai-memory Python service (FastAPI).
+ * Client for the companion-memory Python service (FastAPI).
  *
  * Two operations matter to the backend:
  *   - getMemoryContext(userId, projectId?)  → call before each chat to inject

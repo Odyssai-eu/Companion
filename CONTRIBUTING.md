@@ -20,31 +20,34 @@ Thanks for considering a contribution. This document explains what we welcome, t
 
 ## Development setup
 
-Node 22+, pnpm 9+, Docker.
+Node 22+, npm 10+, Docker.
 
 ```bash
 git clone https://github.com/Odyssai-eu/Companion.git
-cd companion
+cd Companion
 
 # Install
-pnpm install
+npm install
 
 # Configure
 cp .env.example .env
-# edit .env — at minimum DATABASE_URL
+# edit .env — at minimum AUTH_JWT_SECRET (real secret, not the literal)
 
-# Start Postgres + memory service
-docker compose up -d db memory
+# Start Postgres only (we run the dev API natively)
+docker compose up -d db
 
-# Dev (Vite on 5173, API on 3001)
-pnpm dev
+# Dev (Vite + API on 3000 via tsx watch). tsx does not auto-load .env,
+# so export the variables in your shell first, or use a tool like
+# `dotenv-cli` / `direnv`.
+set -a; source .env; set +a
+npm run dev
 ```
 
 For the full Docker stack (production-like):
 
 ```bash
 docker compose up --build
-# App on http://localhost:3100
+# App on http://localhost:3000
 ```
 
 ## Project layout
@@ -54,7 +57,7 @@ app/
 ├── server/              Hono backend
 │   ├── routes/          One file per /api/* endpoint group
 │   ├── lib/             Shared helpers (memory, prompt-builder, providers, …)
-│   ├── middleware/      Auth, license gating, guest tokens
+│   ├── middleware/      Auth, guest tokens
 │   └── db/              Drizzle schema + seed
 ├── src/                 React frontend
 │   ├── pages/           Top-level routes (chat, settings, projects, …)

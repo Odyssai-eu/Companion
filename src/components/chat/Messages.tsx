@@ -687,7 +687,7 @@ function ActionsRow({
 
   function onSaveWav() {
     tts
-      .save(message.content, `thecompai-${message.id.slice(0, 8)}.wav`)
+      .save(message.content, `companion-${message.id.slice(0, 8)}.wav`)
       .catch(() => undefined);
   }
 

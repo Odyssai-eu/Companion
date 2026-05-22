@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 type Theme = "light" | "dark" | "system";
 
-const STORAGE_KEY = "thecompai:theme";
+const STORAGE_KEY = "companion:theme";
 
 function applyTheme(theme: Theme) {
   const root = document.documentElement;

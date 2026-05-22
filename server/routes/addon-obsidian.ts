@@ -242,7 +242,7 @@ obsidianRoute.get("/vault.zip", async (c) => {
         : null,
       `edited_by_user: ${a.editedByUser}`,
       `updated: ${a.updatedAt.toISOString()}`,
-      "source: thecompai-memory",
+      "source: companion-memory",
       "---",
       "",
     ]
@@ -267,7 +267,7 @@ obsidianRoute.get("/vault.zip", async (c) => {
   c.header("Content-Type", "application/zip");
   c.header(
     "Content-Disposition",
-    `attachment; filename="thecompai-vault-${Date.now()}.zip"`,
+    `attachment; filename="companion-vault-${Date.now()}.zip"`,
   );
   return c.body(buf as unknown as ArrayBuffer);
 });

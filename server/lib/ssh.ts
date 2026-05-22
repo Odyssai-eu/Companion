@@ -16,8 +16,8 @@ import { dirname, join } from "node:path";
  */
 
 const KEY_DIR = process.getuid && process.getuid() === 0
-  ? "/root/.thecompai"
-  : join(homedir(), ".thecompai");
+  ? "/root/.companion"
+  : join(homedir(), ".companion");
 
 const KEY_PATH = join(KEY_DIR, "orchestrator_ed25519");
 const PUB_KEY_PATH = `${KEY_PATH}.pub`;
@@ -35,7 +35,7 @@ async function ensureKey(): Promise<void> {
         "-t", "ed25519",
         "-N", "",
         "-f", KEY_PATH,
-        "-C", "thecompai-orchestrator",
+        "-C", "companion-orchestrator",
       ],
       30_000,
     );

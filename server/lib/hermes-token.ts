@@ -1,7 +1,7 @@
 /**
  * Hermes tokens — scoped service credentials issued to the Hermes Agent
  * (auto-minted per Hermes conv) and Cowork dispatch (manually minted by
- * the user). Used as Bearer auth by the thecompai-mcp MCP server when it
+ * the user). Used as Bearer auth by the companion-mcp MCP server when it
  * calls back into Companion on behalf of the user.
  *
  * Mint flow:

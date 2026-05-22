@@ -61,7 +61,7 @@ fi
 git push
 
 # Pull + rebuild on rpi-dev
-ssh "$HOST" "cd $APP_DIR && git pull && docker compose up -d --build 2>&1 | tail -10 && docker ps --filter name=thecompai --format 'table {{.Names}}\t{{.Status}}'"
+ssh "$HOST" "cd $APP_DIR && git pull && docker compose up -d --build 2>&1 | tail -10 && docker ps --filter name=companion --format 'table {{.Names}}\t{{.Status}}'"
 
 echo ""
 echo "→ deployed to $VERIFY_URL"

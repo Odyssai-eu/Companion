@@ -21,7 +21,7 @@ const DEFAULTS: A11yPrefs = {
   voiceUiVisible: false,
 };
 
-const STORAGE_KEY = "thecompai:accessibility";
+const STORAGE_KEY = "companion:accessibility";
 
 export default function AccessibilityPage() {
   const [prefs, setPrefs] = useState<A11yPrefs>(() => {

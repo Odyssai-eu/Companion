@@ -76,7 +76,7 @@ async function readDbFiles(projectId: string): Promise<CorpusEntry[]> {
  *   - the URL is malformed (bad UUID)
  *   - the target project doesn't exist
  *   - the target belongs to a different user than the caller (same-user
- *     scoping — defence in depth even though TheCompAI is single-tenant)
+ *     scoping — defence in depth even though Companion is single-tenant)
  *   - the target IS the calling project (self-link makes no sense)
  *
  * Single-level only: we don't follow the target's own external_vault_path.

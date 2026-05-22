@@ -382,7 +382,7 @@ function GuestBanner() {
     let alive = true;
     const hasGuest =
       typeof localStorage !== "undefined" &&
-      !!localStorage.getItem("thecompai:guestToken");
+      !!localStorage.getItem("companion:guestToken");
     if (!hasGuest) return;
     api
       .guestSession()

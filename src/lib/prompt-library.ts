@@ -2,7 +2,7 @@
 // Mirrors ExoScopy's "exoscopy-system-prompts" feature so power users can
 // switch between a handful of personas without retyping everything.
 
-const KEY = "thecompai:systemPrompts";
+const KEY = "companion:systemPrompts";
 
 export type StoredPrompt = {
   id: string;

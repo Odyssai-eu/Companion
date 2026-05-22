@@ -6,7 +6,7 @@ const { Pool } = pg;
 
 const connectionString =
   process.env.DATABASE_URL ??
-  "postgres://thecompai:thecompai@localhost:5432/thecompai";
+  "postgres://companion:companion@localhost:5432/companion";
 
 export const pool = new Pool({ connectionString });
 

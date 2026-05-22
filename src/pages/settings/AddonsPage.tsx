@@ -516,7 +516,7 @@ function ObsidianPanel() {
             In Obsidian, open <strong>Settings → Community plugins → Browse</strong> and
             sideload (or copy the plugin into{" "}
             <code className="rounded bg-gray-100 px-1 font-mono">
-              {"<vault>/.obsidian/plugins/thecompai/"}
+              {"<vault>/.obsidian/plugins/companion/"}
             </code>
             ).
           </li>

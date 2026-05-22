@@ -139,7 +139,7 @@ JACCL queue pair degradation — known upstream MLX/JACCL bug on RDMA-backed poo
 
 - Check *Settings → User Guide* for the topic that matches your situation.
 - Look at the network panel — the API returns explicit error messages, not generic 500s.
-- Look at `docker logs thecompai-app` (admin access).
+- Look at `docker logs companion-app` (admin access).
 - Open an issue on the repo with the failing request id (`req_…` in network panel) — admins can grep logs by that id.
 
 ## Related

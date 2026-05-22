@@ -174,7 +174,7 @@ const externalSchema = z.object({
  * Import from an absolute filesystem path on the server. Walks the
  * directory recursively, picks up files matching ACCEPTED_EXTS, upserts
  * them. Useful when the user keeps a vault on the same host (or a
- * mounted volume) and wants TheCompAI to mirror it into the project
+ * mounted volume) and wants Companion to mirror it into the project
  * corpus.
  *
  * SECURITY: path must be absolute. We don't sandbox to any subtree —

@@ -604,19 +604,24 @@ export async function isWebSearchEnabled(userId: string): Promise<boolean> {
   return Boolean(k);
 }
 
-// ── Hermes add-on lookup (RETIRED 2026-05-19) ─────────────────────────────
-// The Hermes Agent integration was disconnected from Companion on
-// 2026-05-19. The gateway on .50 may still be running as a standalone
-// CLI, but we no longer route user conversations to it (cf. session
-// notes — "ketchup on chocolate cake"). The `cluster_action` /
-// `hermes_agent` tool names are kept as no-op stubs so old in-flight
-// conversations don't blow up; they return a polite error.
+// ── Legacy Hermes tools (no-op stubs) ─────────────────────────────────────
+// The OLD tool-call-based Hermes integration (the model would invoke
+// `hermes_agent` / `cluster_action` directly during a chat turn) is
+// gone. The CURRENT Hermes integration is the `/hermes` slash command
+// + ACP bridge — see Settings → Add-ons → Hermes Agent.
+//
+// We keep the legacy tool names mapped to no-op stubs so an old
+// in-flight conversation that already has a tool_calls block in its
+// history doesn't blow up at replay time; the stub returns a polite
+// error pointing the user at the slash command.
 
-async function hermesRetired(): Promise<ToolResult> {
+async function hermesLegacyStub(): Promise<ToolResult> {
   return {
     ok: false,
     error:
-      "Hermes integration retired 2026-05-19. Use the Hermes CLI on the .50 host directly.",
+      "The hermes_agent / cluster_action tools are no longer supported. " +
+      "Use the /hermes slash command in chat instead (configure via " +
+      "Settings → Add-ons → Hermes Agent).",
   };
 }
 
@@ -820,11 +825,12 @@ export async function executeTool(
   if (name.startsWith("skill_")) {
     return executeSkillTool(name, args, userId);
   }
-  // `cluster_action` / `hermes_agent` were the Hermes-backed tools;
-  // retired 2026-05-19. Return a polite error if a stale tool schema
-  // still calls them.
+  // `cluster_action` / `hermes_agent` were the old Hermes-as-tool
+  // integration. Replaced by the `/hermes` slash command; the stub
+  // returns a polite error if a stale conversation still references
+  // them.
   if (name === "cluster_action" || name === "hermes_agent") {
-    return hermesRetired();
+    return hermesLegacyStub();
   }
   if (name.startsWith("mcp_")) {
     return executeMcpTool(name, args, userId);

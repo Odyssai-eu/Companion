@@ -4,7 +4,7 @@
  * AccessibilityPage on toggle, since `storage` events only fire across
  * tabs).
  *
- * Single source of truth: localStorage["thecompai:accessibility"], same
+ * Single source of truth: localStorage["companion:accessibility"], same
  * shape as the AccessibilityPage state object.
  */
 
@@ -33,7 +33,7 @@ const DEFAULTS: A11yPrefs = {
   voiceUiVisible: false,
 };
 
-const STORAGE_KEY = "thecompai:accessibility";
+const STORAGE_KEY = "companion:accessibility";
 const CHANGE_EVENT = "a11y-prefs-change";
 
 function read(): A11yPrefs {

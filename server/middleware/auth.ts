@@ -5,7 +5,7 @@ import { verifySessionToken } from "../auth/jwt";
 import { db } from "../db/index";
 import { users } from "../db/schema";
 
-export const SESSION_COOKIE = "thecompai_session";
+export const SESSION_COOKIE = "companion_session";
 
 export type Role = "admin" | "organiser" | "user" | "guest";
 

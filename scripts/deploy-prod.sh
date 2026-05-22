@@ -38,7 +38,7 @@ rsync -a --delete \
   ./ \
   "${HOST}:${APP_DIR}/"
 
-ssh "$HOST" "cd $APP_DIR && docker compose up -d --build && docker ps --filter name=thecompai --format 'table {{.Names}}\t{{.Status}}'"
+ssh "$HOST" "cd $APP_DIR && docker compose up -d --build && docker ps --filter name=companion --format 'table {{.Names}}\t{{.Status}}'"
 
 echo ""
 echo "→ deployed to $VERIFY_URL (prod)"

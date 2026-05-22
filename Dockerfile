@@ -1,29 +1,27 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
-COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --frozen-lockfile || pnpm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY tsconfig.json vite.config.ts index.html ./
 COPY public ./public
 COPY src ./src
 COPY server ./server
-RUN pnpm build
+RUN npm run build
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
-# Admin Extended: the orchestrator runs rsync over ssh from this container
-# to user-managed nodes. sshpass is used during the one-shot key-bootstrap
-# step (POST /api/admin/nodes/:id/ssh-setup); after that all auth is by
-# the orchestrator's ed25519 key, persisted under /home/node/.thecompai/.
+# rsync + ssh for the orchestrator features that sync files / set up SSH
+# keys on user-managed cluster nodes (POST /api/admin/nodes/:id/ssh-setup
+# uses sshpass during the one-shot key bootstrap; after that all auth is
+# via the orchestrator's ed25519 key, persisted under /home/node/.companion/).
 RUN apk add --no-cache rsync openssh-client sshpass
 
-COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --prod --frozen-lockfile || pnpm install --prod
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
 COPY drizzle ./drizzle
@@ -35,4 +33,4 @@ COPY src/content/user-guide ./wiki
 
 EXPOSE 3000
 ENV PORT=3000
-CMD ["pnpm", "start"]
+CMD ["npm", "start"]

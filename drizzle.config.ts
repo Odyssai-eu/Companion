@@ -7,7 +7,7 @@ export default defineConfig({
   dbCredentials: {
     url:
       process.env.DATABASE_URL ??
-      "postgres://thecompai:thecompai@localhost:5432/thecompai",
+      "postgres://companion:companion@localhost:5432/companion",
   },
   casing: "snake_case",
 });

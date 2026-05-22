@@ -15,7 +15,7 @@ What stays local, what travels, what's encrypted, what's deleted on delete.
 | Data | Storage | Encryption | Notes |
 |---|---|---|---|
 | Conversations + messages | Postgres (Companion's DB) | At rest (FDE on the host disk) | Per-user scoped via `user_id` FK |
-| Memory wiki | Postgres (`memory_articles` in the `thecompai-memory` service) | At rest | Per-user; LLM-compiled from your conversations |
+| Memory wiki | Postgres (`memory_articles` in the `companion-memory` service) | At rest | Per-user; LLM-compiled from your conversations |
 | Project memory | Postgres (`project_memory_files`) | At rest | Per-project scoped |
 | Skills | Postgres (`agent_skills`) | At rest | Per-user, includes body + files |
 | MCP server bearer tokens | Postgres, encrypted col | AES-256 at column level | Decrypted server-side at request time |
@@ -139,7 +139,7 @@ For a clean GDPR-style deletion: admin deletes the account row, you remove the L
 
 ## Audit & logs
 
-Companion logs to `docker logs thecompai-app`. By default, logs are minimal (request lines, errors). No PII in normal request logs.
+Companion logs to `docker logs companion-app`. By default, logs are minimal (request lines, errors). No PII in normal request logs.
 
 With `users.debug_verbose = true` (Settings → Inference → Debug verbose): the upstream request body gets logged before every `/v1/chat/completions` POST. Used for diagnosing tool calling shape issues. Generates a lot of stdout — only enable when debugging.
 

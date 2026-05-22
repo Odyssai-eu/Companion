@@ -36,6 +36,21 @@ function setSessionCookie(c: Parameters<typeof setCookie>[0], token: string) {
 }
 
 authRoute.post("/signup", zValidator("json", signupSchema), async (c) => {
+  // Self-serve sign-up is off by default — the operator seeds the first
+  // account on an empty DB and adds more accounts manually. Set
+  // ALLOW_SIGNUP=1 in your environment if you actually want self-serve.
+  if (process.env.ALLOW_SIGNUP !== "1") {
+    return c.json(
+      {
+        error: "signup_disabled",
+        detail:
+          "Public sign-up is disabled on this install. Ask the operator " +
+          "to add your account, or set ALLOW_SIGNUP=1 to enable self-serve.",
+      },
+      403,
+    );
+  }
+
   const { email, password, name } = c.req.valid("json");
   const normalized = email.toLowerCase().trim();
 

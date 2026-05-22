@@ -123,7 +123,7 @@ export type UseChatOptions = {
   conversationId?: string;
 };
 
-const MODEL_LS_KEY = "thecompai:model";
+const MODEL_LS_KEY = "companion:model";
 
 export function useChat({ conversationId }: UseChatOptions = {}) {
   const navigate = useNavigate();
@@ -227,7 +227,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   const [inference, setInference] = useState<InferenceParams>(() => {
     if (typeof window === "undefined") return DEFAULT_INFERENCE;
     try {
-      const raw = window.localStorage.getItem("thecompai:inference");
+      const raw = window.localStorage.getItem("companion:inference");
       if (raw) return { ...DEFAULT_INFERENCE, ...JSON.parse(raw) };
     } catch {
       // ignore
@@ -240,7 +240,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       const next = { ...prev, ...patch };
       if (typeof window !== "undefined") {
         window.localStorage.setItem(
-          "thecompai:inference",
+          "companion:inference",
           JSON.stringify(next),
         );
       }

@@ -115,7 +115,7 @@ export const projects = pgTable(
     // reads LIVE every turn. Different shape from project_memory_files
     // (which holds DB-copied content): the external vault stays in
     // sync with the disk on its own. Useful when the user keeps an
-    // Obsidian vault locally and wants TheCompAI to see edits
+    // Obsidian vault locally and wants Companion to see edits
     // immediately. Null = no external mount.
     //
     // Also accepts the shape `tcai://project/<uuid>` to point at another
@@ -309,7 +309,7 @@ export type Addon = typeof addons.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 
 // ── Memory (LLM wiki) ─────────────────────────────────────────────────
-// Compiled by the thecompai-memory Python service. The backend reads
+// Compiled by the companion-memory Python service. The backend reads
 // memory_articles to inject "what I remember about you" into the system
 // prompt, and writes only via the lock endpoint when a user edits an article.
 
@@ -882,7 +882,7 @@ export type AgentSkillRow = typeof agentSkills.$inferSelect;
 export type NewAgentSkillRow = typeof agentSkills.$inferInsert;
 
 // Hermes tokens — bearer credentials used by the Hermes Agent and Cowork
-// dispatch (via the thecompai-mcp MCP server) to call back into Companion
+// dispatch (via the companion-mcp MCP server) to call back into Companion
 // on behalf of a user. Scope is per-user (large). Plain token shown once
 // at mint, only the sha256 hash is persisted.
 export const hermesTokens = pgTable(

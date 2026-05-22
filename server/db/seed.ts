@@ -22,48 +22,42 @@ export async function seedIfEmpty() {
 
   // Dev account — seeded only on an empty DB. Email + name + LiteLLM URL
   // can be overridden via env vars; otherwise generic dev defaults land.
-  // The user can change all of these in Settings after first login.
-  const passwordHash = await hashPassword(
-    process.env.DEV_SEED_PASSWORD ?? "dev",
-  );
+  // The user MUST change the password in Settings → Profile after first
+  // login. The default below satisfies the 8-char minimum the signup
+  // schema enforces (so a later user-side password reset still validates
+  // against the same rule).
+  const seededEmail = process.env.DEV_SEED_EMAIL ?? "admin@example.local";
+  const seededPassword = process.env.DEV_SEED_PASSWORD ?? "change-me-now";
+  const passwordHash = await hashPassword(seededPassword);
   const [devUser] = await db
     .insert(users)
     .values({
-      email: process.env.DEV_SEED_EMAIL ?? "dev@example.local",
-      name: process.env.DEV_SEED_NAME ?? "Dev user",
+      email: seededEmail,
+      name: process.env.DEV_SEED_NAME ?? "Operator",
       passwordHash,
       litellmUrl: process.env.LITELLM_URL ?? null,
       timezone: process.env.DEV_SEED_TIMEZONE ?? "UTC",
     })
     .returning();
 
-  // Add-ons that remain after the cleanup pass:
-  //   - Voice Mode             — kept for the upcoming voice refactor
-  //   - Voice (Gemini Live)    — kept until the voice refactor lands
-  // Migrated to MCP servers (dropped by migration 0036):
-  //   - Notion, Obsidian, Web Search
-  // Retired earlier:
-  //   - Audiobook       (migration 0035)
-  //   - Hermes Agent    (migration 0037, 2026-05-19) — disconnected from
-  //                     Companion; the gateway CLI on .50 lives on as a
-  //                     standalone tool.
+  console.log(
+    `→ seeded first-boot account: ${seededEmail} / ${seededPassword} — ` +
+      "CHANGE THIS in Settings → Profile.",
+  );
+
+  // Seeded add-on rows. The current Hermes Agent integration (`/hermes`
+  // slash command + ACP bridge) is configured per-user from
+  // Settings → Add-ons; nothing to seed here. Voice Mode is reserved for
+  // when the Gemini Live add-on ships — seeded disabled so the row
+  // exists in the UI.
   await db.insert(addons).values([
     {
       userId: devUser.id,
       name: "Voice Mode",
       kind: "plugin",
       description:
-        "Full-duplex audio via VibeVoice-Realtime. EN only for now; falls back to Voxtral batch when the realtime service is down.",
-      version: "0.3.2",
-      enabled: false,
-    },
-    {
-      userId: devUser.id,
-      name: "Voice (Gemini Live)",
-      kind: "plugin",
-      description:
-        "Real-time bidirectional voice via Gemini Live API. PCM streaming over WebSocket. Replaces local TTS/ASR pipelines while Voxtral/Kokoro mature.",
-      version: "0.1.0",
+        "Reserved for Voice Mode (Gemini Flash Live as TTS). On the roadmap; disabled until the add-on ships.",
+      version: "0.0.1",
       enabled: false,
     },
   ]);

@@ -1,27 +1,25 @@
 services:
   app:
     build: .
-    image: thecompai/app:local
-    container_name: thecompai-app
+    image: companion:local
+    container_name: companion-app
     restart: unless-stopped
     environment:
       PORT: 3000
-      DATABASE_URL: postgres://thecompai:thecompai@db:5432/thecompai
+      DATABASE_URL: postgres://companion:companion@db:5432/companion
       NODE_ENV: production
-      # DEV_LICENSE_BYPASS=1 disables the license gate on /api/*. Set in
-      # the default docker-compose so the open-source self-host works
-      # out of the box. The license gate is only meaningful in a hosted
-      # multi-tenant deploy.
-      DEV_LICENSE_BYPASS: "${DEV_LICENSE_BYPASS:-1}"
       # AUTH_JWT_SECRET: replace the literal below with a real secret
       # before exposing Companion beyond localhost. Generate one with:
       #   python3 -c "import secrets; print(secrets.token_urlsafe(48))"
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-replace-me-with-a-real-secret-before-deploy}
-      # The memory service is deployed independently (see thecompai-memory
-      # repo). Defaults assume it runs on the same host on port 8001.
-      # Companion runs fine without it — the memory wiki just won't
-      # auto-compile.
-      MEMORY_SERVICE_URL: ${MEMORY_SERVICE_URL:-http://host.docker.internal:8001}
+      # Public sign-up is off by default — operators add accounts manually
+      # (seed on first boot, or future admin UI). Set ALLOW_SIGNUP=1 if you
+      # actually want self-serve sign-up for your install.
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-0}
+      # Optional Karpathy memory compiler service (separate repo). If left
+      # unset / unreachable, Companion runs fine — the memory wiki just
+      # doesn't auto-compile from conversation history.
+      MEMORY_SERVICE_URL: ${MEMORY_SERVICE_URL:-}
       # LAN subnets to scan for Odysseus engines when the user clicks
       # "Discover". The container sits on the Docker bridge (172.x), so
       # it can't auto-detect the host's LAN — we inject it. Comma-
@@ -38,23 +36,23 @@ services:
       # user re-runs ssh-setup on each. Bind mount (not a named volume)
       # so the host can back it up, swap it, or read it for incident
       # response without docker incantations.
-      - /var/lib/thecompai/orchestrator-ssh:/root/.thecompai
+      - /var/lib/companion/orchestrator-ssh:/root/.companion
     depends_on:
       db:
         condition: service_healthy
 
   db:
     image: postgres:17-alpine
-    container_name: thecompai-db
+    container_name: companion-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: thecompai
-      POSTGRES_PASSWORD: thecompai
-      POSTGRES_DB: thecompai
+      POSTGRES_USER: companion
+      POSTGRES_PASSWORD: companion
+      POSTGRES_DB: companion
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U thecompai"]
+      test: ["CMD-SHELL", "pg_isready -U companion"]
       interval: 5s
       timeout: 3s
       retries: 10

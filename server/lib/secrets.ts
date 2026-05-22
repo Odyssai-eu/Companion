@@ -39,7 +39,7 @@ function getKey(): Buffer {
     );
   }
   // Dev-only fallback. Production must set THECOMPAI_SECRETS_KEY.
-  const seed = process.env.AUTH_JWT_SECRET ?? "thecompai-dev-secret";
+  const seed = process.env.AUTH_JWT_SECRET ?? "REPLACE_ME_BEFORE_DEPLOY";
   return createHash("sha256").update(seed).digest();
 }
 

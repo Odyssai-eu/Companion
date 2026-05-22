@@ -142,7 +142,7 @@ class Bm25Index {
 // ── Corpus loader ─────────────────────────────────────────────────────────
 
 const CORPUS_DIR_CANDIDATES = [
-  // Dev: thecompai/app
+  // Dev: repo root
   path.resolve(process.cwd(), "src/content/user-guide"),
   // Prod Docker build: /app/src/content/user-guide if shipped, else /app/wiki
   path.resolve(process.cwd(), "wiki"),

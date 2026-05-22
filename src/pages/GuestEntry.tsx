@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useParams } from "react-router";
 
-const TOKEN_LS_KEY = "thecompai:guestToken";
+const TOKEN_LS_KEY = "companion:guestToken";
 const COOKIE_NAME = "tcg";
 
 type State = "validating" | "ok" | "invalid";

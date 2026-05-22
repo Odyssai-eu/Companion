@@ -11,7 +11,6 @@ import { startMemoryScheduler } from "./lib/memory-scheduler";
 import { requireUser, sessionLoader } from "./middleware/auth";
 import { guestSessionLoader, requireUserOrGuest } from "./middleware/guest";
 import { hermesBearerLoader } from "./middleware/hermes-token";
-import { licenseGate } from "./middleware/license";
 import addonsRoute from "./routes/addons";
 // Hermes addon + hermes-bridge conversational routes retired 2026-05-19.
 // The agent-token lifecycle (mint/list/revoke) moved to ./routes/agent-tokens.
@@ -36,7 +35,6 @@ import guestRoute from "./routes/guest";
 import inferenceRoute from "./routes/inference";
 import inferencePresetsRoute from "./routes/inference-presets";
 import mcpServersRoute, { handleOauthCallback } from "./routes/mcp-servers";
-import licenseRoute from "./routes/license";
 import modelsRoute from "./routes/models";
 import profileRoute from "./routes/profile";
 import skillsRoute from "./routes/skills";
@@ -69,76 +67,71 @@ app.get("/api/health", (c) =>
 
 // Auth routes are always open (they're how you get a session)
 app.route("/api/auth", authRoute);
-app.route("/api/license", licenseRoute);
 
 // License gate + user gate on everything else.
 // hermesBearerLoader resolves `Authorization: Bearer hms_<…>` into a real
-// userId BEFORE requireUser runs, so the thecompai-mcp MCP server (Hermes
+// userId BEFORE requireUser runs, so the companion-mcp MCP server (Hermes
 // Agent on .50, Cowork dispatch) can hit these routes without a cookie.
-app.use("/api/conversations/*", licenseGate, hermesBearerLoader, requireUser);
+app.use("/api/conversations/*", hermesBearerLoader, requireUser);
 // Chat, models, and inference accept guest tokens (Bearer / ?g= / cookie)
 // in addition to regular sessions. License still applies — guests count
 // against the inviting admin's license.
 app.use(
   "/api/chat/*",
-  licenseGate,
   hermesBearerLoader,
   guestSessionLoader,
   requireUserOrGuest,
 );
-app.use("/api/projects/*", licenseGate, hermesBearerLoader, requireUser);
-app.use("/api/profile/*", licenseGate, requireUser);
-app.use("/api/profile", licenseGate, requireUser);
-app.use("/api/files/*", licenseGate, hermesBearerLoader, requireUser);
-app.use("/api/files", licenseGate, hermesBearerLoader, requireUser);
-app.use("/api/tts/*", licenseGate, requireUser);
+app.use("/api/projects/*", hermesBearerLoader, requireUser);
+app.use("/api/profile/*", requireUser);
+app.use("/api/profile", requireUser);
+app.use("/api/files/*", hermesBearerLoader, requireUser);
+app.use("/api/files", hermesBearerLoader, requireUser);
+app.use("/api/tts/*", requireUser);
 app.use(
   "/api/inference/*",
-  licenseGate,
   hermesBearerLoader,
   guestSessionLoader,
   requireUserOrGuest,
 );
-app.use("/api/providers/*", licenseGate, requireUser);
-app.use("/api/mcp-servers/*", licenseGate, requireUser);
-app.use("/api/mcp-servers", licenseGate, requireUser);
-app.use("/api/skills/*", licenseGate, requireUser);
-app.use("/api/skills", licenseGate, requireUser);
-app.use("/api/saved-prompts/*", licenseGate, requireUser);
-app.use("/api/saved-prompts", licenseGate, requireUser);
-app.use("/api/agents/*", licenseGate, requireUser);
-app.use("/api/agents", licenseGate, requireUser);
-app.use("/api/help/*", licenseGate, requireUser);
-app.use("/api/help", licenseGate, requireUser);
+app.use("/api/providers/*", requireUser);
+app.use("/api/mcp-servers/*", requireUser);
+app.use("/api/mcp-servers", requireUser);
+app.use("/api/skills/*", requireUser);
+app.use("/api/skills", requireUser);
+app.use("/api/saved-prompts/*", requireUser);
+app.use("/api/saved-prompts", requireUser);
+app.use("/api/agents/*", requireUser);
+app.use("/api/agents", requireUser);
+app.use("/api/help/*", requireUser);
+app.use("/api/help", requireUser);
 // Resolve bearer-token auth for the Obsidian plugin BEFORE requireUser runs,
 // so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
-app.use("/api/addons/*", licenseGate, requireUser);
+app.use("/api/addons/*", requireUser);
 // MCP endpoint — Streamable HTTP, stateless. Auth is bearer-token only
 // (Cowork dispatch, Hermes Agent, third-party MCP clients hit this with
 // `Authorization: Bearer hms_…`). Cookie sessions are not expected here
 // so we don't add the standard requireUser — we use a dedicated gate.
-app.use("/api/mcp", licenseGate, hermesBearerLoader, requireUser);
-app.use("/api/mcp/*", licenseGate, hermesBearerLoader, requireUser);
+app.use("/api/mcp", hermesBearerLoader, requireUser);
+app.use("/api/mcp/*", hermesBearerLoader, requireUser);
 app.use(
   "/api/models/*",
-  licenseGate,
   hermesBearerLoader,
   guestSessionLoader,
   requireUserOrGuest,
 );
 app.use(
   "/api/models",
-  licenseGate,
   hermesBearerLoader,
   guestSessionLoader,
   requireUserOrGuest,
 );
 // /api/guest/session is the public snapshot endpoint — gated inside the route.
-app.use("/api/guest/*", licenseGate, guestSessionLoader);
-app.use("/api/admin/*", licenseGate, requireUser);
-app.use("/api/agent-tokens", licenseGate, requireUser);
-app.use("/api/agent-tokens/*", licenseGate, requireUser);
+app.use("/api/guest/*", guestSessionLoader);
+app.use("/api/admin/*", requireUser);
+app.use("/api/agent-tokens", requireUser);
+app.use("/api/agent-tokens/*", requireUser);
 
 app.route("/api/conversations", conversationsRoute);
 app.route("/api/chat", chatRoute);
