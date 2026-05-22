@@ -49,24 +49,22 @@ export type HelpHit = {
 
 /**
  * Lowercase, strip punctuation, split on whitespace, drop tokens shorter
- * than 2 chars and a tiny English/French stopword set. Markdown syntax
- * (backticks, hashes, asterisks) gets stripped before tokenization so a
- * query like "model picker" matches "## Model picker".
+ * than 2 chars and a small English stopword set. Markdown syntax (backticks,
+ * hashes, asterisks) gets stripped before tokenization so a query like
+ * "model picker" matches "## Model picker".
+ *
+ * /help is English-only for v1: the wiki is in English and so are the
+ * keyword matches. A multilingual story (LLM query translation, or swapping
+ * BM25 for embedding search via the Auto Router add-on) is a future feature
+ * — keeping the tokenizer language-neutral here so we don't bake any
+ * locale-specific assumptions in for whoever installs Companion.
  */
 const STOPWORDS = new Set([
-  // English
   "the", "a", "an", "of", "to", "in", "on", "for", "is", "are", "be", "and",
   "or", "with", "by", "as", "at", "it", "that", "this", "from", "you", "your",
   "we", "our", "if", "but", "not", "no", "yes", "do", "does", "can", "will",
   "into", "out", "than", "then", "when", "where", "what", "who", "why", "how",
   "all", "any", "some", "more", "most", "less", "very", "so", "just",
-  // French (light)
-  "le", "la", "les", "de", "du", "des", "un", "une", "et", "ou", "à", "au",
-  "aux", "ce", "cet", "cette", "ces", "qui", "que", "quoi", "dont", "où",
-  "dans", "sur", "pour", "par", "avec", "sans", "est", "sont", "être", "avoir",
-  "je", "tu", "il", "elle", "nous", "vous", "ils", "elles", "mon", "ma", "mes",
-  "ton", "ta", "tes", "son", "sa", "ses", "se", "ne", "pas", "plus", "très",
-  "mais", "donc", "car", "si", "oui", "non", "fait", "fais",
 ]);
 
 const STRIP_MD = /[`*_#>\[\]\(\)<>{}]/g;
