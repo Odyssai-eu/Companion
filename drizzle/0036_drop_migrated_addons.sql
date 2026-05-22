@@ -1,4 +1,4 @@
--- 2026-05-19: Add-ons migrated to MCP servers, per Sophie's UX brief.
+-- 2026-05-19: Add-ons migrated to MCP servers, per the operator's UX brief.
 -- Notion / Obsidian / Web Search are now installed via Settings →
 -- MCP servers (Quick-add catalog). Drop their addon rows so the
 -- Add-ons page doesn't shadow the MCP entries.

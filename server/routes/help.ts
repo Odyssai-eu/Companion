@@ -9,11 +9,11 @@
  *       event: sources    data: { articles: [{slug, title, score}, ...] }
  *       event: done       data: { stats: {...} }
  *
- * Critical design choice: the conversation context is **stripped**. /help
- * is a one-shot RAG query over the wiki, not a follow-up to the chat.
- * The user asked Sophie for this explicitly — if Némo is mid-discussion
- * about the user's code, /help should NOT see that context. Otherwise
- * the answer drifts away from the docs.
+ * Critical design choice: the conversation context is **stripped**.
+ * /help is a one-shot RAG query over the wiki, not a follow-up to the
+ * chat. If Némo is mid-discussion about the user's code, /help should
+ * NOT see that context — otherwise the answer drifts away from the
+ * docs.
  *
  * Flow:
  *  1. BM25 search over user-guide/*.md → top-K articles

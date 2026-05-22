@@ -109,7 +109,8 @@ cp .env.example .env
 |---|---|---|
 | `PORT` | `3000` | Different port if `:3000` is already taken on the host |
 | `DATABASE_URL` | `postgres://companion:companion@localhost:5432/companion` | Leave alone unless you already run Postgres elsewhere — docker-compose serves Postgres on `db:5432`, which the in-container default resolves correctly |
-| `AUTH_JWT_SECRET` | `replace-me-with-a-real-secret-before-deploy` | **Replace** with `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` before exposing Companion beyond localhost |
+| `AUTH_JWT_SECRET` | empty (auto-generated + persisted at `/app/data/jwt-secret`) | Set your own only if you want to pin rotation or run multiple replicas. Default is safe |
+| `HOST_BIND` | `127.0.0.1` (localhost only) | `0.0.0.0` if you want Companion reachable from the LAN — pair with your own AUTH_JWT_SECRET and firewall rules |
 | `ALLOW_SIGNUP` | `0` (closed) | `1` only if you want self-serve sign-up. Default closed: operator adds accounts manually |
 | `ODYSSAI_SCAN_SUBNETS` | `192.168.1.0/24` | Your LAN CIDR if you want engine auto-discovery (`Discover` in Settings). Common: `192.168.1.0/24`, `192.168.0.0/24`, `10.0.0.0/24` |
 | `MEMORY_SERVICE_URL` | unset | Optional — URL of the Karpathy memory compiler service (separate repo). Leave unset to skip; Companion runs fine without |
@@ -140,15 +141,20 @@ Open `http://localhost:${PORT:-3000}/` in the user's browser. The first
 load shows the login screen.
 
 **First-boot account:** the seed creates one operator account on an
-empty DB and logs the credentials to stdout — read them with:
+empty DB with a **randomly-generated password** logged to stdout once —
+read it with:
 
 ```bash
-docker logs companion-app | grep "seeded first-boot account"
-# → admin@example.local / change-me-now
+docker logs companion-app | grep -A6 "Companion first-boot account"
+# →   email    : admin@example.local
+#     password : <a fresh random string, only shown here>
 ```
 
-Tell the user to log in with that and **change the password
-immediately** in Settings → Profile.
+Tell the user to copy the password immediately (it's not persisted in
+the log buffer indefinitely), log in with it, and **change the password
+right away** in Settings → Profile. The default email is
+`admin@example.local` — override with `DEV_SEED_EMAIL` if you want
+something else seeded.
 
 To add more accounts later: either set `ALLOW_SIGNUP=1` and use
 self-serve, or insert them directly via `psql` against the `companion`
@@ -367,9 +373,11 @@ LAN-internal).
 disabled. Chat still works; the memory wiki just won't auto-update.
 Install the memory service if the user wants that.
 
-**`AUTH_JWT_SECRET` warning at boot**
-→ You left the default literal in `.env`. Replace with a real secret
-before deploying anywhere reachable beyond `localhost`.
+**`[jwt]` warning at boot about a placeholder secret**
+→ Your `.env` still has `AUTH_JWT_SECRET=replace-me-with-a-real-secret-before-deploy`.
+Companion ignores the placeholder and falls back to the auto-generated
+persisted secret. Either remove the line (let Companion manage it) or
+replace it with a real value.
 
 **Lost the dev account password**
 → Reset directly in Postgres:
@@ -419,7 +427,7 @@ When step 9d returns a streaming reply, tell the user in this shape:
 > Companion is installed and running.
 >
 > - URL: http://localhost:<port>/
-> - Login: admin@example.local / change-me-now (change the password in Settings → Profile)
+> - Login: admin@example.local / <password from boot log> (change in Settings → Profile)
 > - Engine paired: `<engine-name>` (`<gateway|hybrid|legacy>` mode)
 > - Model loaded: `<model-id>` (try sending it a message)
 >

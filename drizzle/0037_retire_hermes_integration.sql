@@ -1,6 +1,6 @@
 -- 2026-05-19: Hermes integration retired from Companion.
 -- The Hermes Agent CLI on the .50 host stays as a standalone tool
--- (Sophie still uses it directly), but we no longer pipe user
+-- (the operator still uses it directly), but we no longer pipe user
 -- conversations through Companion's chat route to the Hermes gateway.
 -- Rationale: empirically net-negative — adds latency, ghost-answers,
 -- and a confusing UX layer ("ketchup on chocolate cake").

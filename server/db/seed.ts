@@ -1,15 +1,16 @@
+import { randomBytes } from "node:crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { hashPassword } from "../auth/password";
 import { db } from "./index";
 import { addons, users } from "./schema";
 
 /**
- * Seed dev data on an empty DB. Idempotent — checks if users table is empty
- * before inserting. Safe to call on every startup.
+ * Seed first-boot data on an empty DB. Idempotent — checks if the users
+ * table is empty before inserting. Safe to call on every startup.
  *
- * v0.1.0 — no more servers/endpoints seed. Inference is now via LiteLLM,
- * configured per-user in Settings → Inference (or via the LITELLM_URL env
- * default). The default URL points at the operator's LiteLLM proxy.
+ * One operator account lands with a *randomly-generated* password,
+ * printed to stdout once. Override via env (`DEV_SEED_EMAIL`,
+ * `DEV_SEED_PASSWORD`, …) for scripted installs.
  */
 export async function seedIfEmpty() {
   const [{ count }] = await db
@@ -18,16 +19,19 @@ export async function seedIfEmpty() {
 
   if (count > 0) return;
 
-  console.log("→ seeding empty DB with dev data");
+  console.log("→ seeding empty DB with first-boot data");
 
-  // Dev account — seeded only on an empty DB. Email + name + LiteLLM URL
-  // can be overridden via env vars; otherwise generic dev defaults land.
-  // The user MUST change the password in Settings → Profile after first
-  // login. The default below satisfies the 8-char minimum the signup
-  // schema enforces (so a later user-side password reset still validates
-  // against the same rule).
+  // First-boot account. Email + name + LiteLLM URL can be overridden
+  // via env vars; otherwise generic defaults land. The user MUST change
+  // the password in Settings → Profile after first login.
+  //
+  // Password: env wins, otherwise we generate a random one and print it
+  // ONCE to stdout. We deliberately don't ship a deterministic default —
+  // a public install with `admin@example.local / change-me-now` would
+  // be a credential everyone on the internet knows.
   const seededEmail = process.env.DEV_SEED_EMAIL ?? "admin@example.local";
-  const seededPassword = process.env.DEV_SEED_PASSWORD ?? "change-me-now";
+  const seededPassword =
+    process.env.DEV_SEED_PASSWORD ?? randomBytes(12).toString("base64url");
   const passwordHash = await hashPassword(seededPassword);
   const [devUser] = await db
     .insert(users)
@@ -41,8 +45,13 @@ export async function seedIfEmpty() {
     .returning();
 
   console.log(
-    `→ seeded first-boot account: ${seededEmail} / ${seededPassword} — ` +
-      "CHANGE THIS in Settings → Profile.",
+    "\n────────────────────────────────────────────────────────────────\n" +
+      `  Companion first-boot account\n` +
+      `    email    : ${seededEmail}\n` +
+      `    password : ${seededPassword}\n` +
+      "  CHANGE the password in Settings → Profile after first login.\n" +
+      "  This is the only time the password is printed — copy it now.\n" +
+      "────────────────────────────────────────────────────────────────\n",
   );
 
   // Seeded add-on rows. The current Hermes Agent integration (`/hermes`

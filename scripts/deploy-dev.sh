@@ -60,7 +60,7 @@ fi
 
 git push
 
-# Pull + rebuild on rpi-dev
+# Pull + rebuild on the dev host
 ssh "$HOST" "cd $APP_DIR && git pull && docker compose up -d --build 2>&1 | tail -10 && docker ps --filter name=companion --format 'table {{.Names}}\t{{.Status}}'"
 
 echo ""

@@ -51,16 +51,20 @@ git clone https://github.com/Odyssai-eu/Companion.git
 cd Companion
 
 cp .env.example .env
-# edit .env — at minimum replace AUTH_JWT_SECRET with a real secret
+# the defaults are safe — AUTH_JWT_SECRET auto-generates on first boot,
+# the host port binds to 127.0.0.1 only. Edit .env if you want to
+# customize.
 
 docker compose up -d
 
 # Open the app
 open http://localhost:3000
 
-# First login uses the seeded operator account printed in the boot logs:
-#   docker logs companion-app | grep "seeded first-boot account"
-# → admin@example.local / change-me-now  (CHANGE in Settings → Profile)
+# First login: the seeded operator account is logged at boot — read it
+# with:
+#   docker logs companion-app | grep -A6 "Companion first-boot account"
+# A random password is printed ONCE. Copy it, log in, then change the
+# password in Settings → Profile.
 ```
 
 Then in **Settings → Infrastructure → Engine**, pair an engine — any
@@ -77,7 +81,7 @@ For pairing details, add-ons, and the full guide:
 - **Server** — Hono on Node 22, served from the same container
 - **DB** — Postgres 17 (via docker-compose), Drizzle ORM
 - **Memory service** — separate FastAPI service (`companion-memory`) that compiles conversations into the wiki
-- **Dev** — `pnpm install && pnpm dev`
+- **Dev** — `npm install && npm run dev`
 
 ## Status
 

@@ -8,10 +8,11 @@ services:
       PORT: 3000
       DATABASE_URL: postgres://companion:companion@db:5432/companion
       NODE_ENV: production
-      # AUTH_JWT_SECRET: replace the literal below with a real secret
-      # before exposing Companion beyond localhost. Generate one with:
-      #   python3 -c "import secrets; print(secrets.token_urlsafe(48))"
-      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-replace-me-with-a-real-secret-before-deploy}
+      # AUTH_JWT_SECRET: set your own here, or leave empty — the app
+      # generates a random session secret on first boot and persists it
+      # at /app/data/jwt-secret. Either way, sessions stay valid across
+      # restarts as long as the volume is preserved.
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
       # Public sign-up is off by default — operators add accounts manually
       # (seed on first boot, or future admin UI). Set ALLOW_SIGNUP=1 if you
       # actually want self-serve sign-up for your install.
@@ -27,7 +28,12 @@ services:
       # 192.168.0.0/24, or 10.0.0.0/24).
       ODYSSAI_SCAN_SUBNETS: ${ODYSSAI_SCAN_SUBNETS:-192.168.1.0/24}
     ports:
-      - "${HOST_PORT:-3000}:3000"
+      # By default we bind to 127.0.0.1 only — Companion is reachable
+      # from the same host (browser, IDE, MCP clients), but NOT from
+      # the LAN or the internet. To expose it on your LAN, set
+      # HOST_BIND=0.0.0.0 (and configure your firewall + AUTH_JWT_SECRET
+      # accordingly).
+      - "${HOST_BIND:-127.0.0.1}:${HOST_PORT:-3000}:3000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -37,6 +43,10 @@ services:
       # so the host can back it up, swap it, or read it for incident
       # response without docker incantations.
       - /var/lib/companion/orchestrator-ssh:/root/.companion
+      # App data — auto-generated session secret, etc. Survives
+      # container restarts so users don't get signed out on every
+      # `docker compose up`.
+      - app_data:/app/data
     depends_on:
       db:
         condition: service_healthy
@@ -59,3 +69,4 @@ services:
 
 volumes:
   db_data:
+  app_data:

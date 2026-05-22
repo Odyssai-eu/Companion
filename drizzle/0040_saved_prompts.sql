@@ -4,7 +4,7 @@
 --
 -- Why a fresh table instead of resurrecting prompt_skills:
 --   - Cleaner separation: agent_skills are model-callable tools,
---     saved_prompts are user-pickable system prompts. Sophie's call.
+--     saved_prompts are user-pickable system prompts. operator's call.
 --   - No legacy migration baggage from the old client-localStorage
 --     prompt-library — that migration was already done last cycle.
 --   - Schema can stay minimal: id, name, body. No tags / description

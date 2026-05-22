@@ -829,7 +829,7 @@ function ProjectMemoryPanel({
             type="text"
             value={externalVaultPath}
             onChange={(e) => onExternalVaultPathChange(e.target.value)}
-            placeholder="/Users/admin/vault   or   tcai://project/…"
+            placeholder="/path/to/vault   or   companion://project/…"
             className="rounded border border-gray-200 bg-white px-2 py-1 font-mono text-[11px]"
           />
           <label className="flex items-center gap-2 pt-1 text-[11px] text-gray-600">

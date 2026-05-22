@@ -11,7 +11,7 @@
 -- Compatible with Anthropic's Agent Skills format: name + description
 -- (when-to-use trigger) + body (markdown). Tags are free-form.
 --
--- source = 'user' (created by Sophie via direct DB / future Settings UI)
+-- source = 'user' (created by the operator via direct DB / future Settings UI)
 --        | 'agent' (created by the chat model via skill_create tool)
 --        | 'imported' (bulk-loaded from an external library, e.g.
 --                     Anthropic's published skills)

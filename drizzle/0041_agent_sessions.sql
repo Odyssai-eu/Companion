@@ -1,7 +1,7 @@
 -- Agent sessions — `/hermes` (and future `/pi`, `/openclaude`, etc.)
 -- spawn an agent sub-thread inside a Companion conversation. Each sub-
 -- thread is a persistent session against an external agent bridge (the
--- niveau-1 architecture is one Hermes ACP subprocess on Sophie's
+-- niveau-1 architecture is one Hermes ACP subprocess on the operator's
 -- workstation, niveau-2 will be a node daemon per user).
 --
 -- Why two tables instead of overloading `messages`:
@@ -44,7 +44,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS agent_sessions_conv_kind_uniq
 CREATE TABLE IF NOT EXISTS agent_messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id uuid NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-  -- 'user' = what Sophie typed after `/hermes`
+  -- 'user' = what the operator typed after `/hermes`
   -- 'agent' = agent's reply
   -- 'tool' = tool invocation surfaced for transparency (file write, shell, etc.)
   role text NOT NULL CHECK (role IN ('user', 'agent', 'tool')),
