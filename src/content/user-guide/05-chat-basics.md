@@ -90,7 +90,7 @@ Two variants:
 When *Settings → Inference → Show metrics* is on, an info row appears under each assistant message:
 
 ```
-TTFT 1.2s · Duration 14s · Prompt 8.4k tok · Completion 1.1k tok · Speed 78 tok/s · Cached 6.2k tok (74%) · Model argo — Hy3-preview-MLX-9bit
+TTFT 1.2s · Duration 14s · Prompt 8.4k tok · Completion 1.1k tok · Speed 78 tok/s · Cached 6.2k tok (74%) · Model <alias> — <concrete-model>
 ```
 
 - **TTFT** = time-to-first-token (latency to first SSE event).

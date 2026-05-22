@@ -92,7 +92,7 @@ Each new turn resets the timer. So a chatty conversation compiles **once** after
 
 ### Cron backstops
 
-In addition to inactivity, three slots fire compiles globally (Europe/Brussels):
+In addition to inactivity, three slots fire compiles globally (server time zone):
 
 - **06:00** — global compile for every user active in the last 24h, on their most recent conv.
 - **12:30** — same.
@@ -106,7 +106,7 @@ These are backstops in case inactivity-based fires were missed (server restart, 
 
 1. Loads up to 200 recent messages from the conversation (cap 4000 chars each).
 2. Builds a prompt asking the LLM to emit DIFFS across 7 wiki categories.
-3. Calls Qwen3.6 via oMLX. Expects JSON output with `{ action, path, body }` items.
+3. Calls whichever model you set as the compile model (Settings → Memory → Compile model — typically a fast local 30-40B chat model). Expects JSON output with `{ action, path, body }` items.
 4. Applies the diffs in PG: update / insert / delete per article path.
 5. Returns when done — fire-and-forget on the chat side.
 

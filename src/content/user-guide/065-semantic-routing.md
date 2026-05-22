@@ -23,6 +23,13 @@ Any OpenAI-compatible embeddings endpoint. The payload Companion sends is `{"inp
 
 The default field is empty — set it to whatever you host. Small models are fine; latency-wise you want something under 100 ms per single-string call.
 
+> **Don't have an embedding service yet?** You need one running locally for the Auto Router to work — Companion never pings a default cloud one. Two pragmatic paths:
+>
+> - **Pair Odysseus** and load any small open-weights embedding model (a 0.5–1B model is plenty). Odysseus exposes the standard `/v1/embeddings` endpoint so it slots straight into this field.
+> - **Hand the install to a coding agent.** Drop the [Odysseus README](https://github.com/odyssai/odysseus) (or your engine's docs) into Claude Code, Codex, Cursor, Aider, etc., and ask it to "set up an OpenAI-compatible embeddings server on this machine with `<model-of-your-choice>` and tell me the URL". It will do the venv / Docker / config work and hand back a URL you paste here.
+>
+> Either way, the Auto Router only needs the URL — pick whatever embedding model your hardware can spare a few hundred MB for.
+
 ### Model per bucket
 
 Each bucket maps to one model id known to your engine. Defaults are empty so you make the call.
@@ -61,7 +68,7 @@ If the add-on is enabled but not configured (no URL, no anchors), `Auto` returns
 
 ## Tuning
 
-The anchors are a small set of short sentences — about 10 per bucket, FR + EN mixed. They're stored in `server/lib/semantic-router.ts` and can be edited.
+The anchors are a small set of short sentences — about 10 per bucket. They're stored in `server/lib/semantic-router.ts` and can be edited.
 
 If you find yourself frequently overriding a routing decision (e.g. a Python-talk message routes to `chat` instead of `code`), add the phrasing to the right bucket's anchor list and click **Rebuild anchors** in the panel. One-second roundtrip, the new centroid replaces the old.
 

@@ -53,12 +53,12 @@ No UI today. Possible via the API. Tell us if you need it.
 ## Models
 
 **Which model should I use?**
-Depends on the task. A typical Odysseus deployment publishes aliases along these axes:
-- **Local fast conversational** — a 30–40B chat model on oMLX. Vision-capable. Good default.
+Depends on the task. A typical deployment publishes aliases along these axes:
+- **Local fast conversational** — a 30–40B chat model on a single-node inference server. Vision-capable. Good default.
 - **Local heavy reasoner** — a big MoE (100B+ active) on a multi-node pool for hard analysis.
-- **Local code** — a code-tuned model (Qwen3-Coder-Next, MiniMax-M2, etc.) on a dedicated pool.
+- **Local code** — a code-tuned model on a dedicated pool.
 - **Probe** — a 1-2B model for autocomplete and tiny lookups (sub-second TTFT).
-- **Cloud fallback** — `or:claude-haiku`, `or:hy3-preview`, or any other OpenRouter passthrough alias.
+- **Cloud fallback** — OpenRouter / Anthropic / OpenAI passthrough aliases (e.g. `or:claude-haiku`).
 
 The exact names depend on your deployment — check the model picker. The Auto Router (see *Semantic routing*) can pick for you per-message.
 
@@ -79,7 +79,7 @@ Engine not paired, or pairing failed. See *Engine pairing* (16).
 The name the assistant gives itself. Not a single model — it's the orchestrator above whatever model you've routed to. The memory + the relationship + the persona. See *Memory* (10).
 
 **Does the memory wiki update automatically?**
-Yes. A compiler runs after 10 min of conversation inactivity, plus cron slots at 06:00 / 12:30 / 19:00. Conversations with `memoryEnabled = false` are excluded.
+Yes. A compiler runs after 10 min of conversation inactivity, plus cron slots at 06:00 / 12:30 / 19:00 server time. Conversations with `memoryEnabled = false` are excluded.
 
 **Can I prevent a conversation from updating the wiki?**
 Yes. Flip **Memory** toggle off in the chat header. The conversation won't compile back. Useful for sensitive chats.
@@ -95,14 +95,8 @@ The compiler reads your conversations and extracts facts. If a fact is wrong, co
 **Is push-to-talk private?**
 Yes. 100% browser-side. No audio leaves your machine for transcription. See *Privacy & data* (18).
 
-**What languages does TTS support?**
-Voxtral-Realtime: English + French natively. Other languages: use Gemini Live addon (broader coverage, but cloud).
-
-**Can I have a voice-only conversation?**
-Yes. Open Talk mode from the sidebar bottom. Full-screen voice surface, hands-free.
-
-**Why is the reply silent in voice mode?**
-TTS server not reachable. Check *Settings → Inference → TTS endpoint*. Health probe should be green.
+**Is there voice output / Talk mode today?**
+Not yet. Push-to-talk (input) works today; auto-speak (output) and the full-screen Talk surface are on the roadmap, with **Gemini Flash Live** as the planned TTS backend. See *Voice & talk* (08).
 
 ## MCP / agents tokens
 
@@ -161,7 +155,7 @@ Fixes: fork into a new conversation when one drags on (your memory wiki carries 
 Next turn after warm-up should be back to normal.
 
 **Cluster gives errno 16 / 96 / 2 after several sessions**
-JACCL queue pair degradation, known upstream MLX/JACCL bug. Reboot the affected cluster nodes (Reboot all button in Odysseus dashboard). Documented behaviour, no fix in MLX 0.31.x.
+JACCL queue pair degradation, known upstream MLX/JACCL bug. Reboot the affected cluster nodes (Reboot all button in Odysseus dashboard). Documented behaviour in current MLX versions.
 
 ## Other
 

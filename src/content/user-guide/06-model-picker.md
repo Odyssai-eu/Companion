@@ -4,7 +4,7 @@ Picking what's behind the chat. Companion can route to many models in many ways;
 
 ## Where the picker lives
 
-In the **chat header**, leftmost element. Click it to open the model panel. The label always reads `<alias> — <concrete>` when both are known (e.g. `argo — Hy3-preview-MLX-9bit`), or just `<alias>` for cloud aliases that don't expose a concrete name.
+In the **chat header**, leftmost element. Click it to open the model panel. The label always reads `<alias> — <concrete>` when both are known (e.g. `my-cluster — Qwen3-MLX-8bit`), or just `<alias>` for cloud aliases that don't expose a concrete name.
 
 ## Inference modes
 
@@ -71,31 +71,30 @@ This means **one conversation can span multiple models**. The session_id stays t
 
 ## Aliases vs concrete model names
 
-Companion shows **aliases** in the picker (`argo`, `om:coder-next`, `or:claude-haiku`, `probe`). The engine resolves them to concrete model paths internally. The stats row shows both:
+Companion shows **aliases** in the picker (`<your-cluster-name>`, `or:claude-haiku`, `probe`). The engine resolves them to concrete model paths internally. The stats row shows both:
 
 ```
-Model: argo — Hy3-preview-MLX-9bit
+Model: <alias> — <concrete-model>
 ```
 
 If you only see the alias and the concrete is missing, the engine didn't return `x_odyssai.alias_for` for that model. Either pre-Odysseus engine, or cloud passthrough.
 
-## Cloud aliases prefix conventions
+## Alias prefix conventions
 
-Companion's catalog follows the convention:
+Companion's catalog uses simple prefix conventions — the alias is whatever your engine publishes:
 
-- `argo`, `hades`, `vlm` — local cluster pools.
-- `om:*` — oMLX direct (`om:qwen-35b`, `om:coder-next`, `om:gemma-31b`, …).
-- `or:*` — OpenRouter (`or:claude-haiku`, `or:hy3-preview`, …).
-- `vlm:*` — direct mlx-vlm services (legacy).
-- `probe` — sub-second autocomplete model for probe routing.
+- **Local cluster pools** — pick your own name (`my-cluster`, `<lab>-fast`, etc.). One alias per pool.
+- **`or:*`** — OpenRouter passthrough (`or:claude-haiku`, `or:gpt-5`, …).
+- **Other prefixes** — anything you set up via the engine admin (one prefix per backend: an mlx-lm server, an LM Studio instance, an Ollama box, …).
+- **`probe`** — by convention, the sub-second autocomplete model used for probe routing.
 
-These are conventions, not enforced. Whatever your engine publishes is what shows up.
+These are conventions, not enforced. Whatever your engine publishes is what shows up — pick whatever names fit your setup.
 
 ## Model that's not loaded
 
-For Odysseus aliases like `argo` and `hades`, the model is loaded **on demand**. The picker shows it; you select it; the engine triggers a load on the first request (you'll see a "Loading model…" banner with a progress bar in the chat).
+For Odysseus cluster pools, the model is loaded **on demand**. The picker shows it; you select it; the engine triggers a load on the first request (you'll see a "Loading model…" banner with a progress bar in the chat).
 
-A typical 9-bit MLX MoE load is 15-50 seconds (Hy3-preview 2-node = ~30s, Qwen3-Coder-Next 3-node = ~10s). Subsequent turns reuse the loaded weights.
+A typical MLX MoE load takes 15-50 seconds depending on size and node count. Subsequent turns reuse the loaded weights.
 
 To force unload (free the cluster RAM): admin dashboard on the engine itself (not via Companion).
 
@@ -111,12 +110,12 @@ If your picker is empty: the engine probe is failing. See *Troubleshooting* (20)
 
 Settings → Inference → **Advanced** → 4 dropdowns for the slots:
 
-- `conversation` (default `om:qwen-35b`)
-- `analyse` (default `om:qwen-35b` vision)
-- `engineer` (default `om:coder-next`)
-- `expert` (default `or:hy3-preview` or whatever your strongest is)
+- `conversation` — your everyday chat model.
+- `analyse` — a vision-capable / reasoning-heavy model.
+- `engineer` — a code-tuned model.
+- `expert` — your strongest model, for the hardest turns.
 
-Stored as `users.named_models` jsonb. Editing here is a workspace-wide change for your account.
+You pick what fills each slot from your engine's catalogue — there are no built-in defaults. Stored as `users.named_models` jsonb. Editing here is a workspace-wide change for your account.
 
 ## Default model
 

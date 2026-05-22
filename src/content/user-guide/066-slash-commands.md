@@ -48,11 +48,27 @@ When an agent is in flight, an inline terminal-style panel renders below the mes
 
 The transcript is persisted server-side. Reload the page, switch conversations and come back — the box reappears with full history.
 
-## Configuring Hermes
+## Installing Hermes on your machine
 
-The Hermes Agent add-on lives in **Settings → Add-ons → Hermes Agent**. Two fields:
+To use `/hermes`, you need three things running on the workstation where the agent should act:
 
-- **Bridge URL** — where Companion sends agent commands. The bridge is a small service running on your machine that talks ACP to a local Hermes runtime. Format is `http://<your-workstation>:<port>` (default port `8003`). Companion server needs to be able to reach this URL — on the same LAN, or via a VPN/tunnel if Companion is hosted elsewhere.
+1. **Hermes itself** — the CLI runtime that actually edits files / runs shell / browses.
+2. **The ACP bridge** — a small HTTP service Companion talks to, which forwards to Hermes over ACP.
+3. **An MCP token back into Companion** (optional but recommended) — so Hermes can call back for memory / skills / past conversations.
+
+The recommended way to set this up is to hand the job to a coding agent (Claude Code, Codex, Cursor, Aider — whichever you already use) and point it at the resources on GitHub:
+
+- **Hermes** — github.com/hermes-agent (install instructions in the repo README — covers macOS / Linux / Windows).
+- **ACP bridge** — same repo; ships as a small Node/Python service you start with one command.
+- **Wiring back to Companion via MCP** — see *Agents tokens* (13) for the `hms_…` token + `hermes mcp add companion …` step.
+
+Tell your coding agent something like: *"Install Hermes on this machine, start the ACP bridge on port 8003, and wire a Companion MCP token so it can read my memory."* It will do the venv / brew / config work and hand back the bridge URL + token to paste into Companion.
+
+## Configuring the bridge in Companion
+
+Once Hermes + the bridge are running, **Settings → Add-ons → Hermes Agent**. Two fields:
+
+- **Bridge URL** — `http://<your-workstation>:<port>` (default port `8003`). Companion's server needs to be able to reach this URL — on the same LAN, or via a VPN/tunnel if Companion is hosted elsewhere.
 - **Bridge token** (optional) — a static bearer. Add one when the bridge isn't on a trusted LAN.
 
 Click **Test connection** to confirm the bridge answers `/health`. If it doesn't, the `/hermes` calls will return a clear 503 with a pointer back to this Settings page — Companion never silently falls back to "no agent".

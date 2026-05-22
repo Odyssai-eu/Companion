@@ -35,7 +35,7 @@ Either:
 ## Tools / agent mode
 
 **Agent mode is on but no tools fire**
-Check the model picker for the **⚒** chip. Without it, the model can't call tools regardless of agent mode. Pick a tool-capable model (Qwen3-Coder, Claude 4.x, GPT-4o, argo, …).
+Check the model picker for the **⚒** chip. Without it, the model can't call tools regardless of agent mode. Pick a tool-capable model — any reasonably recent code or instruct model with native tool-calling will do.
 
 **Skill tools are missing from `tools/list`**
 They're always-on for any tool-capable model. If they're missing, your model isn't tool-capable — see above.
@@ -51,20 +51,11 @@ You denied a scope. Reconnect and grant all requested scopes — Companion needs
 
 ## Voice
 
-**TTS doesn't speak**
-Voxtral-Realtime needs to be reachable. Check *Settings → Inference* — the TTS health probe is queried on Voice mode toggle. Red dot → TTS server is down or wrong URL.
-
-**Audio cuts mid-sentence**
-Usually a network hiccup against the TTS server. Voice mode falls back to text-only after one failed segment; toggle it off and back on to retry.
-
 **Push-to-talk transcribes empty / wrong language**
 The browser's Web Speech API follows the OS locale. Set the browser language to the one you're speaking. On macOS: System Preferences → Language. On Linux: depends on browser.
 
 **Browser asks for mic on every reload**
 Some browsers don't persist the mic permission. Pin Companion as a PWA, or set a permanent permission in browser settings (Site Settings → Microphone → Allow).
-
-**Talk mode shows a model picker even though I configured a Talk model**
-Bug — reload. The Talk model should hide the picker on second-load. If it persists, check `users.namedModels` shape.
 
 ## Editing / regenerating
 
@@ -72,7 +63,7 @@ Bug — reload. The Talk model should hide the picker on second-load. If it pers
 The truncation runs as a fire-and-forget DELETE. If your network drops at the wrong moment, the old turns can stick around. Re-edit and they'll be wiped on the next attempt.
 
 **Ghost answer — reply visible during stream, gone on reload**
-You hit one of the inference-state races (v1.0.66 / 1.0.67 fixed two of them). If it recurs: tell us with the conversation id, we'll dig the logs.
+You hit one of the inference-state races. If it recurs, tell us with the conversation id so we can dig the logs.
 
 **Continue button doesn't continue, makes a new turn instead**
 Continue is meant for partial replies that hit `max_tokens`. If the previous reply ended cleanly with `finish_reason=stop`, Continue starts a new turn. Use Regenerate instead.
@@ -97,12 +88,7 @@ Your browser may have file-drop disabled (corporate policy, hardened profile). U
 The conversation freezes a memory snapshot at creation. New entries written *after* that won't appear in already-open chats. Open a new chat to pick them up, or click **Remember now** on the existing chat.
 
 **Global wiki search returns nothing**
-RAG ingestion may have lagged behind a vault edit. Wait ~30s, retry. If still empty, check the RAG status:
-
-```bash
-curl -s http://<rag-host>:8080/status      # Docling ingestion service
-curl -s http://<rag-host>:6333/collections # Qdrant vector store
-```
+RAG ingestion may have lagged behind a vault edit. Wait ~30s, retry. If still empty, check the RAG service status on whichever host you deployed it to (`<rag-host>:8080/status` for the Docling ingestion service, `<rag-host>:6333/collections` for the Qdrant vector store).
 
 **Némo writes in a register I didn't expect** (Baudelaire-mystic, robot-functional, anything weird)
 Likely the wiki has too few constraints. Fill in `profile/preferences.md` + `profile/writing-guide.md` in your wiki with concrete style rules. Mark them `edited_by_user=true` so the compiler doesn't drift them.

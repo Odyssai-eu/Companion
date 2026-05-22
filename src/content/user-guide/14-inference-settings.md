@@ -29,7 +29,7 @@ Some models expose a "thinking" budget — extended reasoning before the visible
 - **Thinking toggle** — on/off. Default off.
 - **Reasoning effort** — low / medium / high / xhigh / minimal / none (only when thinking is on). Hints to the model how much reasoning to do.
 
-Companion always sends `enable_thinking` explicitly — never relies on provider defaults. This avoids drift between providers (Anthropic on, Qwen3 off, oMLX off, etc.).
+Companion always sends `enable_thinking` explicitly — never relies on provider defaults. This avoids drift between providers (each has its own default; sending the flag yourself keeps behaviour consistent across them).
 
 When thinking is on:
 
@@ -37,7 +37,7 @@ When thinking is on:
 - The `<think>…</think>` block is collapsed by default behind a chevron in the chat (click to expand).
 - Some models stream the thinking content separately as `delta.reasoning_content` — Companion routes it to the collapsed area.
 
-Voice mode + thinking high = bad combo (long silence before any audio). Use thinking off or low for voice.
+Note: when Voice mode ships, pair it with thinking off or low — heavy thinking before any audio leaves long silences (see *Voice & talk*, 08).
 
 ## Inference presets
 
@@ -105,7 +105,6 @@ The picker pulls capabilities from the Odyssai `x_odyssai` contract when present
 - **Easy model** — the single curated model for Easy mode.
 - **Named models** — the 4 slots for Advanced mode (conversation / analyse / engineer / expert).
 - **Hidden models** — eye-toggle hide list.
-- **TTS endpoint** — Voxtral-Realtime URL.
 - **Show metrics** — per-message stats row toggle.
 - **Debug verbose** — server-side log toggle (logs upstream request bodies). Off by default — produces a lot of stdout.
 

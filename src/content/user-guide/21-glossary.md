@@ -8,7 +8,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Agents tokens** — `hms_…` bearer tokens that external coding agents (Cline, Continue.dev, Claude Desktop, Cowork) use to call Companion's MCP brain endpoint. See *Agents tokens* (13).
 
-**Alias** — A short name for a model published by the engine (e.g. `argo`, `om:coder-next`, `or:claude-haiku`). Resolved to a concrete model path at engine side.
+**Alias** — A short name for a model published by the engine (e.g. `<your-cluster-name>`, `or:claude-haiku`). Resolved to a concrete model path at engine side.
 
 **`agentskills.io`** — Open specification for SKILL.md packages. Companion follows it. See *Skills* (11).
 
@@ -30,7 +30,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Companion** — The web client. React + Hono + Postgres, packaged as a single Docker image.
 
-**Compile (memory)** — Process by which the Karpathy compiler reads recent conversations and emits diffs to the wiki. Triggered by inactivity (10 min) or cron slots (06:00 / 12:30 / 19:00). See *Memory* (10).
+**Compile (memory)** — Process by which the Karpathy compiler reads recent conversations and emits diffs to the wiki. Triggered by inactivity (10 min) or cron slots (06:00 / 12:30 / 19:00, server time). See *Memory* (10).
 
 **Cowork** — External coding agent that hits Companion as an MCP brain.
 
@@ -66,9 +66,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## H
 
-**Hades** — Conventional name for an Odysseus cluster pool dedicated to a code model. One of several pools an Odysseus deployment can publish.
-
-**Hermes Agent** — Standalone CLI tool on .50, used to be integrated as a Companion conversation kind. Retired 2026-05-19. See session-doc-2026-05-19 in repo docs.
+**Hermes Agent** — Standalone CLI agent that runs on your workstation. Companion connects to it via the ACP bridge (`Settings → Add-ons → Hermes Agent`) so the `/hermes` slash command can drive it from chat. See *Slash commands & agents* (066).
 
 **Hybrid mode** — Engine mode where caps come from the engine, inference goes through LiteLLM. Transitional. See *Engine pairing* (16).
 
@@ -122,11 +120,9 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **OAuth 2.1 + PKCE** — Auth flow used by Notion / Linear / GitHub MCP integrations.
 
-**Odyssai** — Brand umbrella for the family: Odysseus (engine) + Companion (client) + odyssai-services (sidecar cockpit).
+**Odyssai** — Brand umbrella for the open-source ecosystem: Odysseus (engine) + Companion (client).
 
 **Odysseus** — Open-source distributed MLX inference engine. OpenAI / Anthropic compatible. The default engine target for Companion.
-
-**oMLX** — Continuous batching MLX inference server (Python + FastAPI). Often deployed alongside Odysseus on Apple Silicon hosts.
 
 **OpenRouter** — Cloud LLM aggregator. Aliased as `or:*` in the picker.
 
@@ -172,9 +168,9 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## T
 
-**Talk mode** — Full-screen voice mode. `kind='talk'` conversation. See *Voice & talk* (08).
+**Talk mode** — Full-screen voice surface. `kind='talk'` conversation. On the roadmap; see *Voice & talk* (08).
 
-**TB5** — Thunderbolt 5. The mesh fabric between the M3 Ultra nodes in Argo.
+**TB5** — Thunderbolt 5. The mesh fabric between Apple Silicon nodes when JACCL/RDMA is used inside an Odysseus cluster.
 
 **TTFT** — Time To First Token. Latency from request to first SSE event.
 
@@ -195,8 +191,6 @@ Terms used in Companion and the surrounding stack, with cross-references.
 **Vault** — Obsidian-formatted markdown directory holding your wiki. Synced via the Obsidian plugin's bearer-token bridge.
 
 **VLM** — Vision-Language Model. Also a common Odysseus pool name (`vlm` alias) when mlx-vlm is deployed on a dedicated host.
-
-**Voxtral-Realtime** — Local LAN TTS server used by Voice mode. Streams ~100ms first audio.
 
 ## W
 

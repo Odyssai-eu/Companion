@@ -39,7 +39,7 @@ If the PDF is text-only (no figures), the model gets just the text — cheap. If
 
 ## Audio (Voice attachments)
 
-When Voice mode is on, the response is auto-spoken AND saved. You can also download the WAV via the action row (**Save WAV**).
+When Voice mode ships, the response will be auto-spoken AND saved (see *Voice & talk*, 08).
 
 Sending audio TO the model isn't supported in the input bar — push-to-talk transcribes locally and sends text. For audio-in to a multi-modal model, paste a transcript.
 
@@ -63,7 +63,7 @@ That's the OpenAI multimodal shape. Companion preserves it across export, import
 ## Cost & latency caveats
 
 - **Cloud models** bill per token, and image tiles count. A 20-page PDF with figures can easily push 100k+ tokens.
-- **Local cluster models** don't bill but each image adds prefill time. A vision turn on Argo with a 5-image batch is significantly slower than a text turn.
+- **Local cluster models** don't bill but each image adds prefill time. A vision turn on a local pool with a 5-image batch is significantly slower than a text turn.
 - **First-token latency** is dominated by prefill, which scales with prompt size. PDFs especially can make TTFT jump from 1s to 10s.
 
 If you're getting slow replies on a chat with attachments, that's not a bug — it's the prefill cost.

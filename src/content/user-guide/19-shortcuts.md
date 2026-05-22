@@ -34,9 +34,9 @@ The full keyboard map. macOS uses ⌘; Windows / Linux uses Ctrl in the same slo
 
 | Action | macOS | Windows / Linux |
 |---|---|---|
-| Toggle voice mode | ⌘⇧V | Ctrl+Shift+V |
 | Push-to-talk | hold Space (outside inputs) | hold Space |
-| Stop TTS playback | Esc | Esc |
+
+> Voice mode (toggle, TTS playback) is on the roadmap — see *Voice & talk* (08).
 
 ## Universal
 

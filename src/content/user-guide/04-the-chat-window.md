@@ -32,13 +32,13 @@ Hover a row → mini-menu: rename, move to project, pin, export `.md`, export `.
 
 Left to right:
 
-- **Model picker** — opens the model panel (see *Model picker*, 06). The label shows the active alias + the concrete model behind it (e.g. `argo — Hy3-preview-MLX-9bit`).
+- **Model picker** — opens the model panel (see *Model picker*, 06). The label shows the active alias + the concrete model behind it (e.g. `<your-alias> — <concrete-model>`).
 - **Agent mode** toggle — On = inject the full agentic toolset (fs_*, rag_search, web_*, MCP servers) into the chat. Off = lean prompt (~250 tokens of overhead), no tools sent to the model. Default off.
 - **Memory** toggle — On = the conversation has injected its frozen memory snapshot. Off = no global wiki / project memory at all for this chat. See *Memory* (10).
-- **Voice** icon — toggles auto-speak of assistant replies via Voxtral or Gemini Live.
+- **Voice** icon — reserved for auto-speak of assistant replies (coming; see *Voice & talk*, 08).
 - **⚙ cogwheel** — opens the per-conversation Inference settings panel (sampling, max tokens, thinking, system prompt). See *Inference settings* (14).
 
-The header also shows a stats line for the active reply when **Show metrics** is on (Settings → Inference). Format: `TTFT 1.2s · Duration 14s · Prompt 8.4k tok · Completion 1.1k tok · Speed 78 tok/s · Cached 6.2k tok (74%) · Model argo — Hy3-preview-MLX-9bit`.
+The header also shows a stats line for the active reply when **Show metrics** is on (Settings → Inference). Format: `TTFT 1.2s · Duration 14s · Prompt 8.4k tok · Completion 1.1k tok · Speed 78 tok/s · Cached 6.2k tok (74%) · Model <alias> — <concrete-model>`.
 
 ## Message rows
 
@@ -51,7 +51,7 @@ The header also shows a stats line for the active reply when **Show metrics** is
 - **Regenerate** — re-run the same prompt. Truncates the conversation past this message first.
 - **Copy** — full reply to clipboard.
 - **Save** — export the reply as a `.md`.
-- **Listen** / **Save WAV** — when voice mode is on.
+- **Listen** / **Save WAV** — will appear when Voice mode ships (see *Voice & talk*, 08).
 - **Edit** — patch the assistant content in place (counts toward KV cache prefix next turn).
 
 **Stats row** (when Show metrics on). Per-message TTFT, total duration, tok/s, cache hit.

@@ -201,7 +201,7 @@ agent: This task is a code review.
 
 ### Cross-session continuation
 
-Start a chat on desktop. Continue on phone via Companion. Jump back into VS Code — the conversation is the source of truth, clients are lenses. Use `companion_get_conversation(id)` to pull state into your IDE agent, `companion_send_message` to continue.
+Start a chat on desktop. Continue on phone via Companion. Jump back into your IDE — the conversation is the source of truth, clients are lenses. Use `companion_get_conversation(id)` to pull state into your IDE agent, `companion_send_message` to continue.
 
 ## Security model
 

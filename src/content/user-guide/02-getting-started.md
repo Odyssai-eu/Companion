@@ -52,7 +52,7 @@ The left sidebar shows:
 
 - **Chat** + **Project** buttons at top (new conversation / project grid).
 - Recent conversations grouped by today / yesterday / older.
-- **Talk** button at the very bottom for hands-free voice mode.
+- **Talk** button at the very bottom — full-screen voice surface (coming, see *Voice & talk*, 08).
 
 The chat header shows model picker, agent-mode toggle, memory toggle, voice icon, and a cogwheel for the per-conversation inference settings.
 
@@ -60,7 +60,7 @@ The chat header shows model picker, agent-mode toggle, memory toggle, voice icon
 
 Once chat works, the rest is opt-in:
 
-- **Settings → Extensions → Add-ons** — LiteLLM card (URL + key), Voice Mode (Voxtral), Voice (Gemini Live), Cluster Operations.
+- **Settings → Extensions → Add-ons** — LiteLLM card (URL + key), Auto Router, Hermes Agent, Cluster Operations (Voice add-on coming).
 - **Settings → Extensions → MCP servers** — Notion, GitHub, Tavily, Linear, Obsidian, Filesystem presets. Or roll your own URL.
 - **Settings → Extensions → Skills** — agentskills.io packages the model can load on demand.
 - **Settings → Extensions → Agents tokens** — `hms_…` tokens for external IDE agents to call back into Companion's memory + skills + conversations.

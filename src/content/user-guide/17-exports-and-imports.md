@@ -22,55 +22,8 @@ To save the entire conversation as one file, use the conversation export below.
 
 Hover the conversation in the sidebar → menu → **Export**. Two formats:
 
-### `.md` — Markdown
-
-Full conversation as Markdown. Format:
-
-```markdown
-# <conversation title>
-
-> Exported 2026-05-20T07:23:11Z
-> Created 2026-05-19T18:32:00Z
-
-## You
-
-your message…
-
-## Assistant
-
-assistant reply with **bold**, `code`, …
-
-```python
-print("code")
-```
-
-attachments:
-- [bench.py](data:text/python;base64,…)
-- [chart.png](data:image/png;base64,…)
-```
-
-Code fences are preserved with their language hints. Attachments are embedded as data-URIs when small (< 100 KB) so the file is self-contained, or referenced as external paths for larger ones.
-
-### `.json` — structured
-
-```json
-{
-  "id": "33f876a9-…",
-  "title": "tu es là mon ami ?",
-  "kind": "chat",
-  "createdAt": "2026-05-19T21:12:20Z",
-  "messages": [
-    { "role": "user", "content": "tu es là mon ami ?", "createdAt": "…" },
-    { "role": "assistant", "content": "Je suis là.", "createdAt": "…", "model": "…", "stats": {…} }
-  ],
-  "model": "or:hy3-preview",
-  "projectId": null,
-  "memoryEnabled": true,
-  …
-}
-```
-
-Round-trippable if you want to import elsewhere. Schema-stable; field additions are non-breaking.
+- **`.md` — Markdown.** Full conversation with one section per turn. Code fences are preserved with their language hints. Attachments are embedded as data-URIs when small (< 100 KB) so the file is self-contained, or referenced as external paths for larger ones.
+- **`.json` — structured.** Round-trippable if you want to import elsewhere or post-process. Schema-stable; field additions are non-breaking. Carries the conversation id, title, kind, timestamps, messages (role / content / per-message model + stats), the active model, project id, memory flag, etc.
 
 You can also export over MCP with `companion_export_md(conversationId)` from external agents.
 

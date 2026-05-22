@@ -65,7 +65,7 @@ The toggle is in *Settings → Inference → LiteLLM disabled*. Disabling forces
 Once paired, the chat header model picker fills with the engine's catalogue. Specifically:
 
 - `/v1/models` → list of aliases + concrete model names + `x_odyssai` capability blocks.
-- Aliases like `argo`, `om:coder-next`, `or:claude-haiku`, `probe` show up grouped (Local / Cloud).
+- Aliases (whatever you set up on the engine — `<your-cluster-name>`, `or:claude-haiku`, `probe`, …) show up grouped (Local / Cloud).
 - Each model has vision / tools / streaming chips based on `x_odyssai.supports_*`.
 
 Without engine pairing (legacy mode):

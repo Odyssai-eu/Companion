@@ -64,10 +64,10 @@ Same as cloud passthrough but via LiteLLM as intermediary. LiteLLM logs to where
 The Karpathy compiler reads your conversations to update the wiki. Specifically:
 
 - Loads up to 200 recent messages per compile (cap 4000 chars each).
-- Sends the messages to Qwen3.6-35B on oMLX (your local cluster).
+- Sends the messages to whichever model you set as the compile model (Settings → Memory → Compile model — typically a fast local 30-40B chat model on your engine).
 - Receives diffs → applies to `memory_articles`.
 
-The compile runs on **your local oMLX node**. The conversation content does NOT go to a cloud provider for compile. Even when you chatted with `or:claude-haiku`, the compile of that conversation runs on Qwen3.6 locally.
+The compile runs on **whatever engine you point the compiler at** — pick a local model and the conversation content does NOT go to a cloud provider for compile. Even when you chatted with `or:claude-haiku`, the compile of that conversation runs on the compile model you configured (recommended: a local one for sovereignty).
 
 Compile is gated:
 
@@ -109,7 +109,7 @@ The browser's Web Speech API runs entirely client-side (your machine). The audio
 
 This is in contrast to many cloud-based dictation services that stream audio to a server. Web Speech is local.
 
-TTS is different — see *Voice & talk* (08). Voxtral over LAN stays local; Gemini Live cloud doesn't.
+TTS will arrive with Voice mode (see *Voice & talk*, 08). When it ships, the planned Gemini Flash Live backend is cloud — the conversation text streamed for synthesis leaves your LAN. A local TTS option may follow.
 
 ## Encryption details
 

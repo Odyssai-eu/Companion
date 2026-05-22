@@ -68,7 +68,7 @@ Settings → Profile → Time zone. Used for:
 - Karpathy memory compile cron slots (06:00 / 12:30 / 19:00 local)
 - Per-message time tags injected into the chat history (helps the model anchor temporal context)
 
-Default `Europe/Brussels`. Change it once when you set up; it doesn't auto-detect.
+Default `Europe/Paris`. Change it once when you set up; it doesn't auto-detect.
 
 ## Deleting your account
 
