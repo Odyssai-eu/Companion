@@ -435,8 +435,18 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
             },
           );
         } else {
-          // CASE 0 — no stream anywhere. Just show what's in DB.
-          setMessages(dbMessages);
+          // CASE 0 — no stream anywhere. Adopt DB state, but defensively:
+          // if local has strictly MORE messages than the server returned,
+          // keep local. This handles the race where /help on a fresh conv
+          // does setConversation + navigate + setMessages(optimistic)
+          // before the server has persisted anything — the conv-load
+          // effect re-fires with the new convId, fetches an empty msg
+          // list, and would clobber the optimistic /help user message +
+          // streaming placeholder. Mirrors the agent-transcript defence
+          // we put in place 2026-05-21.
+          setMessages((prev) =>
+            prev.length > dbMessages.length ? prev : dbMessages,
+          );
           setSending(false);
         }
       })
