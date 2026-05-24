@@ -602,7 +602,8 @@ function ModelDropdown({
         >
           {models.length === 0 && (
             <div className="px-3 py-4 text-center font-mono text-[11px] text-gray-400">
-              No models — check your LiteLLM URL in Settings → Inference.
+              No models — pair an engine in Settings → Inference, or check that
+              the paired engine has a model loaded.
             </div>
           )}
           {groups.map(([group, list]) => (
