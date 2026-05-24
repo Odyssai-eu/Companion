@@ -11,8 +11,13 @@
  * we log and continue.
  */
 
-const MEMORY_BASE_URL =
-  process.env.MEMORY_SERVICE_URL ?? "http://127.0.0.1:8001";
+// `??` only catches null/undefined — `MEMORY_SERVICE_URL=""` (the compose
+// default for fresh installs without the memory service) would fall through
+// as an empty string and crash `new URL("/context/...", "")` on every chat
+// creation. Treat any falsy value as unset and short-circuit the calls
+// instead. The compose comment already promises "Companion runs fine"
+// without this service; honor that.
+const MEMORY_BASE_URL = process.env.MEMORY_SERVICE_URL || "";
 const MEMORY_TIMEOUT_MS = Number(process.env.MEMORY_TIMEOUT_MS ?? 1500);
 // Hard cap on the wiki dump size we inject into the system prompt. The
 // Python service returns the whole Obsidian corpus unbounded; at 35 k+
@@ -47,6 +52,7 @@ export async function getMemoryContext(
   userId: string,
   projectId: string | null,
 ): Promise<string> {
+  if (!MEMORY_BASE_URL) return "";
   const url = new URL(`/context/${userId}`, MEMORY_BASE_URL);
   if (projectId) url.searchParams.set("project_id", projectId);
 
@@ -257,6 +263,7 @@ export function triggerCompile(
   userId: string,
   conversationId: string,
 ): void {
+  if (!MEMORY_BASE_URL) return;
   const url = new URL(`/compile/async`, MEMORY_BASE_URL);
   // No await — we want this off the hot path.
   fetch(url, {
@@ -277,6 +284,7 @@ export async function compileNow(
   userId: string,
   conversationId: string,
 ): Promise<boolean> {
+  if (!MEMORY_BASE_URL) return false;
   const url = new URL(`/compile`, MEMORY_BASE_URL);
   try {
     const ctrl = new AbortController();
