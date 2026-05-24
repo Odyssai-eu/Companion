@@ -40,6 +40,7 @@ import profileRoute from "./routes/profile";
 import skillsRoute from "./routes/skills";
 import projectMemoryRoute from "./routes/project-memory";
 import projectsRoute from "./routes/projects";
+import userMemoryRoute from "./routes/user-memory";
 import providersRoute from "./routes/providers";
 import ttsRoute from "./routes/tts";
 
@@ -141,6 +142,11 @@ app.route("/api/projects", projectsRoute);
 // here they don't, both can coexist on the same mount.
 app.route("/api/projects", projectMemoryRoute);
 app.route("/api/profile", profileRoute);
+// Global user memory vault — ZIP import + external filesystem path,
+// the user-scoped twin of /api/projects/:id/memory. Mounted under
+// /api/profile/vault for namespace tidiness (profile is the existing
+// user-scoped surface).
+app.route("/api/profile/vault", userMemoryRoute);
 app.route("/api/files", filesRoute);
 app.route("/api/tts", ttsRoute);
 app.route("/api/addons", addonsRoute);

@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "~/hooks/useAuth";
-import { api } from "~/lib/api";
+import {
+  api,
+  type ApiUserMemoryFile,
+  type ApiUserMemoryStats,
+  type ApiUserMemorySettings,
+} from "~/lib/api";
 
 export default function ProfilePage() {
   const { user, refresh } = useAuth();
@@ -83,7 +88,283 @@ export default function ProfilePage() {
 
       <ChangePasswordSection />
       <PersonaSection />
+      <MemoryVaultSection />
     </div>
+  );
+}
+
+// ─── Global memory vault ─────────────────────────────────────────────────
+// User-curated counterpart of the Karpathy auto-wiki. Sophie can seed
+// her global memory with an existing Obsidian vault (ZIP) and/or point
+// at a live filesystem path that gets read every turn. The auto-compile
+// keeps running on top by default; flip "Use my vault only" off to make
+// it the single source.
+
+function MemoryVaultSection() {
+  const [files, setFiles] = useState<ApiUserMemoryFile[] | null>(null);
+  const [stats, setStats] = useState<ApiUserMemoryStats | null>(null);
+  const [settings, setSettings] = useState<ApiUserMemorySettings | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [lastImport, setLastImport] = useState<{
+    imported: number;
+    skipped: Array<{ path: string; reason: string }>;
+  } | null>(null);
+  // Local-edit buffer for the external path so typing doesn't fire a
+  // PUT on every keystroke. Synced from `settings` and committed on
+  // blur / explicit Save.
+  const [pathDraft, setPathDraft] = useState("");
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  async function refresh() {
+    try {
+      const r = await api.listUserMemory();
+      setFiles(r.files);
+      setStats(r.stats);
+      setSettings(r.settings);
+      setPathDraft(r.settings.externalVaultPath ?? "");
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function importZip(file: File) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.importUserMemoryFromZip(file);
+      setLastImport({ imported: r.imported.length, skipped: r.skipped });
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function commitSettings(patch: {
+    externalVaultPath?: string | null;
+    externalVaultReadOnly?: boolean;
+    autoMemoryEnabled?: boolean;
+  }) {
+    setSavingSettings(true);
+    setErr(null);
+    try {
+      await api.updateUserMemorySettings(patch);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
+  async function removeFile(path: string) {
+    if (!confirm(`Remove ${path} from your vault?`)) return;
+    try {
+      await api.deleteUserMemoryFile(path);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  async function wipeAll() {
+    if (
+      !confirm(
+        "Wipe the entire imported vault? This can't be undone (the linked external path is untouched).",
+      )
+    )
+      return;
+    try {
+      await api.wipeUserMemory();
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-4">
+      <h2 className="font-display text-[20px] font-light text-navy">
+        Global memory vault
+      </h2>
+      <p className="text-[13px] text-gray-500">
+        Seed your global memory with an existing Obsidian vault, or point at
+        a live filesystem path. Files load into every chat alongside the
+        auto-compiled wiki. Switch off "Auto-compile memory" if you want
+        your vault to be the single source.
+      </p>
+
+      <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
+        <header className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-[14px] font-medium text-ink">Vault corpus</h3>
+            <p className="text-[12px] text-gray-500">
+              Imported files + linked external path are merged into the
+              system prompt of every conversation.
+            </p>
+          </div>
+          {stats && (
+            <span className="font-mono text-[11px] text-gray-500">
+              {stats.fileCount} imported file{stats.fileCount === 1 ? "" : "s"}{" "}
+              · {(stats.bytesUsed / 1024).toFixed(1)} /{" "}
+              {(stats.bytesQuota / 1024 / 1024).toFixed(0)} MB
+            </span>
+          )}
+        </header>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <label className="flex flex-col gap-1.5 rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 py-3 hover:bg-gray-100">
+            <span className="text-[12px] font-medium text-ink">
+              Import ZIP (copy into DB)
+            </span>
+            <span className="text-[11px] text-gray-500">
+              .md / .txt / .json / .yaml inside the zip. Hierarchy preserved.
+              Files persist across container rebuilds.
+            </span>
+            <input
+              type="file"
+              accept=".zip,application/zip"
+              disabled={busy}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void importZip(f);
+                e.target.value = "";
+              }}
+              className="text-[11px] file:mr-2 file:rounded file:border-0 file:bg-navy file:px-2 file:py-1 file:text-white"
+            />
+          </label>
+          <div className="flex flex-col gap-1.5 rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 py-3">
+            <span className="text-[12px] font-medium text-ink">
+              Linked external path (read live)
+            </span>
+            <span className="text-[11px] text-gray-500">
+              Absolute filesystem path on the gateway host. Read every turn —
+              no copy. Useful for keeping an Obsidian vault locally and
+              seeing edits surface immediately.
+            </span>
+            <input
+              type="text"
+              value={pathDraft}
+              onChange={(e) => setPathDraft(e.target.value)}
+              onBlur={() => {
+                if ((settings?.externalVaultPath ?? "") !== pathDraft) {
+                  void commitSettings({
+                    externalVaultPath: pathDraft.trim() || null,
+                  });
+                }
+              }}
+              placeholder="/path/to/your/vault"
+              className="rounded border border-gray-200 bg-white px-2 py-1 font-mono text-[11px]"
+            />
+            <label className="flex items-center gap-2 pt-1 text-[11px] text-gray-600">
+              <input
+                type="checkbox"
+                checked={settings?.externalVaultReadOnly ?? true}
+                disabled={!pathDraft.trim()}
+                onChange={(e) =>
+                  void commitSettings({ externalVaultReadOnly: e.target.checked })
+                }
+              />
+              <span>Read only</span>
+            </label>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2 text-[12px]">
+          <label className="flex items-center gap-2 text-ink">
+            <input
+              type="checkbox"
+              checked={settings?.autoMemoryEnabled ?? true}
+              onChange={(e) =>
+                void commitSettings({ autoMemoryEnabled: e.target.checked })
+              }
+            />
+            <span className="font-medium">Auto-compile memory</span>
+            <span className="text-gray-500">
+              — when off, only your imported vault is injected ; the Karpathy
+              auto-wiki is bypassed.
+            </span>
+          </label>
+          {savingSettings && (
+            <span className="font-mono text-[10px] text-gray-400">saving…</span>
+          )}
+        </div>
+
+        {lastImport && (
+          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
+            Imported {lastImport.imported} file
+            {lastImport.imported === 1 ? "" : "s"}
+            {lastImport.skipped.length > 0 && (
+              <>
+                {" — "}
+                {lastImport.skipped.length} skipped (
+                {Array.from(
+                  new Set(lastImport.skipped.map((s) => s.reason)),
+                ).join(", ")}
+                )
+              </>
+            )}
+            .
+          </div>
+        )}
+
+        {err && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
+            {err}
+          </div>
+        )}
+
+        {files && files.length > 0 ? (
+          <div className="flex flex-col gap-1.5 rounded-md border border-gray-200 bg-white">
+            <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2 text-[11px] text-gray-500">
+              <span>Imported files</span>
+              <button
+                type="button"
+                onClick={wipeAll}
+                className="rounded border border-red-200 bg-white px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-50"
+              >
+                Wipe all
+              </button>
+            </div>
+            <ul className="flex max-h-[280px] flex-col overflow-y-auto">
+              {files.map((f) => (
+                <li
+                  key={f.path}
+                  className="flex items-center justify-between border-b border-gray-50 px-3 py-1.5 text-[11px] last:border-0"
+                >
+                  <span className="font-mono truncate text-gray-700">
+                    {f.path}
+                  </span>
+                  <span className="flex items-center gap-2 text-gray-400">
+                    <span>{(f.sizeBytes / 1024).toFixed(1)} KB</span>
+                    <button
+                      type="button"
+                      onClick={() => void removeFile(f.path)}
+                      className="text-red-500 hover:text-red-700"
+                      title={`Remove ${f.path}`}
+                    >
+                      ⌫
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          files !== null && (
+            <div className="rounded-md bg-gray-50 px-3 py-2 text-[11px] text-gray-400">
+              No imported files yet — drop a ZIP above to get started.
+            </div>
+          )
+        )}
+      </div>
+    </section>
   );
 }
 

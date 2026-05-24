@@ -304,6 +304,17 @@ export type ApiProjectMemoryStats = {
   bytesQuota: number;
 };
 
+/** Global user-memory vault types — same shapes as the project equivalents
+ *  (above) but scoped to the authenticated user. Backed by user_memory_files
+ *  + users.external_vault_path. Lives under /api/profile/vault. */
+export type ApiUserMemoryFile = ApiProjectMemoryFile;
+export type ApiUserMemoryStats = ApiProjectMemoryStats;
+export type ApiUserMemorySettings = {
+  externalVaultPath: string | null;
+  externalVaultReadOnly: boolean;
+  autoMemoryEnabled: boolean;
+};
+
 export type ApiAddon = {
   id: string;
   userId: string;
@@ -993,6 +1004,59 @@ export const api = {
     ),
   wipeProjectMemory: (id: string) =>
     request<void>(`/api/projects/${id}/memory`, { method: "DELETE" }),
+
+  // User memory vault (global, per-account) ─────────────────────────────
+  listUserMemory: () =>
+    request<{
+      files: ApiUserMemoryFile[];
+      stats: ApiUserMemoryStats;
+      settings: ApiUserMemorySettings;
+    }>(`/api/profile/vault`),
+  importUserMemoryFromZip: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`/api/profile/vault/import`, {
+      method: "POST",
+      body: form,
+      credentials: "same-origin",
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new ApiError(res.status, `${res.status} ${detail}`);
+    }
+    return res.json() as Promise<{
+      imported: Array<{ path: string; bytes: number }>;
+      skipped: Array<{ path: string; reason: string }>;
+      bytesUsed: number;
+      bytesQuota: number;
+    }>;
+  },
+  importUserMemoryFromPath: (path: string) =>
+    request<{
+      imported: Array<{ path: string; bytes: number }>;
+      skipped: Array<{ path: string; reason: string }>;
+      bytesUsed: number;
+      bytesQuota: number;
+    }>(`/api/profile/vault/external`, {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  updateUserMemorySettings: (body: {
+    externalVaultPath?: string | null;
+    externalVaultReadOnly?: boolean;
+    autoMemoryEnabled?: boolean;
+  }) =>
+    request<{ ok: boolean; changed: boolean }>(`/api/profile/vault/settings`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteUserMemoryFile: (path: string) =>
+    request<void>(
+      `/api/profile/vault/file?path=${encodeURIComponent(path)}`,
+      { method: "DELETE" },
+    ),
+  wipeUserMemory: () =>
+    request<void>(`/api/profile/vault`, { method: "DELETE" }),
 
   // Add-ons
   listAddons: () =>

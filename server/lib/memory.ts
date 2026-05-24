@@ -1,15 +1,24 @@
 /**
- * Client for the companion-memory Python service (FastAPI).
+ * Memory context client. Two operations matter to the chat path:
  *
- * Two operations matter to the backend:
- *   - getMemoryContext(userId, projectId?)  → call before each chat to inject
- *     "what I remember about you" into the system prompt.
+ *   - getMemoryContext(userId, projectId?)  → call before each chat to
+ *     inject "what I remember about you" into the system prompt. Composes
+ *     two sources: the user-curated vault (DB import + linked external
+ *     path, see server/lib/user-memory.ts) and the Karpathy auto-compiled
+ *     wiki (FastAPI sidecar at MEMORY_SERVICE_URL).
  *   - triggerCompile(userId, conversationId) → fire-and-forget after each
- *     assistant message completes, so the wiki stays fresh.
+ *     assistant message completes, so the auto-wiki stays fresh.
  *
- * Both are best-effort. If the memory service is down, chat still works —
- * we log and continue.
+ * Both are best-effort. If either source is down/empty, chat still works —
+ * we log and continue. When the user has flipped `auto_memory_enabled`
+ * off, the Karpathy half is skipped entirely (vault becomes single source
+ * of truth).
  */
+
+import { eq } from "drizzle-orm";
+import { db } from "../db/index";
+import { users } from "../db/schema";
+import { getUserMemoryContext } from "./user-memory";
 
 // `??` only catches null/undefined — `MEMORY_SERVICE_URL=""` (the compose
 // default for fresh installs without the memory service) would fall through
@@ -47,8 +56,39 @@ export function capMarkdown(md: string, maxBytes: number = MEMORY_MAX_BYTES): st
   );
 }
 
-/** Returns the Markdown block to prepend to the system prompt, or "" on failure. */
+/** Returns the Markdown block to prepend to the system prompt, or "" on failure.
+ *
+ *  Composition (when both sources are populated) :
+ *    1. User vault (DB-imported + external_vault_path live read)
+ *    2. Karpathy auto-wiki (the FastAPI memory service)
+ *
+ *  Both blocks are independently capped at MEMORY_MAX_BYTES so a huge vault
+ *  can't blow up the prompt. The user can disable the Karpathy half via
+ *  `users.auto_memory_enabled = false` — useful when they want to pilot the
+ *  memory manually (vault only, no auto-compile drift).
+ */
 export async function getMemoryContext(
+  userId: string,
+  projectId: string | null,
+): Promise<string> {
+  // Load both sources in parallel — vault is local DB + disk, Karpathy is
+  // an HTTP round-trip to the FastAPI sidecar. Slowest wins, but we don't
+  // sequentialise them.
+  const [vault, autoEnabled] = await Promise.all([
+    getUserVaultBlock(userId),
+    isAutoMemoryEnabled(userId),
+  ]);
+  const karpathy = autoEnabled ? await fetchKarpathyMemory(userId, projectId) : "";
+
+  if (!vault && !karpathy) return "";
+  if (!vault) return karpathy;
+  if (!karpathy) return vault;
+  return `${vault}\n\n---\n\n${karpathy}`;
+}
+
+/** Fetch the Karpathy auto-compiled wiki block. Returns "" on failure or
+ *  when the memory service URL isn't configured. */
+async function fetchKarpathyMemory(
   userId: string,
   projectId: string | null,
 ): Promise<string> {
@@ -66,8 +106,36 @@ export async function getMemoryContext(
     const stripped = stripWikilinks(data.markdown ?? "");
     return capMarkdown(stripped, MEMORY_MAX_BYTES);
   } catch (err) {
-    console.warn("[memory] getMemoryContext failed:", (err as Error).message);
+    console.warn("[memory] fetchKarpathyMemory failed:", (err as Error).message);
     return "";
+  }
+}
+
+/** Read user-curated vault content (DB import + linked external path),
+ *  cap to MEMORY_MAX_BYTES to match the Karpathy treatment. */
+async function getUserVaultBlock(userId: string): Promise<string> {
+  try {
+    const raw = await getUserMemoryContext(userId);
+    if (!raw) return "";
+    return capMarkdown(raw, MEMORY_MAX_BYTES);
+  } catch (err) {
+    console.warn("[memory] getUserVaultBlock failed:", (err as Error).message);
+    return "";
+  }
+}
+
+async function isAutoMemoryEnabled(userId: string): Promise<boolean> {
+  try {
+    const [u] = await db
+      .select({ autoMemoryEnabled: users.autoMemoryEnabled })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    // Default to true if the row doesn't surface a value (legacy users
+    // who pre-date the column see the prior behaviour).
+    return u?.autoMemoryEnabled ?? true;
+  } catch {
+    return true;
   }
 }
 

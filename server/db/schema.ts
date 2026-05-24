@@ -78,10 +78,63 @@ export const users = pgTable("users", {
   // they appear grayed out so the user can un-hide them in context.
   // Default null = "show everything" (no hide list yet).
   hiddenModels: jsonb("hidden_models").$type<string[]>(),
+  // Global memory vault — user-owned ingestion path mirroring the
+  // project vault pattern. Coexists with the auto-compiled Karpathy
+  // wiki by default (both get concatenated into the system prompt).
+  // The user can seed the global wiki by uploading a ZIP of their
+  // existing Obsidian vault, or point an absolute filesystem path
+  // here for live reads each turn. The auto-compile loop keeps
+  // running on top unless `autoMemoryEnabled` is flipped off.
+  externalVaultPath: text("external_vault_path"),
+  externalVaultReadOnly: boolean("external_vault_read_only")
+    .notNull()
+    .default(true),
+  // Default true: the Karpathy memory service compiles a wiki from
+  // conversation history and gets merged with the imported vault.
+  // Flip false when the user wants 100% manual control — only their
+  // imported ZIP + external vault are injected, the service is bypassed.
+  autoMemoryEnabled: boolean("auto_memory_enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .default(sql`now()`),
 });
+
+/**
+ * Per-user global memory corpus. Files imported via ZIP land here
+ * and get injected (raw, concatenated, size-capped) into the system
+ * prompt alongside the Karpathy auto-wiki and the optional external
+ * vault path. Scoped by userId — distinct from `project_memory_files`
+ * which is per-project.
+ *
+ * Quota : 50 MB per user (vs 10 MB per project), 1 MB per file. The
+ * higher cap matches the role — this is the user's full long-term
+ * memory store, often a real Obsidian vault.
+ */
+export const userMemoryFiles = pgTable(
+  "user_memory_files",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Destination path inside the user's vault (e.g. "concepts/foo.md"). */
+    path: text("path").notNull(),
+    mimeType: text("mime_type").notNull().default("text/markdown"),
+    sizeBytes: integer("size_bytes").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userIdx: index("user_memory_files_user_idx").on(t.userId),
+  }),
+);
+
+export type UserMemoryFile = typeof userMemoryFiles.$inferSelect;
 
 export const projects = pgTable(
   "projects",
