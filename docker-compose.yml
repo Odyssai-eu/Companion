@@ -77,6 +77,17 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      default:
+        aliases:
+          # Existing-install back-compat: the sibling `thecompai-memory`
+          # service (Karpathy memory compiler, separate repo) still
+          # connects to `thecompai-db` by hostname. The container was
+          # renamed `thecompai-db` → `companion-db` during the open-source
+          # rebrand, breaking memory's DNS lookup. Keep the legacy alias
+          # until thecompai-memory is updated or retired so existing
+          # deploys don't lose their wiki.
+          - thecompai-db
 
 volumes:
   db_data:
