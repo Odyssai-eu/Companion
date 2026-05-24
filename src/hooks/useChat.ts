@@ -321,6 +321,23 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       return;
     }
     if (loadedIdRef.current === conversationId) return;
+    // Switching from a previously-loaded conv → clear stale messages /
+    // agent state / project context immediately. Without this, the brief
+    // window between the conv-id change and the getConversation fetch
+    // resolving leaves the OLD conv's messages on screen — and the
+    // defensive `prev.length > dbMessages.length` check in CASE 0 below
+    // then incorrectly keeps them when the new conv has fewer messages.
+    // Only fires on conv-to-conv switch (loadedIdRef.current is the
+    // previous loaded id); fresh-conv first-load skips this because
+    // loadedIdRef.current is still null.
+    if (loadedIdRef.current && loadedIdRef.current !== conversationId) {
+      setMessages([]);
+      setConversation(null);
+      setProject(null);
+      setAgentMessages([]);
+      setAgentError(null);
+      setError(null);
+    }
     // Load the Hermes agent transcript ONCE per conv — gated behind the
     // loaded-id ref above so it doesn't re-fire on every render. Without
     // this guard, the load races the live stream (when /hermes was just
