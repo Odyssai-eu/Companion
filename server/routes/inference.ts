@@ -69,7 +69,12 @@ const namedModelsSchema = z
     engineer: z.string().max(200).optional(),
     expert: z.string().max(200).optional(),
   })
-  .optional();
+  // .nullish() accepts both `undefined` (field omitted) and `null` (field
+  // set to null) — the React client sends a full PATCH body where unset
+  // fields come over as null, so .optional() rejected toggles like
+  // "Show metrics" with 400 'namedModels: Expected object, received null'.
+  // The handler at line ~102 already coerces `null` to a SQL NULL.
+  .nullish();
 
 const patchSchema = z.object({
   defaultModel: z.string().max(200).nullish(),

@@ -20,6 +20,36 @@ import { StreamManager, type StreamEntry } from "~/lib/stream-manager";
  *  per conversation → safe to share a constant. */
 const LIVE_ID = "__live__";
 
+/** UUID v4 fallback for environments where crypto.randomUUID() throws
+ *  (Safari refuses it on insecure http:// origins, which is the default
+ *  for a LAN install of Companion). Uses crypto.getRandomValues which
+ *  is available everywhere; degrades to Math.random as a last resort. */
+function _fallbackUuid(): string {
+  try {
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+      const b = new Uint8Array(16);
+      crypto.getRandomValues(b);
+      b[6] = (b[6] & 0x0f) | 0x40;
+      b[8] = (b[8] & 0x3f) | 0x80;
+      const h = (n: number) => n.toString(16).padStart(2, "0");
+      return (
+        Array.from(b.slice(0, 4)).map(h).join("") + "-" +
+        Array.from(b.slice(4, 6)).map(h).join("") + "-" +
+        Array.from(b.slice(6, 8)).map(h).join("") + "-" +
+        Array.from(b.slice(8, 10)).map(h).join("") + "-" +
+        Array.from(b.slice(10)).map(h).join("")
+      );
+    }
+  } catch {
+    /* fall through to Math.random */
+  }
+  // Last-resort, low-quality, but never throws.
+  const rand = () => Math.floor(Math.random() * 256).toString(16).padStart(2, "0");
+  return Array.from({ length: 16 }, rand).join("").replace(
+    /(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5",
+  );
+}
+
 export type InferenceParams = {
   temperature: number;
   maxTokens: number;
@@ -1013,7 +1043,19 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
       const nowIso = new Date().toISOString();
       const userMsg: UIMessage = {
-        id: crypto.randomUUID(),
+        // crypto.randomUUID() throws in Safari on non-secure contexts
+        // (http:// origins) — observed 2026-05-25 on Sophie's
+        // http://192.168.86.39:3100 deploy: every Enter in the chat
+        // box created the conversation server-side but the user
+        // message and downstream stream never fired because this line
+        // threw silently, breaking sendMessage. Fall back to
+        // getRandomValues which is available everywhere.
+        id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? (() => {
+              try { return crypto.randomUUID(); }
+              catch { return _fallbackUuid(); }
+            })()
+          : _fallbackUuid(),
         role: "user",
         content: built.persistText,
         createdAt: nowIso,

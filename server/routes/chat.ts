@@ -563,10 +563,16 @@ chatRoute.post("/completions", async (c) => {
     : modelSupportsTools(body.model);
   // Tools are gated on per-conv `agentMode`. Default is OFF — a normal
   // chat does NOT inject any FS/RAG/Web/MCP tool defs (~250 tok prompt
-  // instead of 1000+). But "always-on" tools (skill_*) are always
-  // injected so the user can ask the assistant to curate skills from
-  // any chat.
-  const alwaysOn = supportsTools ? alwaysOnTools() : [];
+  // instead of 1000+). The "always-on" tools (skill_*) used to be
+  // injected on every chat so the user could ask the assistant to
+  // curate skills from any conversation, but in practice models like
+  // MiniMax / Qwen3.5 see the tools on a bare "hello" and loop on
+  // skill_list → skill_get → … until Companion bails out (chat.ts:910)
+  // with the "kept asking to call tools" fallback. Gate them on
+  // `agentMode` too unless the operator explicitly opts in via env.
+  const alwaysOnEnabled = supportsTools &&
+    (convAgentMode || process.env.ALWAYS_ON_TOOLS === "1");
+  const alwaysOn = alwaysOnEnabled ? alwaysOnTools() : [];
   const agentTools = supportsTools && convAgentMode
     ? await toolsForUser(userId)
     : [];

@@ -33,6 +33,14 @@ services:
       # separated CIDRs. Set to your own LAN (commonly 192.168.1.0/24,
       # 192.168.0.0/24, or 10.0.0.0/24).
       ODYSSAI_SCAN_SUBNETS: ${ODYSSAI_SCAN_SUBNETS:-192.168.1.0/24}
+      # Session-cookie `Secure` flag. Browsers refuse to send Secure
+      # cookies back over plain HTTP, so the default LAN install
+      # (http://<host>:3100) needs COOKIE_SECURE=0 — otherwise every
+      # API call 401s after a successful login. Set to 1 explicitly
+      # when Companion sits behind a TLS-terminating reverse proxy.
+      # Unset: defaults to ON in production (current behaviour), OFF
+      # otherwise.
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
     ports:
       # By default we bind to 127.0.0.1 only — Companion is reachable
       # from the same host (browser, IDE, MCP clients), but NOT from

@@ -25,10 +25,31 @@ const loginSchema = z.object({
 
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
+/**
+ * Whether to set the `Secure` flag on the session cookie.
+ *
+ * Default : on in production. Override with `COOKIE_SECURE=0` when
+ * Companion runs on plain HTTP behind a LAN (the common operator
+ * setup — http://<host>:3100 with no TLS terminator). Without this
+ * escape hatch, the Secure flag silently dropped the cookie on every
+ * subsequent request and every API call 401'd despite a successful
+ * login. Observed on .39 2026-05-25.
+ *
+ * Setting COOKIE_SECURE=1 forces it on (e.g. when an HTTPS-terminating
+ * reverse proxy is in front and forwards the X-Forwarded-Proto, but
+ * the app process itself sees HTTP).
+ */
+const COOKIE_SECURE = (() => {
+  const explicit = process.env.COOKIE_SECURE;
+  if (explicit === "0") return false;
+  if (explicit === "1") return true;
+  return process.env.NODE_ENV === "production";
+})();
+
 function setSessionCookie(c: Parameters<typeof setCookie>[0], token: string) {
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: COOKIE_SECURE,
     sameSite: "Lax",
     path: "/",
     maxAge: COOKIE_MAX_AGE,
