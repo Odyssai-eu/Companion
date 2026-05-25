@@ -139,23 +139,43 @@ Expected response from `/api/health`:
 
 Open `http://localhost:${PORT:-3000}/` in the user's browser.
 
-**First-boot account — create your operator account yourself:**
+**First-boot account — log in with the seeded admin:**
 
-On an empty database, Companion's signup endpoint is open exactly once.
-The first visitor to `/signup` creates the operator account and is
-automatically marked `role=admin`. No password to fish out of logs.
+On an empty database, Companion seeds a default admin user on first
+container boot :
 
-Tell the user:
+| | |
+|---|---|
+| Email | `admin@odyssai.local` |
+| Password | `itak1234` |
+| Role | `admin` |
 
-> Open http://localhost:3000/, click **Sign up**, fill in email +
-> password + name (8-char minimum on the password). You'll be logged in
-> as the workspace admin immediately.
+Tell the user :
 
-After this first signup, `/api/auth/signup` returns `403
-signup_disabled` unless you also set `ALLOW_SIGNUP=1`. To add more
-accounts on a closed install, either flip the env var temporarily and
-restart, or insert directly via `psql` against the `companion`
-database with a bcrypt-hashed `password_hash`.
+> Open http://localhost:3000/, sign in with `admin@odyssai.local` /
+> `itak1234`. You're in. Recommended (not required) : open
+> **Settings → Profile** and change the password to something private.
+> The default is documented + version-controlled so it's not a
+> secret — change it if your install is reachable outside trusted
+> network.
+
+The seed only runs ONCE — once any user row exists, `seedIfEmpty()`
+becomes a no-op on subsequent boots. Existing deploys are never
+touched.
+
+Override the seed defaults via env vars before first boot :
+
+```bash
+SEED_ADMIN_EMAIL=you@example.com \
+SEED_ADMIN_PASSWORD=something-better \
+SEED_ADMIN_NAME=Sophie \
+  docker compose up -d
+```
+
+To add more accounts on a closed install (signup `403
+signup_disabled` by default) : either flip `ALLOW_SIGNUP=1`
+temporarily and restart, OR have the admin user invite via the
+admin UI once it lands.
 
 ## 5. Pair an inference engine
 

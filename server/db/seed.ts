@@ -1,29 +1,60 @@
 import { and, asc, eq, sql } from "drizzle-orm";
+import { hashPassword } from "../auth/password";
 import { db } from "./index";
 import { users } from "./schema";
 
 /**
+ * Default credentials for the seeded admin user on a fresh install.
+ *
+ * On an empty DB, the first boot creates this user with `role=admin`.
+ * The operator can log in immediately with `admin@odyssai.local /
+ * itak1234`, no friction (vs the previous "first visitor to /signup
+ * becomes admin" flow which Sophie hit on .39 and missed because the
+ * UI defaulted to Sign in, not Sign up).
+ *
+ * Override via env vars `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` —
+ * useful for operators who want to set their own default before the
+ * first boot. AGENTS.md recommends changing the password in Settings
+ * → Profile after first login (not required).
+ *
+ * The seed runs ONCE on an empty DB. After the seed lands, future
+ * boots skip the seed regardless of these constants — existing
+ * deploys are never affected.
+ */
+const SEED_ADMIN_EMAIL = (process.env.SEED_ADMIN_EMAIL || "admin@odyssai.local").toLowerCase();
+const SEED_ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || "itak1234";
+const SEED_ADMIN_NAME = process.env.SEED_ADMIN_NAME || "Admin";
+
+/**
  * Seed first-boot data on an empty DB.
  *
- * We DO NOT auto-create a user any more — that path required fishing a
- * random password out of `docker logs`, which is friction nobody asked
- * for. Instead, the first visitor to /api/auth/signup (when the users
- * table is empty) is allowed through regardless of ALLOW_SIGNUP and
- * lands as `role=admin`. See server/routes/auth.ts.
- *
- * This hook is kept as a no-op placeholder so the existing call from
- * server/index.ts still resolves, and so future first-boot tasks
- * (default skills catalog, sample MCP servers, etc.) have a home.
+ * On an empty users table : create the default admin so the operator
+ * can log in immediately. After this lands once, the function becomes
+ * a no-op on subsequent boots (idempotent guard on user count).
  */
 export async function seedIfEmpty() {
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(users);
 
-  if (count === 0) {
+  if (count > 0) return;
+
+  try {
+    const passwordHash = await hashPassword(SEED_ADMIN_PASSWORD);
+    await db.insert(users).values({
+      email: SEED_ADMIN_EMAIL,
+      name: SEED_ADMIN_NAME,
+      passwordHash,
+      role: "admin" as const,
+    });
     console.log(
-      "→ empty DB — first visitor to http://<host>:3000/ creates the " +
-        "operator account (no seed user, no random password to copy from logs).",
+      `→ seeded default admin user '${SEED_ADMIN_EMAIL}' (password '${SEED_ADMIN_PASSWORD}'). ` +
+        `Change it in Settings → Profile if you want (recommended but not required).`,
+    );
+  } catch (err) {
+    console.warn(
+      `→ seed admin failed: ${(err as Error).message}. ` +
+        `You can still sign up via the UI (ALLOW_SIGNUP=1 OR empty DB allows bootstrap).`,
     );
   }
 }
