@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
+import { copyToClipboard } from "~/lib/clipboard";
 import Sidebar from "~/components/chat/Sidebar";
 import { ProjectIcon } from "~/components/ProjectIcon";
 import { ProjectStatusIcons } from "~/components/ProjectStatusIcons";
@@ -670,13 +671,10 @@ function ProjectMemoryPanel({
   const effectiveReadOnly = externalVaultReadOnly;
   const [copiedShare, setCopiedShare] = useState(false);
   async function copyShare() {
-    try {
-      await navigator.clipboard?.writeText(sharePath);
-      setCopiedShare(true);
-      setTimeout(() => setCopiedShare(false), 1500);
-    } catch {
-      /* ignore */
-    }
+    const ok = await copyToClipboard(sharePath);
+    if (!ok) return;
+    setCopiedShare(true);
+    setTimeout(() => setCopiedShare(false), 1500);
   }
   const [files, setFiles] = useState<ApiProjectMemoryFile[] | null>(null);
   const [stats, setStats] = useState<ApiProjectMemoryStats | null>(null);

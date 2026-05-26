@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useIsMobile } from "~/hooks/useIsMobile";
 import { api, type ApiAddon, type ApiInferenceSettings } from "~/lib/api";
+import { copyToClipboard } from "~/lib/clipboard";
 
 type Filter = "all" | "plugin" | "mcp" | "core";
 
@@ -397,13 +398,10 @@ function ObsidianPanel() {
   }
 
   async function copyText(value: string, kind: "url" | "token") {
-    try {
-      await navigator.clipboard?.writeText(value);
-      setCopied(kind);
-      setTimeout(() => setCopied(null), 1500);
-    } catch {
-      // ignore
-    }
+    const ok = await copyToClipboard(value);
+    if (!ok) return;
+    setCopied(kind);
+    setTimeout(() => setCopied(null), 1500);
   }
 
   function downloadNow() {

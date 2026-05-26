@@ -7,6 +7,7 @@ import {
   extractCodeBlocks,
   messageMdFilename,
 } from "~/lib/file-export";
+import { copyToClipboard } from "~/lib/clipboard";
 import { renderMarkdown } from "~/lib/markdown";
 import { tts } from "~/lib/tts";
 import SpaceInvaders from "./SpaceInvaders";
@@ -315,10 +316,11 @@ function MarkdownBody({ content }: { content: string }) {
 
       const handler = () => {
         const text = codeEl?.textContent ?? "";
-        navigator.clipboard?.writeText(text).then(() => {
+        void copyToClipboard(text).then((ok) => {
+          if (!ok) return;
           btn.textContent = "Copied!";
           setTimeout(() => { btn.textContent = "Copy"; }, 1800);
-        }).catch(() => undefined);
+        });
       };
 
       btn.addEventListener("click", handler);
@@ -577,7 +579,7 @@ function StatsRow({
 
   function onCopy() {
     const line = items.map(([k, v]) => `${k}: ${v}`).join(" · ");
-    navigator.clipboard?.writeText(line).catch(() => undefined);
+    void copyToClipboard(line);
   }
 
   return (
@@ -665,7 +667,7 @@ function ActionsRow({
 
   function onCopy() {
     if (!message.content) return;
-    navigator.clipboard?.writeText(message.content).catch(() => undefined);
+    void copyToClipboard(message.content);
   }
 
   function onSpeak() {

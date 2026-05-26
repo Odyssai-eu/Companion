@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "~/lib/api";
+import { copyToClipboard } from "~/lib/clipboard";
 
 type Token = Awaited<ReturnType<typeof api.listHermesTokens>>[number];
 
@@ -283,7 +284,8 @@ function RevealModal(props: {
 }`;
 
   function copy(what: "token" | "cowork" | "url", text: string) {
-    navigator.clipboard.writeText(text).then(() => {
+    void copyToClipboard(text).then((ok) => {
+      if (!ok) return;
       setCopied(what);
       setTimeout(() => setCopied(null), 1500);
     });
