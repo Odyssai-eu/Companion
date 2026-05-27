@@ -326,6 +326,14 @@ async function importEntries(
       });
       continue;
     }
+    // Postgres TEXT columns reject NULL bytes (0x00). Real Markdown never
+    // contains them, so they only appear when the source was binary, was
+    // decoded with the wrong charset (UTF-16 read as UTF-8 produces lots
+    // of nulls), or got corrupted. Strip rather than skip so one bad byte
+    // doesn't lose a whole file.
+    if (content.indexOf("\u0000") >= 0) {
+      content = content.replace(/\u0000+/g, "");
+    }
     const sizeBytes = new TextEncoder().encode(content).length;
     if (sizeBytes > MAX_FILE_BYTES) {
       skipped.push({ path: safe, reason: "file_too_large" });
@@ -337,19 +345,30 @@ async function importEntries(
     }
     const mimeType =
       ext === ".md" || ext === ".markdown" ? "text/markdown" : "text/plain";
-    await db
-      .insert(userMemoryFiles)
-      .values({
-        userId,
+    try {
+      await db
+        .insert(userMemoryFiles)
+        .values({
+          userId,
+          path: safe,
+          mimeType,
+          sizeBytes,
+          content,
+        })
+        .onConflictDoUpdate({
+          target: [userMemoryFiles.userId, userMemoryFiles.path],
+          set: { content, sizeBytes, mimeType, updatedAt: new Date() },
+        });
+    } catch (err) {
+      // Don't let one bad row abort the whole import. Common causes:
+      // residual encoding artefacts, surrogate halves in JSON strings,
+      // anything else the driver chokes on. Record and continue.
+      skipped.push({
         path: safe,
-        mimeType,
-        sizeBytes,
-        content,
-      })
-      .onConflictDoUpdate({
-        target: [userMemoryFiles.userId, userMemoryFiles.path],
-        set: { content, sizeBytes, mimeType, updatedAt: new Date() },
+        reason: `db_insert_failed: ${(err as Error).message.slice(0, 80)}`,
       });
+      continue;
+    }
     imported.push({ path: safe, bytes: sizeBytes });
     bytesUsed += sizeBytes;
   }
