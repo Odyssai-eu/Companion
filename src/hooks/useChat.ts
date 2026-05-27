@@ -617,13 +617,13 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     { vision: true, tools: false };
 
   /**
-   * Invoke the Hermes agent bridge with a free-form prompt. Streams
-   * SSE chunks into the local agentMessages state. The server persists
-   * the user prompt + agent reply + tool invocations so a page reload
-   * restores the transcript.
+   * Generic agent-bridge invocation. Streams SSE chunks into the local
+   * agentMessages state. Used by both `/hermes` and `/pi` — they speak
+   * the same `sessionUpdate: agent_message_chunk | tool_call` SSE shape
+   * thanks to translation in their respective backend routes.
    */
-  const hermesInvoke = useCallback(
-    async (convId: string, prompt: string) => {
+  const invokeAgent = useCallback(
+    async (endpoint: string, convId: string, prompt: string) => {
       setAgentError(null);
       setAgentStreaming(true);
 
@@ -644,7 +644,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       ]);
 
       try {
-        const res = await fetch("/api/agents/hermes/invoke", {
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ conversationId: convId, prompt }),
@@ -738,6 +738,18 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       }
     },
     [],
+  );
+
+  const hermesInvoke = useCallback(
+    (convId: string, prompt: string) =>
+      invokeAgent("/api/agents/hermes/invoke", convId, prompt),
+    [invokeAgent],
+  );
+
+  const piInvoke = useCallback(
+    (convId: string, prompt: string) =>
+      invokeAgent("/api/agents/pi/invoke", convId, prompt),
+    [invokeAgent],
   );
 
   /**
@@ -874,6 +886,18 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
    * Drop the Hermes session for the current conv. Next /hermes opens a
    * fresh ACP session on the bridge.
    */
+  const piReset = useCallback(async () => {
+    const convId = conversationId ?? conversation?.id;
+    if (!convId) return;
+    try {
+      await api.piReset(convId);
+      setAgentMessages([]);
+      setAgentError(null);
+    } catch (e) {
+      setAgentError((e as Error).message);
+    }
+  }, [conversationId, conversation?.id]);
+
   const hermesReset = useCallback(async () => {
     const convId = conversationId ?? conversation?.id;
     if (!convId) return;
@@ -949,13 +973,15 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           return;
         }
 
-        if (cmd === "hermes") {
+        if (cmd === "hermes" || cmd === "pi") {
+          const kind = cmd as "hermes" | "pi";
           // Need a conv before invoking; create one if this is a fresh chat
           let convId = conversationId ?? conversation?.id ?? null;
           if (!convId) {
             try {
               const created = await api.createConversation({
-                title: (rest || "Hermes session").slice(0, 80),
+                title:
+                  (rest || `${kind === "hermes" ? "Hermes" : "Pi"} session`).slice(0, 80),
                 ...(model ? { model } : {}),
               });
               convId = created.conversation.id;
@@ -966,12 +992,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
               return;
             }
           }
-          // Enter Hermes mode (persistent — stays until /exit)
-          if (currentAgent !== "hermes") {
+          // Enter agent mode (persistent — stays until /exit)
+          if (currentAgent !== kind) {
             try {
-              await api.setConversationActiveAgent(convId, "hermes");
+              await api.setConversationActiveAgent(convId, kind);
               setConversation((prev) =>
-                prev ? { ...prev, activeAgent: "hermes" } : prev,
+                prev ? { ...prev, activeAgent: kind } : prev,
               );
             } catch (e) {
               setError((e as Error).message);
@@ -979,8 +1005,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
             }
           }
           // If the user typed a prompt on the same line, fire it now.
-          // Bare `/hermes` just enters the mode without sending.
-          if (rest) await hermesInvoke(convId, rest);
+          // Bare `/hermes` or `/pi` just enters the mode.
+          if (rest) {
+            await (kind === "hermes"
+              ? hermesInvoke(convId, rest)
+              : piInvoke(convId, rest));
+          }
           return;
         }
         // Unknown slash — fall through to normal chat.
@@ -989,12 +1019,14 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       // Persistent agent mode: every plain message goes to the agent
       // until `/exit`. The composer chip + the agent box are the visual
       // reminders that we're not in normal chat.
-      if (currentAgent === "hermes") {
+      if (currentAgent === "hermes" || currentAgent === "pi") {
         const convId = conversationId ?? conversation?.id;
         if (!convId) {
           // Shouldn't happen — agent mode is per-conv. Fall through.
         } else {
-          await hermesInvoke(convId, trimmed);
+          await (currentAgent === "hermes"
+            ? hermesInvoke(convId, trimmed)
+            : piInvoke(convId, trimmed));
           return;
         }
       }
@@ -1293,6 +1325,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     agentError,
     hermesInvoke,
     hermesReset,
+    piInvoke,
+    piReset,
     /** Persistent agent mode for this conv ('hermes' | null). When set,
      *  every plain message in the composer routes to that agent's
      *  bridge instead of the LLM chat path. `/exit` clears it. */

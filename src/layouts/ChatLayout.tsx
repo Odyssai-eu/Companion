@@ -242,7 +242,8 @@ export default function ChatLayout() {
           messages={chat.agentMessages}
           streaming={chat.agentStreaming}
           error={chat.agentError}
-          onReset={chat.hermesReset}
+          onReset={chat.activeAgent === "pi" ? chat.piReset : chat.hermesReset}
+          agentLabel={chat.activeAgent === "pi" ? "Pi" : "Hermes"}
         />
         {/* Persistent agent-mode chip. Reminds the user that every
          *  message in the composer goes to the agent (not the LLM),

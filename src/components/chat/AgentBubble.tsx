@@ -25,11 +25,19 @@ type Props = {
   streaming: boolean;
   /** Optional error to surface above the transcript */
   error?: string | null;
-  /** Drop the bridge session — next /hermes opens a fresh one */
+  /** Drop the bridge session — next /hermes (or /pi) opens a fresh one */
   onReset?: () => void;
+  /** Optional agent label — defaults to "Hermes" for back-compat */
+  agentLabel?: string;
 };
 
-export function AgentBubble({ messages, streaming, error, onReset }: Props) {
+export function AgentBubble({
+  messages,
+  streaming,
+  error,
+  onReset,
+  agentLabel = "Hermes",
+}: Props) {
   const bodyRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
@@ -47,7 +55,7 @@ export function AgentBubble({ messages, streaming, error, onReset }: Props) {
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1.5">
             <span className={`h-2 w-2 rounded-full ${streaming ? "animate-pulse bg-emerald-400" : "bg-gray-600"}`} />
-            <span className="text-[11px] font-semibold tracking-wide text-gray-100">Hermes</span>
+            <span className="text-[11px] font-semibold tracking-wide text-gray-100">{agentLabel}</span>
           </span>
           <span className="text-[10px] text-gray-500">
             {streaming ? "thinking…" : "ready"}

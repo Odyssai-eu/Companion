@@ -1217,6 +1217,50 @@ export const api = {
       method: "POST",
     }),
 
+  // Pi Agent — see addon-pi.ts + agent-pi.ts on the server. The bridge
+  // wraps the `pi` CLI on a backend host; transcript lives in the Pi
+  // session jsonl on disk there, not in Companion's DB.
+  piAddonInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      configured: boolean;
+      bridgeUrl: string;
+      cwd: string;
+      hasToken: boolean;
+    }>("/api/addons/pi/info"),
+  piAddonSetConfig: (body: {
+    enabled?: boolean;
+    bridgeUrl?: string;
+    bridgeToken?: string | null;
+    cwd?: string | null;
+  }) =>
+    request<{
+      ok: true;
+      enabled: boolean;
+      configured: boolean;
+      bridgeUrl: string;
+      cwd: string;
+      hasToken: boolean;
+    }>("/api/addons/pi/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  piAddonProbe: () =>
+    request<{ ok: boolean; health?: unknown; error?: string; status?: number }>(
+      "/api/addons/pi/probe",
+      { method: "POST" },
+    ),
+  piTranscript: (conversationId: string) =>
+    request<{
+      sessionId: string | null;
+      entries: Array<Record<string, unknown>>;
+    }>(`/api/agents/pi/transcript/${conversationId}`),
+  piReset: (conversationId: string) =>
+    request<{ ok: true }>(`/api/agents/pi/reset/${conversationId}`, {
+      method: "POST",
+    }),
+
   // Auto Router add-on (semantic routing via embeddings)
   routerInfo: () =>
     request<{
