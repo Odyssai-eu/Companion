@@ -1,21 +1,38 @@
 /**
  * Hermes agent invocation endpoint. Routes the user's `/hermes <prompt>`
- * input through the bridge configured in the Hermes add-on.
+ * input through the Hermes Agent gateway (v0.14+).
  *
  *   POST /api/agents/hermes/invoke
  *     body: {conversationId, prompt}
- *     responds: SSE stream of `event: chunk | tool | done | error`
+ *     responds: SSE stream — events translated to the legacy
+ *               `sessionUpdate: agent_message_chunk | tool_call` shape
+ *               the chat client already speaks.
  *
  *   GET  /api/agents/hermes/transcript/:conversationId
  *     → past messages for the agent sub-thread in this conv
  *
  *   POST /api/agents/hermes/reset/:conversationId
- *     → drop the bridge session, force a fresh one on next invoke
+ *     → drop the local agent_sessions row, forcing a fresh Hermes
+ *       conversation key on the next invoke
+ *
+ * Transport (since 2026-05-27):
+ *   - Hermes v0.14 gateway is OpenAI-compatible. We POST to
+ *     `${bridgeUrl}/v1/responses` with `conversation: <agent_session.id>`
+ *     so Hermes auto-chains turns server-side. No need for a
+ *     POST /sessions step. Auth: `Authorization: Bearer ${bridgeToken}`
+ *     where bridgeToken == API_SERVER_KEY in ~/.hermes/.env on the
+ *     gateway host.
+ *   - Hermes streams OpenAI Responses API SSE events
+ *     (response.output_text.delta, response.output_item.added/done,
+ *     response.completed/failed). We translate to `agent_message_chunk`
+ *     and `tool_call` so the frontend in `useChat.ts` doesn't change.
  *
  * Persistence:
- *  - agent_sessions row exists per (conv, kind='hermes')
- *  - agent_messages stores the transcript (role: user | agent | tool)
- *  - bridge_session_id stored on the row, reused across invokes
+ *   - agent_sessions row exists per (conv, kind='hermes'). Its row id
+ *     is also the Hermes conversation key — resetting deletes the row
+ *     so a fresh conversation starts on Hermes' side too.
+ *   - agent_messages stores the transcript (role: user | agent | tool).
+ *   - bridge_session_id column is legacy; left nullable, not used.
  */
 
 import { and, asc, eq } from "drizzle-orm";
@@ -30,16 +47,14 @@ type Env = { Variables: { userId: string } };
 const hermesAgentRoute = new Hono<Env>();
 
 const AGENT_KIND = "hermes";
+const HERMES_MODEL = "hermes-agent";
 
 async function ensureSession(
   userId: string,
   conversationId: string,
-): Promise<{ id: string; bridgeSessionId: string | null }> {
+): Promise<{ id: string }> {
   const [existing] = await db
-    .select({
-      id: agentSessions.id,
-      bridgeSessionId: agentSessions.bridgeSessionId,
-    })
+    .select({ id: agentSessions.id })
     .from(agentSessions)
     .where(
       and(
@@ -52,33 +67,8 @@ async function ensureSession(
   const [created] = await db
     .insert(agentSessions)
     .values({ userId, conversationId, agentKind: AGENT_KIND })
-    .returning({
-      id: agentSessions.id,
-      bridgeSessionId: agentSessions.bridgeSessionId,
-    });
+    .returning({ id: agentSessions.id });
   return created;
-}
-
-async function bridgeNewSession(
-  bridgeUrl: string,
-  bridgeToken: string | undefined,
-  cwd: string,
-): Promise<string> {
-  const url = bridgeUrl.replace(/\/+$/, "") + "/sessions";
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(bridgeToken ? { Authorization: `Bearer ${bridgeToken}` } : {}),
-    },
-    body: JSON.stringify({ cwd }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) {
-    throw new Error(`bridge /sessions ${res.status}: ${await res.text()}`);
-  }
-  const data = (await res.json()) as { sessionId: string };
-  return data.sessionId;
 }
 
 // ── Transcript ────────────────────────────────────────────────────────────
@@ -86,7 +76,6 @@ async function bridgeNewSession(
 hermesAgentRoute.get("/transcript/:conversationId", async (c) => {
   const userId = c.get("userId");
   const convId = c.req.param("conversationId");
-  // Authorize: conv belongs to user
   const [conv] = await db
     .select({ userId: conversations.userId })
     .from(conversations)
@@ -127,6 +116,8 @@ hermesAgentRoute.post("/reset/:conversationId", async (c) => {
   if (!conv || conv.userId !== userId) {
     return c.json({ error: "not_found" }, 404);
   }
+  // Deleting the row forces ensureSession() to create a new one with a
+  // fresh UUID, which is also a fresh Hermes conversation key.
   await db
     .delete(agentSessions)
     .where(
@@ -149,7 +140,6 @@ hermesAgentRoute.post("/invoke", zValidator("json", invokeSchema), async (c) => 
   const userId = c.get("userId");
   const { conversationId, prompt } = c.req.valid("json");
 
-  // Authz: conv must belong to user
   const [conv] = await db
     .select({ userId: conversations.userId })
     .from(conversations)
@@ -159,7 +149,6 @@ hermesAgentRoute.post("/invoke", zValidator("json", invokeSchema), async (c) => 
     return c.json({ error: "not_found" }, 404);
   }
 
-  // Load addon config
   const cfg = await loadHermesConfigForUser(userId);
   if (!cfg) {
     return c.json(
@@ -173,47 +162,17 @@ hermesAgentRoute.post("/invoke", zValidator("json", invokeSchema), async (c) => 
     );
   }
 
-  // Lookup or create our session row
   const session = await ensureSession(userId, conversationId);
-  let bridgeSid = session.bridgeSessionId;
+  const baseUrl = cfg.bridgeUrl!.replace(/\/+$/, "");
 
-  // Lazy bridge-session creation on first prompt of a session
-  if (!bridgeSid) {
-    try {
-      bridgeSid = await bridgeNewSession(
-        cfg.bridgeUrl!,
-        cfg.bridgeToken,
-        // For niveau-1 (Hermes on workstation), cwd defaults to home.
-        // Future: per-conv cwd override (e.g., a repo path).
-        "/",
-      );
-      await db
-        .update(agentSessions)
-        .set({ bridgeSessionId: bridgeSid, updatedAt: new Date() })
-        .where(eq(agentSessions.id, session.id));
-    } catch (e) {
-      return c.json(
-        {
-          error: "bridge_unreachable",
-          detail: `Could not start a bridge session: ${(e as Error).message}`,
-        },
-        502,
-      );
-    }
-  }
-
-  // Persist the user message immediately so reloads see it
+  // Persist the user message first so a reload mid-stream still shows it.
   await db.insert(agentMessages).values({
     sessionId: session.id,
     role: "user",
     content: prompt,
   });
 
-  const promptUrl =
-    cfg.bridgeUrl!.replace(/\/+$/, "") + `/sessions/${bridgeSid}/prompt`;
-
-  // Open SSE stream from the bridge
-  const upstream = await fetch(promptUrl, {
+  const upstream = await fetch(baseUrl + "/v1/responses", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -222,13 +181,22 @@ hermesAgentRoute.post("/invoke", zValidator("json", invokeSchema), async (c) => 
         ? { Authorization: `Bearer ${cfg.bridgeToken}` }
         : {}),
     },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({
+      model: HERMES_MODEL,
+      input: prompt,
+      // Use our agent_session.id as Hermes' conversation key. Hermes
+      // auto-chains turns within the same conversation server-side, so
+      // we don't need to track previous_response_id ourselves.
+      conversation: session.id,
+      stream: true,
+    }),
   });
+
   if (!upstream.ok || !upstream.body) {
     const txt = await upstream.text().catch(() => "");
     return c.json(
       {
-        error: "bridge_error",
+        error: "hermes_gateway_error",
         status: upstream.status,
         detail: txt.slice(0, 500),
       },
@@ -236,60 +204,116 @@ hermesAgentRoute.post("/invoke", zValidator("json", invokeSchema), async (c) => 
     );
   }
 
-  // Stream the bridge SSE through to the client AND accumulate the
-  // agent's text+tool messages for persistence.
+  // ── Translate Hermes Responses SSE → frontend's expected shape ──
+  //
+  // Frontend in useChat.ts listens for:
+  //   event: update + data: {sessionUpdate: "agent_message_chunk",
+  //                          content: {text: "..."}}
+  //   event: update + data: {sessionUpdate: "tool_call",
+  //                          toolCallId, title, kind, locations, content}
+  //   event: error  + data: {message}
+  //
+  // Hermes emits OpenAI Responses API events. Map:
+  //   response.output_text.delta  → agent_message_chunk
+  //   response.output_item.added with item.type=function_call → tool_call
+  //   response.failed             → error
+  //   response.completed          → close stream
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
+  const sse = (event: string, data: unknown) =>
+    encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const reader = upstream.body!.getReader();
       let buffer = "";
       let agentText = "";
-      const toolEntries: Array<{ name: string; args: unknown }> = [];
+      const toolEntries: Array<{
+        callId: string;
+        name: string;
+        args: unknown;
+      }> = [];
 
-      function flushParse(chunk: string) {
-        buffer += chunk;
-        // SSE events are separated by blank lines
-        const blocks = buffer.split("\n\n");
-        buffer = blocks.pop() ?? "";
-        for (const block of blocks) {
-          if (!block.trim()) continue;
-          // Forward to client verbatim
-          controller.enqueue(encoder.encode(block + "\n\n"));
-          // Parse for persistence
-          let event = "message";
-          let data: string | null = null;
-          for (const line of block.split("\n")) {
-            if (line.startsWith("event:")) event = line.slice(6).trim();
-            else if (line.startsWith("data:")) {
-              data = (data ?? "") + line.slice(5).trim();
-            }
+      function processSseBlock(block: string) {
+        let event = "message";
+        let data = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (!data) return;
+
+        let parsed: any;
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          return;
+        }
+
+        // Hermes also wraps `data: [DONE]` is not used here for /v1/responses
+        // — completion is signalled by event=response.completed.
+        switch (event) {
+          case "response.output_text.delta": {
+            const delta: string = parsed.delta ?? "";
+            if (!delta) return;
+            agentText += delta;
+            controller.enqueue(
+              sse("update", {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: delta },
+              }),
+            );
+            return;
           }
-          if (!data) continue;
-          try {
-            const parsed = JSON.parse(data);
-            if (event === "update") {
-              const kind = parsed.sessionUpdate;
-              if (kind === "agent_message_chunk") {
-                agentText += parsed.content?.text ?? "";
-              } else if (kind === "tool_call") {
-                // ACP `tool_call` is flat: `title` is the user-facing
-                // label ("write: /tmp/foo.txt"), `kind` is the category
-                // (edit/read/exec), `toolCallId` is the dedup key.
-                // No `name` field at this level — bridge_auto_approved
-                // carries the raw tool name later but we skip that event.
-                toolEntries.push({
-                  name: parsed.title ?? parsed.kind ?? "(unknown)",
-                  args: parsed.locations ?? parsed.content ?? null,
-                });
+          case "response.output_item.added": {
+            const item = parsed.item;
+            if (!item || item.type !== "function_call") return;
+            const callId: string =
+              item.call_id ?? item.id ?? `${Date.now()}-${Math.random()}`;
+            const name: string = item.name ?? "tool";
+            let parsedArgs: unknown = item.arguments;
+            if (typeof item.arguments === "string") {
+              try {
+                parsedArgs = JSON.parse(item.arguments);
+              } catch {
+                /* keep raw string */
               }
-              // bridge_auto_approved is metadata about permission flow,
-              // not a tool action — the tool_call right before already
-              // surfaced the user-visible action. Skip to avoid duplication.
             }
-          } catch {
-            /* ignore non-JSON */
+            const title = `${name}${
+              typeof item.arguments === "string"
+                ? `(${item.arguments.slice(0, 80)}${
+                    item.arguments.length > 80 ? "…" : ""
+                  })`
+                : ""
+            }`;
+            toolEntries.push({ callId, name, args: parsedArgs ?? null });
+            controller.enqueue(
+              sse("update", {
+                sessionUpdate: "tool_call",
+                toolCallId: callId,
+                title,
+                kind: name,
+                content: parsedArgs ?? null,
+                locations: null,
+              }),
+            );
+            return;
           }
+          case "response.failed": {
+            const msg =
+              parsed.response?.error?.message ??
+              parsed.error?.message ??
+              "hermes failed";
+            controller.enqueue(sse("error", { message: msg }));
+            return;
+          }
+          case "response.completed": {
+            // Signal nothing extra — the stream close below is enough.
+            return;
+          }
+          default:
+            // ignore created/in_progress/etc.
+            return;
         }
       }
 
@@ -297,21 +321,21 @@ hermesAgentRoute.post("/invoke", zValidator("json", invokeSchema), async (c) => 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          flushParse(decoder.decode(value, { stream: true }));
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split("\n\n");
+          buffer = blocks.pop() ?? "";
+          for (const block of blocks) {
+            if (block.trim()) processSseBlock(block);
+          }
         }
-        // Flush any tail
-        if (buffer.trim()) {
-          controller.enqueue(encoder.encode(buffer + "\n\n"));
-        }
+        // Drain any trailing block that wasn't terminated by \n\n
+        if (buffer.trim()) processSseBlock(buffer);
       } catch (e) {
         controller.enqueue(
-          encoder.encode(
-            `event: error\ndata: ${JSON.stringify({ message: (e as Error).message })}\n\n`,
-          ),
+          sse("error", { message: (e as Error).message }),
         );
       } finally {
         controller.close();
-        // Persist what we've accumulated
         try {
           if (agentText) {
             await db.insert(agentMessages).values({
@@ -326,7 +350,7 @@ hermesAgentRoute.post("/invoke", zValidator("json", invokeSchema), async (c) => 
               sessionId: session.id,
               role: "tool",
               content: t.name,
-              stats: { args: t.args },
+              stats: { args: t.args, callId: t.callId },
             });
           }
           await db
