@@ -129,6 +129,10 @@ export type UIMessage = {
     chunks?: number;
     durationMs?: number;
     speed?: string;
+    /** Decode-only tok/s — completion / (duration - ttft). Matches the
+     *  rates model providers advertise (they don't count prompt eval).
+     *  Shown alongside `speed` in StatsRow when available. */
+    decodeSpeed?: string;
     cost?: string;
     /** Server-side echo of the model id used for this turn — lets the
      *  StatsRow show "Model: vlm:qwen3.6-35b" even after the page is

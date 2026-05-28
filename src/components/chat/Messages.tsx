@@ -562,6 +562,12 @@ function StatsRow({
   )
     items.push(["Tokens", `${stats.tokens} tok`]);
   if (stats.speed) items.push(["Speed", stats.speed]);
+  // Decode-only tok/s — excludes TTFT from the denominator, matches the
+  // figures model providers advertise (e.g. inferencer's 5 tok/s for
+  // Mistral-Medium-3.5). Shown next to Speed so users can see how much
+  // of the end-to-end rate was eaten by prompt eval.
+  if (stats.decodeSpeed && stats.decodeSpeed !== stats.speed)
+    items.push(["Decode", stats.decodeSpeed]);
   if (stats.chunks !== undefined) items.push(["Chunks", String(stats.chunks)]);
   if (model) items.push(["Model", model]);
   // Auto-router chip: when the picker was set to "auto" and the server

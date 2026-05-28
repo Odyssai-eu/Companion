@@ -1017,6 +1017,19 @@ chatRoute.post("/completions", async (c) => {
                   st.totalMs && st.completionTokens
                     ? `${((st.completionTokens / st.totalMs) * 1000).toFixed(1)} tok/s`
                     : undefined,
+                // Decode-only tok/s — completion / (duration - ttft). Matches
+                // the throughput numbers model providers advertise (e.g.
+                // inferencer announces 5 tok/s for Mistral-Medium-3.5; the
+                // raw end-to-end "speed" pulls that down because it counts
+                // the prompt-eval phase in the denominator). Both rates
+                // shown side-by-side so users can sanity-check vs spec.
+                decodeSpeed:
+                  st.totalMs &&
+                  st.ttftMs !== null &&
+                  st.completionTokens &&
+                  st.totalMs - st.ttftMs > 0
+                    ? `${((st.completionTokens / (st.totalMs - st.ttftMs)) * 1000).toFixed(1)} tok/s`
+                    : undefined,
                 model: modelLabel,
               }
             : { chunks: totalChunkCount, durationMs: st.totalMs, model: modelLabel };
