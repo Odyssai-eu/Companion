@@ -176,6 +176,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   >([]);
   const [agentStreaming, setAgentStreaming] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
+  // Pi Agent — TUI variant. When the user enters `/pi` mode we render
+  // a full-height iframe pointed at this URL (typically the ttyd
+  // process running `tmux attach -t pi` on the Pi host). Fetched once
+  // from the Pi Agent add-on config.
+  const [piBridgeUrl, setPiBridgeUrl] = useState<string>("");
   const [inferenceMode, setInferenceMode] = useState<
     "easy" | "advanced" | "expert"
   >("expert");
@@ -287,6 +292,28 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   // Fetch the LiteLLM model list + the user's default model on mount. If the
   // user hasn't picked a model, default to inferenceSettings.defaultModel,
   // else the first available LiteLLM model.
+  // Fetch the Pi Agent ttyd URL once on mount. Cheap, optional —
+  // if the add-on isn't configured we just leave the URL empty and
+  // the /pi panel won't render (the slash command surfaces an error
+  // instead).
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .piAddonInfo()
+      .then((info) => {
+        if (cancelled) return;
+        if (info.enabled && info.bridgeUrl) {
+          setPiBridgeUrl(info.bridgeUrl);
+        }
+      })
+      .catch(() => {
+        /* not configured — leave piBridgeUrl empty */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     Promise.all([api.listAllModels(), api.inferenceSettings()])
@@ -1004,12 +1031,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
               return;
             }
           }
-          // If the user typed a prompt on the same line, fire it now.
-          // Bare `/hermes` or `/pi` just enters the mode.
-          if (rest) {
-            await (kind === "hermes"
-              ? hermesInvoke(convId, rest)
-              : piInvoke(convId, rest));
+          // Hermes runs through the SSE bridge — fire the rest as a
+          // prompt now. Pi runs in a TUI iframe — the composer doesn't
+          // route there, the user types directly in the terminal. So
+          // we just enter mode and ignore any `rest` for /pi.
+          if (kind === "hermes" && rest) {
+            await hermesInvoke(convId, rest);
           }
           return;
         }
@@ -1017,18 +1044,20 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       }
 
       // Persistent agent mode: every plain message goes to the agent
-      // until `/exit`. The composer chip + the agent box are the visual
-      // reminders that we're not in normal chat.
-      if (currentAgent === "hermes" || currentAgent === "pi") {
+      // until `/exit`. Hermes uses the SSE bridge; Pi runs in a TUI
+      // iframe so plain composer text doesn't route to it (the user
+      // types directly in the terminal). We silently no-op for Pi so
+      // accidentally-typed composer text doesn't hit normal chat with
+      // the wrong context.
+      if (currentAgent === "hermes") {
         const convId = conversationId ?? conversation?.id;
-        if (!convId) {
-          // Shouldn't happen — agent mode is per-conv. Fall through.
-        } else {
-          await (currentAgent === "hermes"
-            ? hermesInvoke(convId, trimmed)
-            : piInvoke(convId, trimmed));
+        if (convId) {
+          await hermesInvoke(convId, trimmed);
           return;
         }
+      } else if (currentAgent === "pi") {
+        setError("Type directly in the Pi terminal above. Use /exit to return.");
+        return;
       }
 
       if (!model) {
@@ -1327,6 +1356,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     hermesReset,
     piInvoke,
     piReset,
+    piBridgeUrl,
     /** Persistent agent mode for this conv ('hermes' | null). When set,
      *  every plain message in the composer routes to that agent's
      *  bridge instead of the LLM chat path. `/exit` clears it. */

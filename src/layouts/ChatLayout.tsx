@@ -4,6 +4,7 @@ import InferencePanel from "~/components/chat/InferencePanel";
 import Input from "~/components/chat/Input";
 import Messages from "~/components/chat/Messages";
 import { AgentBubble } from "~/components/chat/AgentBubble";
+import { PiPanel } from "~/components/chat/PiPanel";
 // RepoBindingBar (Hermes-only) retired 2026-05-19.
 import Sidebar from "~/components/chat/Sidebar";
 import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
@@ -238,13 +239,21 @@ export default function ChatLayout() {
         {/* Agent sub-thread (/hermes etc.) — terminal-style inline panel
          *  pinned below the message list. Renders only when there's a
          *  transcript, a live stream, or an error to surface. */}
-        <AgentBubble
-          messages={chat.agentMessages}
-          streaming={chat.agentStreaming}
-          error={chat.agentError}
-          onReset={chat.activeAgent === "pi" ? chat.piReset : chat.hermesReset}
-          agentLabel={chat.activeAgent === "pi" ? "Pi" : "Hermes"}
-        />
+        {/* Pi runs as a full TUI in a ttyd iframe, not as a
+         *  message-bubble agent. When the user is in /pi mode and
+         *  the add-on URL is configured, render the terminal panel
+         *  in place of the AgentBubble. */}
+        {chat.activeAgent === "pi" && chat.piBridgeUrl ? (
+          <PiPanel url={chat.piBridgeUrl} />
+        ) : (
+          <AgentBubble
+            messages={chat.agentMessages}
+            streaming={chat.agentStreaming}
+            error={chat.agentError}
+            onReset={chat.hermesReset}
+            agentLabel="Hermes"
+          />
+        )}
         {/* Persistent agent-mode chip. Reminds the user that every
          *  message in the composer goes to the agent (not the LLM),
          *  and provides a one-click exit. */}
