@@ -20,6 +20,14 @@ export type OdyssaiModelCapabilities = {
   kv_cache_q8: boolean;
   admin_loadable: boolean;
   alias_for?: string;
+  /** Display name of the cluster this model belongs to (e.g. "Argo",
+   *  "TeleCoder"). Set by Odysseus >= 1.7.10 from the cluster def's
+   *  `name` field. Used to render picker group headings without
+   *  surfacing the cluster id ("main", "telemak-code-next"). */
+  cluster_label?: string;
+  /** Cluster kind ("mlx-distributed" | "telemak" | …). Lets the
+   *  picker bucket entries without pattern-matching backend / pool. */
+  kind?: string;
 };
 
 export type ApiGlobalModel = {

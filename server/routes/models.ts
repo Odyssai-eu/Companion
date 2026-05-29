@@ -203,13 +203,31 @@ async function listGateway(
 
   const models: GlobalModel[] = list.data.map((m) => {
     const caps = m.x_odyssai;
-    // pool buckets the engine itself uses are local; everything else
-    // (http-proxy backend) is a cloud alias. The picker decides badge
-    // colour based on backend, not pool name.
-    const tag = caps?.backend === "http-proxy" ? "cloud" : caps?.pool ?? "local";
+    // Group bucket derivation, in priority order :
+    //   1. kind=telemak  → "telemak" (all Telemak clusters bucketed together)
+    //   2. kind=mlx-distributed → cluster_label (e.g. "Argo") so the heading
+    //      reflects the operator-chosen display name instead of the pool id
+    //      ("main") which long ago lost its "main" meaning.
+    //   3. http-proxy backend without kind = legacy cloud alias  → "cloud"
+    //   4. anything else → caps.pool ?? "local" (back-compat)
+    const tag = (() => {
+      if (caps?.kind === "telemak") return "telemak";
+      if (caps?.kind === "mlx-distributed" && caps.cluster_label) {
+        return caps.cluster_label.toLowerCase();
+      }
+      if (caps?.backend === "http-proxy") return "cloud";
+      return caps?.pool ?? "local";
+    })();
+    // Display name : for Telemak entries we surface the cluster's display
+    // label ("TeleCoder") rather than the cluster id ("telemak-code-next").
+    // Loaded model + quant flow into the subtitle via caps.family /
+    // caps.quantization so the row still shows what's running.
+    const name = caps?.kind === "telemak" && caps.cluster_label
+      ? caps.cluster_label
+      : m.id;
     return {
       id: m.id,
-      name: m.id,
+      name,
       tags: [tag],
       capabilities: {
         vision: caps?.supports_vision ?? false,

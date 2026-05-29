@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useIsMobile } from "~/hooks/useIsMobile";
-import { api, type ApiAddon, type ApiInferenceSettings } from "~/lib/api";
+import {
+  api,
+  type ApiAddon,
+  type ApiGlobalModel,
+  type ApiInferenceSettings,
+} from "~/lib/api";
 import { copyToClipboard } from "~/lib/clipboard";
+import ModelDropdown from "~/components/chat/ModelDropdown";
 
 type Filter = "all" | "plugin" | "mcp" | "core";
 
@@ -1240,6 +1246,10 @@ function RouterPanel() {
     deep: "",
     code: "",
   });
+  // Model catalog drives the per-bucket pickers. We exclude the "auto"
+  // synthetic entry since picking Auto as a router bucket would loop
+  // back into the router itself.
+  const [models, setModels] = useState<ApiGlobalModel[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -1261,8 +1271,20 @@ function RouterPanel() {
     }
   }
 
+  async function refreshModels() {
+    try {
+      const r = await api.listAllModels();
+      setModels(r.models.filter((m) => m.id !== "auto"));
+    } catch {
+      // Non-fatal — the picker will render with an empty list + the
+      // standard "No models" hint. The router itself doesn't depend on
+      // the picker working to function.
+    }
+  }
+
   useEffect(() => {
     refresh();
+    refreshModels();
   }, []);
 
   async function save(rebuildAnchors = false) {
@@ -1372,36 +1394,39 @@ function RouterPanel() {
             <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">
               Chat
             </span>
-            <input
-              type="text"
+            <ModelDropdown
               value={policy.chat}
-              onChange={(e) => setPolicy((p) => ({ ...p, chat: e.target.value }))}
-              placeholder={info.policyDefault.chat || "a fast conversational model"}
-              className="rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+              onChange={(id) => setPolicy((p) => ({ ...p, chat: id }))}
+              models={models}
+              includeAuto={false}
+              fullWidth
+              placeholder={info.policyDefault.chat || "Pick a model"}
             />
           </div>
           <div className="flex flex-col gap-1">
             <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">
               Deep
             </span>
-            <input
-              type="text"
+            <ModelDropdown
               value={policy.deep}
-              onChange={(e) => setPolicy((p) => ({ ...p, deep: e.target.value }))}
-              placeholder={info.policyDefault.deep || "a high-quality model for analysis"}
-              className="rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+              onChange={(id) => setPolicy((p) => ({ ...p, deep: id }))}
+              models={models}
+              includeAuto={false}
+              fullWidth
+              placeholder={info.policyDefault.deep || "Pick a model"}
             />
           </div>
           <div className="flex flex-col gap-1">
             <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">
               Code
             </span>
-            <input
-              type="text"
+            <ModelDropdown
               value={policy.code}
-              onChange={(e) => setPolicy((p) => ({ ...p, code: e.target.value }))}
-              placeholder={info.policyDefault.code || "a model tuned for code"}
-              className="rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+              onChange={(id) => setPolicy((p) => ({ ...p, code: id }))}
+              models={models}
+              includeAuto={false}
+              fullWidth
+              placeholder={info.policyDefault.code || "Pick a model"}
             />
           </div>
         </div>
