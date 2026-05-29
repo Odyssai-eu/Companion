@@ -1031,13 +1031,29 @@ chatRoute.post("/completions", async (c) => {
                 // raw end-to-end "speed" pulls that down because it counts
                 // the prompt-eval phase in the denominator). Both rates
                 // shown side-by-side so users can sanity-check vs spec.
-                decodeSpeed:
-                  st.totalMs &&
-                  st.ttftMs !== null &&
-                  st.completionTokens &&
-                  st.totalMs - st.ttftMs > 0
-                    ? `${((st.completionTokens / (st.totalMs - st.ttftMs)) * 1000).toFixed(1)} tok/s`
-                    : undefined,
+                //
+                // Only meaningful when there's a genuine decode window. In
+                // non-stream mode (the tools path) the whole response lands
+                // at once, so ttft ≈ total, the decode window collapses to a
+                // few ms, and the rate explodes to a garbage ~1000 tok/s
+                // (observed 2026-05-29). Require the decode phase to be a
+                // non-trivial slice of total (≥250 ms AND ≥10% of duration)
+                // and at least a few tokens before trusting the number;
+                // otherwise suppress it (the UI just shows overall speed).
+                decodeSpeed: (() => {
+                  if (!st.totalMs || st.ttftMs === null || !st.completionTokens) {
+                    return undefined;
+                  }
+                  const decodeMs = st.totalMs - st.ttftMs;
+                  if (
+                    decodeMs < 250 ||
+                    decodeMs < st.totalMs * 0.1 ||
+                    st.completionTokens < 5
+                  ) {
+                    return undefined;
+                  }
+                  return `${((st.completionTokens / decodeMs) * 1000).toFixed(1)} tok/s`;
+                })(),
                 model: modelLabel,
               }
             : { chunks: totalChunkCount, durationMs: st.totalMs, model: modelLabel };
