@@ -926,11 +926,23 @@ async function executeMcpTool(
       .catch(() => undefined);
     return { ok: false, error: res.error ?? "mcp_tool_failed" };
   }
-  // Cap at 4k chars — the LLM only needs enough to react. MCP servers
-  // (especially RAG-style ones like Qdrant) can return enormous blobs;
-  // we let the model ask for more via a follow-up tool call instead of
-  // dumping everything into context.
-  return { ok: true, data: res.content.slice(0, 4000) };
+  // Cap at 16k chars — typical Tavily / Qdrant tool responses are 4-10k
+  // chars (full search-result payloads). The previous 4k cap routinely
+  // chopped Tavily JSON mid-string, the model saw malformed JSON, decided
+  // the tool failed, and retried until MAX_TOOL_ITERATIONS — exactly the
+  // 2026-05-29 TeleCoder loop. 16k stays bounded enough to keep prompts
+  // manageable but leaves room for valid JSON to survive.
+  //
+  // When we DO have to truncate, append an explicit "[truncated]" marker
+  // so the model recognises partial data instead of treating it as a tool
+  // failure to retry.
+  if (res.content.length > 16_000) {
+    return {
+      ok: true,
+      data: res.content.slice(0, 16_000) + "\n…[result truncated, do not retry]",
+    };
+  }
+  return { ok: true, data: res.content };
 }
 
 function clamp(n: number, lo: number, hi: number): number {
