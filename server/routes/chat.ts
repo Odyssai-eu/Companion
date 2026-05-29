@@ -1572,9 +1572,23 @@ function tryParseJson(s: string): Record<string, unknown> {
  *  up the next round-trip's prompt budget. */
 function stringifyForTool(r: ToolResult): string {
   if (!r.ok) return JSON.stringify({ error: r.error });
-  const json = JSON.stringify(r.data);
+  // MCP servers return tool content as an already-serialized string
+  // (the `text` field of an MCP content block, typically itself a JSON
+  // blob). Re-running JSON.stringify wraps it in another layer of
+  // escaped quotes, so the model sees `"\"{\\\"key\\\":...}\""` instead
+  // of `"{\"key\":...}"`. Some tool-trained models (TeleCoder /
+  // Qwen3-Coder-Next observed 2026-05-29) interpret that as
+  // "result is opaque, retry the tool" and loop until MAX iterations.
+  //
+  // Pass strings through verbatim; only stringify when data is a
+  // structured value (objects from local fs_* / skill_* tools).
+  const content = typeof r.data === "string"
+    ? r.data
+    : JSON.stringify(r.data);
   // 24k chars ≈ 6k tokens — generous but bounded.
-  return json.length > 24_000 ? json.slice(0, 24_000) + "…[truncated]" : json;
+  return content.length > 24_000
+    ? content.slice(0, 24_000) + "…[truncated]"
+    : content;
 }
 
 /** A short summary of a tool result to display in the UI without blowing up
