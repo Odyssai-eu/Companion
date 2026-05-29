@@ -500,9 +500,69 @@ function toOpenAiTool(serverSlug: string, t: McpToolSpec): unknown {
     function: {
       name: `mcp_${serverSlug}_${t.name}`,
       description: t.description ?? `${t.name} (via ${serverSlug})`,
-      parameters: t.inputSchema ?? { type: "object", properties: {} },
+      parameters: sanitizeJsonSchemaForJinja(
+        t.inputSchema ?? { type: "object", properties: {} },
+      ),
     },
   };
+}
+
+/**
+ * Strip JSON Schema constructs that crash the chat-template Jinja
+ * renderer on the Telemak Swift side.
+ *
+ * Symptom we hit 2026-05-29 : every MCP tool call via Telemak (Coder-
+ * Next / Telechat / Kolos) returned HTTP 500 "Cannot convert value of
+ * type Optional<Any> to Jinja Value". Reproducer was minimal — one
+ * tool def with `"default": null` and an `anyOf` containing
+ * `{"type": "null"}` (Tavily's MCP schema). Removing those two patterns
+ * makes the same request succeed.
+ *
+ * Mutations applied (recursively, on a deep copy) :
+ *   - any property `default: null` is dropped — the model doesn't need
+ *     to see a "default is unset" hint, that's the JSON Schema convention
+ *   - `anyOf` / `oneOf` arrays drop entries that are `{type: "null"}`;
+ *     if only one branch remains, it's flattened in-place
+ *
+ * The upstream fix lives in mlx-swift-lm's chat template rendering —
+ * file as a Telemak issue once the deploy fires. This sanitiser is
+ * conservative enough to stay correct after that fix too (no semantic
+ * regression for the model's tool-call output).
+ */
+function sanitizeJsonSchemaForJinja(schema: unknown): unknown {
+  if (Array.isArray(schema)) {
+    return schema.map(sanitizeJsonSchemaForJinja);
+  }
+  if (schema === null || typeof schema !== "object") return schema;
+  const src = schema as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(src)) {
+    if (k === "default" && v === null) continue; // drop null-default
+    if ((k === "anyOf" || k === "oneOf") && Array.isArray(v)) {
+      const filtered = v.filter(
+        (entry) =>
+          !(
+            entry !== null &&
+            typeof entry === "object" &&
+            (entry as Record<string, unknown>).type === "null"
+          ),
+      );
+      if (filtered.length === 0) continue; // entire branch was just null
+      if (filtered.length === 1) {
+        // Inline the single remaining branch so we don't leave a
+        // pointless 1-entry anyOf around.
+        const inlined = sanitizeJsonSchemaForJinja(filtered[0]);
+        if (inlined !== null && typeof inlined === "object") {
+          Object.assign(out, inlined as Record<string, unknown>);
+        }
+        continue;
+      }
+      out[k] = filtered.map(sanitizeJsonSchemaForJinja);
+      continue;
+    }
+    out[k] = sanitizeJsonSchemaForJinja(v);
+  }
+  return out;
 }
 
 // ── Tavily client ────────────────────────────────────────────────────────
