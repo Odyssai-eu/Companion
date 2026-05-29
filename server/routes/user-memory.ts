@@ -26,13 +26,13 @@
 
 import { promises as fs } from "node:fs";
 import { join, normalize, resolve as pathResolve } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, like, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { userMemoryFiles, users } from "../db/schema";
-import { getUserMemoryStats } from "../lib/user-memory";
+import { getUserMemoryStats, isMacOsCruft } from "../lib/user-memory";
 
 type Env = { Variables: { userId: string } };
 const userMemoryRoute = new Hono<Env>();
@@ -302,12 +302,37 @@ async function importEntries(
 ): Promise<ImportResult> {
   const imported: ImportResult["imported"] = [];
   const skipped: ImportResult["skipped"] = [];
+
+  // One-shot purge of any historical macOS resource forks the user
+  // already accumulated. Re-importing a clean ZIP shouldn't leave
+  // last week's `__MACOSX/._foo.md` rows wasting their 50 MB quota —
+  // and more importantly, those rows are what was poisoning the
+  // model's system prompt before the read-time filter shipped.
+  await db
+    .delete(userMemoryFiles)
+    .where(
+      and(
+        eq(userMemoryFiles.userId, userId),
+        or(
+          like(userMemoryFiles.path, "__MACOSX/%"),
+          like(userMemoryFiles.path, "%/._%"),
+          like(userMemoryFiles.path, "._%"),
+          like(userMemoryFiles.path, "%/.DS_Store"),
+          eq(userMemoryFiles.path, ".DS_Store"),
+        ),
+      ),
+    );
+
   let bytesUsed = (await getUserMemoryStats(userId)).bytesUsed;
 
   for (const e of entries) {
     const safe = safePath(e.path);
     if (!safe) {
       skipped.push({ path: e.path, reason: "invalid_path" });
+      continue;
+    }
+    if (isMacOsCruft(safe)) {
+      skipped.push({ path: safe, reason: "macos_resource_fork" });
       continue;
     }
     const dot = safe.lastIndexOf(".");

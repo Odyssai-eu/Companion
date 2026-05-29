@@ -40,6 +40,30 @@ const ACCEPTED_EXTS = new Set([
   ".yml",
 ]);
 
+/** macOS resource forks. ZIP archives created on macOS embed two copies
+ *  of every file: the real one + a sidecar under `__MACOSX/<path>/._<name>`
+ *  carrying Finder metadata as binary AppleDouble. The `._` prefix files
+ *  in regular directories serve the same role on macOS-mounted volumes.
+ *
+ *  Neither is content — both are noise. Worse, the AppleDouble payload
+ *  is binary garbage that, once injected into a chat model's system
+ *  prompt, pushes the model into nonsense / tool-call loops (see the
+ *  TeleCoder loop diagnosis 2026-05-29).
+ *
+ *  Both the live-vault walker and the read-from-DB path filter via
+ *  this helper, so historical pollution doesn't survive a Companion
+ *  restart and future imports stay clean. */
+export function isMacOsCruft(path: string): boolean {
+  if (path.startsWith("__MACOSX/") || path === "__MACOSX") return true;
+  // `._foo.md` at any depth — AppleDouble sidecar for the real `foo.md`.
+  if (path.startsWith("._")) return true;
+  if (path.includes("/._")) return true;
+  // `.DS_Store` is Finder's directory metadata — harmless content-wise
+  // but never useful to the model. Same treatment.
+  if (path === ".DS_Store" || path.endsWith("/.DS_Store")) return true;
+  return false;
+}
+
 type CorpusEntry = {
   path: string;
   content: string;
@@ -56,11 +80,13 @@ async function readDbFiles(userId: string): Promise<CorpusEntry[]> {
     })
     .from(userMemoryFiles)
     .where(eq(userMemoryFiles.userId, userId));
-  return rows.map((r) => ({
-    path: r.path,
-    content: r.content,
-    origin: "imported" as const,
-  }));
+  return rows
+    .filter((r) => !isMacOsCruft(r.path))
+    .map((r) => ({
+      path: r.path,
+      content: r.content,
+      origin: "imported" as const,
+    }));
 }
 
 async function readVaultFiles(rootPath: string): Promise<CorpusEntry[]> {
@@ -78,6 +104,9 @@ async function readVaultFiles(rootPath: string): Promise<CorpusEntry[]> {
     }
     for (const entry of entries) {
       if (entry.name.startsWith(".")) continue;
+      // __MACOSX directories at the root of a copied ZIP. Skip the
+      // whole subtree — none of its contents are real files.
+      if (entry.name === "__MACOSX") continue;
       const abs = join(dir, entry.name);
       const relPath = normalize(
         rel ? `${rel}/${entry.name}` : entry.name,
@@ -88,6 +117,7 @@ async function readVaultFiles(rootPath: string): Promise<CorpusEntry[]> {
         const dot = entry.name.lastIndexOf(".");
         const ext = dot >= 0 ? entry.name.slice(dot).toLowerCase() : "";
         if (!ACCEPTED_EXTS.has(ext)) continue;
+        if (isMacOsCruft(relPath)) continue;
         try {
           const content = await fs.readFile(abs, "utf8");
           out.push({ path: relPath, content, origin: "vault" });
