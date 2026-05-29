@@ -655,7 +655,15 @@ chatRoute.post("/completions", async (c) => {
 
   void (async () => {
     let conversation: ChatTurn[] = withSystem as ChatTurn[];
-    const MAX_TOOL_ITERATIONS = 3;
+    // Was 3 originally. Bumped to 8 after 2026-05-29 Tavily-via-Coder-Next
+    // case where the model legitimately needed 4 tool roundtrips
+    // (initial call → rate-limit retry → success → synthesis). At 3, the
+    // synthesis step fell off the cliff and the user saw the misleading
+    // loop-guard "Try Haiku" message even though the tools were behaving
+    // correctly. 8 still catches genuinely runaway agents (Qwen3.6 on
+    // mlx-vlm without tool fine-tuning, original failure mode that
+    // motivated the cap) without strangling normal multi-step workflows.
+    const MAX_TOOL_ITERATIONS = 8;
     // Aggregate usage across tool-loop iterations — guests are billed for
     // every upstream call, not just the final one.
     let totalPromptTokens = 0;
