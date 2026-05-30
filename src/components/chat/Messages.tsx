@@ -30,7 +30,22 @@ export default function Messages({
   showMetrics?: boolean;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Whether the viewport is pinned to the bottom. We only auto-scroll while
+  // pinned, so scrolling UP to read mid-stream isn't yanked back down on the
+  // next token. A ref (not state) — updated on every scroll, read at
+  // auto-scroll time, no re-render needed.
+  const stickRef = useRef(true);
   const voice = useVoiceMode();
+
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    // 80px tolerance so "near the bottom" still counts as pinned (smooth
+    // programmatic scrolls + sub-pixel rounding don't accidentally unpin).
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickRef.current = distanceFromBottom < 80;
+  }
   const spokenIdsRef = useRef<Set<string>>(new Set());
 
   // Easter egg — Space Invaders triggered by ⌥⇧ATARI on empty chat
@@ -55,8 +70,19 @@ export default function Messages({
     return () => window.removeEventListener("keydown", handler);
   }, [messages.length]);
 
+  const prevLenRef = useRef(0);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const grew = messages.length > prevLenRef.current;
+    const lastIsUser = messages[messages.length - 1]?.role === "user";
+    prevLenRef.current = messages.length;
+    // Always snap to the bottom when the user just sent a message (and re-pin
+    // — they want to see their turn + the incoming reply). Otherwise only
+    // follow the assistant's stream while pinned: if they scrolled up to read,
+    // leave them there until they scroll back down.
+    if (grew && lastIsUser) stickRef.current = true;
+    if (stickRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages]);
 
   // Auto-speak when Voice mode is on: each assistant message that finished
@@ -98,7 +124,11 @@ export default function Messages({
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8 md:py-10">
+    <div
+      ref={scrollRef}
+      onScroll={handleScroll}
+      className="flex-1 overflow-y-auto px-4 py-6 md:px-8 md:py-10"
+    >
       <div className="mx-auto flex max-w-3xl flex-col gap-8 md:gap-10">
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 font-mono text-[12px] text-red-700">
