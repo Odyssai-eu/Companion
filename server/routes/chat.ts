@@ -52,6 +52,7 @@ import {
   appendInferenceReasoning,
   deleteInference,
   finishInference,
+  isInferenceActive,
   markInferenceError,
   recordInferenceUsage,
   startInference,
@@ -411,6 +412,25 @@ chatRoute.post("/completions", async (c) => {
   // tab and still get the live content via /api/conversations/:id/inference.
   // No-op when there's no conversationId (rare — the frontend always has one).
   if (body.conversationId) {
+    // Concurrency guard: never run two inferences for the same conversation
+    // at once. The inference-state buffer is keyed by conversationId, so a
+    // second startInference would reset it and both pumps would interleave
+    // into the same entry → a garbled response + a DUPLICATE persisted
+    // assistant row (observed 2026-05-30: a client double-fire produced two
+    // spliced assistant messages for one user turn). The UI is single-stream
+    // per conversation (the composer's `sending` guard blocks a manual second
+    // send), so a concurrent second request is always a double-fire race.
+    // No-op it: close this request with an immediate [DONE] — the already
+    // in-flight inference produces and persists the single answer.
+    if (isInferenceActive(body.conversationId)) {
+      console.warn(
+        `[chat] concurrent inference for conv ${body.conversationId} — ` +
+          "ignoring duplicate request (the in-flight one will answer)",
+      );
+      c.header("Content-Type", "text/event-stream");
+      c.header("Cache-Control", "no-cache");
+      return c.body("data: [DONE]\n\n");
+    }
     startInference(body.conversationId, userId);
   }
 

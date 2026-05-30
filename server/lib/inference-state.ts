@@ -233,6 +233,20 @@ export function deleteInference(convId: string): void {
   _active.delete(convId);
 }
 
+/**
+ * True when an inference is in flight for this conversation (entry exists
+ * and not yet done). The chat route uses this to reject a CONCURRENT second
+ * inference on the same conversation: the buffer is keyed by conversationId,
+ * so a second `startInference` would reset it and both pumps would append
+ * into the same entry — producing an interleaved, garbled response AND a
+ * duplicate persisted assistant row (observed 2026-05-30: a client
+ * double-fire wrote two spliced assistant messages for one user turn).
+ */
+export function isInferenceActive(convId: string): boolean {
+  const inf = _active.get(convId);
+  return !!inf && !inf.done;
+}
+
 /** List conversationIds with active streams for a user. Drives the
  *  sidebar / NavBar parallel-stream badge. */
 export function listActiveForUser(userId: string): string[] {
