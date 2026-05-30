@@ -102,7 +102,7 @@ The picker pulls capabilities from the Odyssai `x_odyssai` contract when present
 
 - **Default model** — pre-fills new conversations.
 - **Inference mode** — easy / advanced / expert. Drives the picker layout.
-- **Easy model** — the single curated model for Easy mode.
+- **Fallback model** — used in Easy mode only when the Auto Router add-on isn't configured. When the router is set up, Easy auto-routes to the best model per request.
 - **Named models** — the 4 slots for Advanced mode (conversation / analyse / engineer / expert).
 - **Hidden models** — eye-toggle hide list.
 - **Show metrics** — per-message stats row toggle.

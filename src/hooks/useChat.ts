@@ -320,8 +320,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.listAllModels(), api.inferenceSettings()])
-      .then(([{ models }, settings]) => {
+    Promise.all([
+      api.listAllModels(),
+      api.inferenceSettings(),
+      api.routerInfo().catch(() => null),
+    ])
+      .then(([{ models }, settings, router]) => {
         if (cancelled) return;
         setGlobalModels(models);
         setInferenceMode(settings.inferenceMode);
@@ -332,8 +336,14 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
         // Choose a default model that respects the active mode.
         if (settings.inferenceMode === "easy") {
-          // Easy mode forces the admin-set model, ignoring any local override.
-          if (settings.easyModel) setModelAndPersist(settings.easyModel);
+          // Easy = Odysseus picks the best model: auto-route when the Auto
+          // Router add-on is enabled AND configured, otherwise fall back to
+          // the admin-set fallback model. Either way ignore local override.
+          const routerReady = Boolean(router?.enabled && router?.configured);
+          const easyTarget = routerReady
+            ? "auto"
+            : (settings.easyModel ?? settings.defaultModel ?? "");
+          if (easyTarget) setModelAndPersist(easyTarget);
         } else if (settings.inferenceMode === "advanced") {
           // Advanced: if the persisted model isn't one of the 4 slots, default
           // to "conversation" (or the first non-empty slot).

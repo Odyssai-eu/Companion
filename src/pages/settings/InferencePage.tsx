@@ -255,8 +255,8 @@ export default function InferencePage() {
             [
               {
                 v: "easy" as const,
-                title: "Easy — one model, no picker",
-                desc: "User never sees a model picker. The single model below is used everywhere.",
+                title: "Easy — Odysseus picks the best model",
+                desc: "No picker. Odysseus auto-routes each request to the best model (via the Auto Router add-on). Falls back to the model below when the router isn't configured.",
               },
               {
                 v: "advanced" as const,
@@ -296,8 +296,8 @@ export default function InferencePage() {
 
         {inferenceMode === "easy" && (
           <Field
-            label="Easy mode model"
-            hint="The single model the user sees as 'the assistant'."
+            label="Fallback model"
+            hint="Used only when the Auto Router add-on isn't configured. Set it up in Add-ons → Auto Router to enable smart routing; until then Easy mode uses this model."
           >
             <select
               value={easyModel}

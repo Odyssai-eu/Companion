@@ -36,7 +36,7 @@ The model picker is the leftmost element in the chat top bar. Click to open a pa
 
 Three picker layouts depending on your *Inference mode* setting:
 
-- **Easy** — single curated model, no picker shown.
+- **Easy** — no picker. Odysseus auto-routes each request to the best model (via the Auto Router add-on), falling back to a model you set when the router isn't configured.
 - **Advanced** — 4 named slots (conversation / analyse / engineer / expert). Pick a slot.
 - **Expert** — full catalog with eye toggles for hide/show. Default for power users.
 
