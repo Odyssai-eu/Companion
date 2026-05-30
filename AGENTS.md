@@ -147,17 +147,14 @@ container boot :
 | | |
 |---|---|
 | Email | `admin@odyssai.local` |
-| Password | `itak1234` |
+| Password | generated on first boot — printed to docker logs once |
 | Role | `admin` |
 
 Tell the user :
 
-> Open http://localhost:3000/, sign in with `admin@odyssai.local` /
-> `itak1234`. You're in. Recommended (not required) : open
-> **Settings → Profile** and change the password to something private.
-> The default is documented + version-controlled so it's not a
-> secret — change it if your install is reachable outside trusted
-> network.
+> Open http://localhost:3000/, sign in with `admin@odyssai.local` and
+> the one-time password from `docker logs <container> 2>&1 | grep "Generated one-time"`.
+> Change it in **Settings → Profile** after first login.
 
 The seed only runs ONCE — once any user row exists, `seedIfEmpty()`
 becomes a no-op on subsequent boots. Existing deploys are never

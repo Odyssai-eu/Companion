@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { hashPassword } from "../auth/password";
 import { db } from "./index";
@@ -7,23 +8,19 @@ import { users } from "./schema";
  * Default credentials for the seeded admin user on a fresh install.
  *
  * On an empty DB, the first boot creates this user with `role=admin`.
- * The operator can log in immediately with `admin@odyssai.local /
- * itak1234`, no friction (vs the previous "first visitor to /signup
- * becomes admin" flow which Sophie hit on .39 and missed because the
- * UI defaulted to Sign in, not Sign up).
- *
- * Override via env vars `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` —
- * useful for operators who want to set their own default before the
- * first boot. AGENTS.md recommends changing the password in Settings
- * → Profile after first login (not required).
+ * Override via env vars `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`.
+ * When SEED_ADMIN_PASSWORD is unset a random password is generated and
+ * printed ONCE to stdout — retrieve it from docker logs.
  *
  * The seed runs ONCE on an empty DB. After the seed lands, future
  * boots skip the seed regardless of these constants — existing
  * deploys are never affected.
  */
 const SEED_ADMIN_EMAIL = (process.env.SEED_ADMIN_EMAIL || "admin@odyssai.local").toLowerCase();
-const SEED_ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || "itak1234";
 const SEED_ADMIN_NAME = process.env.SEED_ADMIN_NAME || "Admin";
+const _seedPasswordGenerated = !process.env.SEED_ADMIN_PASSWORD;
+const SEED_ADMIN_PASSWORD =
+  process.env.SEED_ADMIN_PASSWORD || randomBytes(12).toString("base64url");
 
 /**
  * Seed first-boot data on an empty DB.
@@ -47,10 +44,15 @@ export async function seedIfEmpty() {
       passwordHash,
       role: "admin" as const,
     });
-    console.log(
-      `→ seeded default admin user '${SEED_ADMIN_EMAIL}' (password '${SEED_ADMIN_PASSWORD}'). ` +
-        `Change it in Settings → Profile if you want (recommended but not required).`,
-    );
+    if (_seedPasswordGenerated) {
+      console.log(
+        `→ seeded admin '${SEED_ADMIN_EMAIL}'. ` +
+          `Generated one-time password (shown once): ${SEED_ADMIN_PASSWORD} — ` +
+          `change it in Settings → Profile.`,
+      );
+    } else {
+      console.log(`→ seeded admin '${SEED_ADMIN_EMAIL}'. Using SEED_ADMIN_PASSWORD from env.`);
+    }
   } catch (err) {
     console.warn(
       `→ seed admin failed: ${(err as Error).message}. ` +

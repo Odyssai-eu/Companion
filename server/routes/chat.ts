@@ -591,10 +591,14 @@ chatRoute.post("/completions", async (c) => {
   // skill_list → skill_get → … until Companion bails out (chat.ts:910)
   // with the "kept asking to call tools" fallback. Gate them on
   // `agentMode` too unless the operator explicitly opts in via env.
-  const alwaysOnEnabled = supportsTools &&
+  const isGuest = !!guest;
+  // Guests are scoped to chat only — no tools regardless of agent-mode or
+  // ALWAYS_ON_TOOLS. executeTool runs with userId = inviting admin, so
+  // exposing tools would let a guest drive skill/fs/mcp ops as the admin.
+  const alwaysOnEnabled = !isGuest && supportsTools &&
     (convAgentMode || process.env.ALWAYS_ON_TOOLS === "1");
   const alwaysOn = alwaysOnEnabled ? alwaysOnTools() : [];
-  const agentTools = supportsTools && convAgentMode
+  const agentTools = !isGuest && supportsTools && convAgentMode
     ? await toolsForUser(userId)
     : [];
   const tools = [...alwaysOn, ...agentTools];
