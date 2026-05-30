@@ -9,8 +9,6 @@ import {
 import { copyToClipboard } from "~/lib/clipboard";
 import ModelDropdown from "~/components/chat/ModelDropdown";
 
-type Filter = "all" | "plugin" | "mcp" | "core";
-
 /** UI relabel hook (kept for future renames without touching DB rows). */
 function displayName(dbName: string): string {
   return dbName;
@@ -20,12 +18,15 @@ function displayDescription(_dbName: string): string | null {
   return null;
 }
 
+/** Add-on DB rows that the page deliberately hides. "Web Search" is the
+ *  built-in Tavily plugin — superseded by the Tavily MCP server, so we no
+ *  longer surface its card here (2026-05-30). */
+const HIDDEN_ADDON_NAMES = new Set(["Web Search"]);
+
 export default function AddonsPage() {
   const [addons, setAddons] = useState<ApiAddon[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>("all");
   const [pending, setPending] = useState<Set<string>>(new Set());
-  const isMobile = useIsMobile();
 
   async function refresh() {
     try {
@@ -45,8 +46,9 @@ export default function AddonsPage() {
       try {
         await Promise.all([
           api.routerInfo().catch(() => undefined),
-          api.tavilyInfo().catch(() => undefined),
           api.voiceLiveInfo().catch(() => undefined),
+          api.hermesAddonInfo().catch(() => undefined),
+          api.piAddonInfo().catch(() => undefined),
         ]);
       } catch {
         /* ignore — best-effort */
@@ -55,21 +57,10 @@ export default function AddonsPage() {
     })();
   }, []);
 
-  const counts = useMemo(() => {
-    const list = addons ?? [];
-    return {
-      all: list.length,
-      plugin: list.filter((a) => a.kind === "plugin").length,
-      mcp: list.filter((a) => a.kind === "mcp").length,
-      core: list.filter((a) => a.kind === "core").length,
-    };
-  }, [addons]);
-
-  const visible = useMemo(() => {
-    const list = addons ?? [];
-    if (filter === "all") return list;
-    return list.filter((a) => a.kind === filter);
-  }, [addons, filter]);
+  const visible = useMemo(
+    () => (addons ?? []).filter((a) => !HIDDEN_ADDON_NAMES.has(a.name)),
+    [addons],
+  );
 
   async function toggle(addon: ApiAddon) {
     setPending((s) => new Set(s).add(addon.id));
@@ -104,29 +95,11 @@ export default function AddonsPage() {
           Add-ons.
         </h1>
         <p className="max-w-[640px] text-[15px] leading-[24px] text-gray-600">
-          Extend Companion with plugins and MCP servers. Each add-on can
-          surface in the Tools menu and carry its own screen if it needs one.
+          Plugins, agents, and MCP servers you can switch on. Each add-on
+          can surface in the Tools menu and carry its own configuration
+          panel below.
         </p>
       </header>
-
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex gap-1.5">
-          <FilterChip label={`All · ${counts.all}`} active={filter === "all"} onClick={() => setFilter("all")} />
-          <FilterChip label={`Plugins · ${counts.plugin}`} active={filter === "plugin"} onClick={() => setFilter("plugin")} />
-          <FilterChip label={`MCP · ${counts.mcp}`} active={filter === "mcp"} onClick={() => setFilter("mcp")} />
-          <FilterChip label={`Core · ${counts.core}`} active={filter === "core"} onClick={() => setFilter("core")} />
-        </div>
-        {!isMobile && (
-          <button
-            type="button"
-            className="flex h-9 items-center gap-2 rounded-lg bg-navy px-4 text-[13px] font-medium text-white hover:opacity-95"
-            onClick={() => alert("Install-from-URL flow coming soon.")}
-          >
-            <PlusIcon />
-            Install from URL
-          </button>
-        )}
-      </div>
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 font-mono text-[12px] text-red-700">
@@ -162,10 +135,7 @@ export default function AddonsPage() {
       )}
 
       {installed.length > 0 && (
-        <Group
-          title="Installed"
-          subtitle="Plugins and MCP servers you've added."
-        >
+        <section className="flex flex-col gap-2.5">
           {installed.map((a) => (
             <AddonCard
               key={a.id}
@@ -174,33 +144,9 @@ export default function AddonsPage() {
               onToggle={() => toggle(a)}
             />
           ))}
-        </Group>
+        </section>
       )}
     </div>
-  );
-}
-
-function FilterChip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-lg border px-3.5 py-1.5 text-[13px] transition-colors ${
-        active
-          ? "border-navy bg-navy text-white"
-          : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-      }`}
-    >
-      {label}
-    </button>
   );
 }
 
@@ -243,7 +189,9 @@ function AddonCard({
     (addon.name === "Obsidian" ||
       addon.name === "Web Search" ||
       addon.name === "Voice (Gemini Live)" ||
-      addon.name === "Auto Router");
+      addon.name === "Auto Router" ||
+      addon.name === "Hermes Agent" ||
+      addon.name === "Pi Agent");
 
   return (
     <div className="flex flex-col gap-0 rounded-xl border border-gray-200 bg-white">
@@ -278,6 +226,8 @@ function AddonCard({
           {addon.name === "Web Search" && <TavilyPanel />}
           {addon.name === "Voice (Gemini Live)" && <VoiceLivePanel />}
           {addon.name === "Auto Router" && <RouterPanel />}
+          {addon.name === "Hermes Agent" && <HermesAddonPanel />}
+          {addon.name === "Pi Agent" && <PiAddonPanel />}
         </div>
       )}
     </div>
@@ -331,23 +281,6 @@ function Toggle({
     >
       <div className="h-5 w-5 rounded-full bg-white shadow-sm" />
     </button>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 5v14M5 12h14" />
-    </svg>
   );
 }
 
@@ -706,6 +639,279 @@ function Field({
         <span className="font-mono text-[11px] text-gray-400">{hint}</span>
       )}
     </div>
+  );
+}
+
+// ── Hermes / Pi bridge add-ons ────────────────────────────────────────────
+//
+// Both add-ons point Companion at an HTTP "bridge" the user runs on their
+// own machine (the hermes ACP bridge / thecompai-pi-bridge wrapping the Pi
+// CLI). The endpoint is per-user config stored on the addons row — never
+// hardcoded — so every operator wires their own host + token here. Pi adds
+// a default working directory the agent starts in.
+
+type BridgeInfo = {
+  enabled: boolean;
+  configured: boolean;
+  bridgeUrl: string;
+  hasToken: boolean;
+  cwd?: string;
+};
+
+type BridgeConfigBody = {
+  enabled?: boolean;
+  bridgeUrl?: string;
+  bridgeToken?: string | null;
+  cwd?: string | null;
+};
+
+type ProbeResult = {
+  ok: boolean;
+  health?: unknown;
+  error?: string;
+  status?: number;
+};
+
+function BridgeAddonPanel({
+  urlPlaceholder,
+  withCwd = false,
+  load,
+  save,
+  probe,
+  children,
+}: {
+  urlPlaceholder: string;
+  withCwd?: boolean;
+  load: () => Promise<BridgeInfo>;
+  save: (body: BridgeConfigBody) => Promise<unknown>;
+  probe: () => Promise<ProbeResult>;
+  children?: React.ReactNode;
+}) {
+  const [info, setInfo] = useState<BridgeInfo | null>(null);
+  const [url, setUrl] = useState("");
+  const [cwd, setCwd] = useState("");
+  const [tokenDraft, setTokenDraft] = useState("");
+  const [tokenDirty, setTokenDirty] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [probeMsg, setProbeMsg] = useState<{ ok: boolean; text: string } | null>(
+    null,
+  );
+
+  async function refresh() {
+    try {
+      const r = await load();
+      setInfo(r);
+      setUrl(r.bridgeUrl ?? "");
+      setCwd(r.cwd ?? "");
+      setTokenDraft("");
+      setTokenDirty(false);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function persist() {
+    setBusy("save");
+    setErr(null);
+    try {
+      const body: BridgeConfigBody = { bridgeUrl: url.trim() };
+      if (tokenDirty) body.bridgeToken = tokenDraft.trim() || null;
+      if (withCwd) body.cwd = cwd.trim() || null;
+      await save(body);
+      setSaved(true);
+      await refresh();
+      setTimeout(() => setSaved(false), 1800);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runProbe() {
+    setBusy("probe");
+    setErr(null);
+    setProbeMsg(null);
+    try {
+      const r = await probe();
+      setProbeMsg(
+        r.ok
+          ? { ok: true, text: "Bridge reachable — /health OK" }
+          : {
+              ok: false,
+              text:
+                r.error ??
+                (r.status ? `Bridge returned HTTP ${r.status}` : "No response"),
+            },
+      );
+    } catch (e) {
+      setProbeMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (!info) {
+    return <span className="font-mono text-[11px] text-gray-400">Loading…</span>;
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 text-[12px] text-gray-600">
+        <span>
+          <span className="text-gray-400">Status</span>{" "}
+          <span className="font-mono text-ink">
+            {info.configured ? "✓ configured" : "✗ no endpoint set"}
+          </span>
+        </span>
+        <span>
+          <span className="text-gray-400">Token</span>{" "}
+          <span className="font-mono text-ink">
+            {info.hasToken ? "set" : "none"}
+          </span>
+        </span>
+      </div>
+
+      <Field label="Bridge URL">
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder={urlPlaceholder}
+          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+        />
+        <p className="mt-2 text-[11px] text-gray-500">
+          The HTTP endpoint where your bridge listens, e.g.{" "}
+          <code className="rounded bg-gray-100 px-1 font-mono">
+            {urlPlaceholder}
+          </code>
+          . Reachable from the Companion server, not your browser.
+        </p>
+      </Field>
+
+      <Field label="Bridge token (optional)">
+        <input
+          type="password"
+          value={tokenDraft}
+          onChange={(e) => {
+            setTokenDraft(e.target.value);
+            setTokenDirty(true);
+          }}
+          placeholder={info.hasToken ? "•••• (set — paste a new one to replace)" : "shared secret"}
+          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+        />
+        <p className="mt-2 text-[11px] text-gray-500">
+          Must match the API key the bridge expects. Leave blank to keep the
+          current one.
+        </p>
+      </Field>
+
+      {withCwd && (
+        <Field label="Working directory">
+          <input
+            type="text"
+            value={cwd}
+            onChange={(e) => setCwd(e.target.value)}
+            placeholder="/Users/you/projects"
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+          <p className="mt-2 text-[11px] text-gray-500">
+            Directory the agent starts in on the bridge host. Leave blank for
+            the bridge's default.
+          </p>
+        </Field>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={persist}
+          disabled={busy !== null}
+          className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
+        >
+          {busy === "save" ? "Saving…" : saved ? "✓ Saved" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={runProbe}
+          disabled={busy !== null || !info.configured}
+          className="rounded-md border border-gray-200 bg-white px-4 py-2 text-[13px] text-gray-600 hover:text-ink disabled:opacity-50"
+        >
+          {busy === "probe" ? "Probing…" : "Test connection"}
+        </button>
+        {probeMsg && (
+          <span
+            className={`font-mono text-[11px] ${probeMsg.ok ? "text-emerald-700" : "text-red-700"}`}
+          >
+            {probeMsg.ok ? "● " : "✗ "}
+            {probeMsg.text}
+          </span>
+        )}
+      </div>
+
+      {children}
+
+      {err && (
+        <div className="rounded-md border border-red-100 bg-red-50 px-3 py-2 font-mono text-[11px] text-red-700">
+          {err}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HermesAddonPanel() {
+  return (
+    <BridgeAddonPanel
+      urlPlaceholder="http://127.0.0.1:8013"
+      load={() => api.hermesAddonInfo()}
+      save={(body) => api.hermesAddonSetConfig(body)}
+      probe={() => api.hermesAddonProbe()}
+    >
+      <details className="rounded-md border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-600">
+        <summary className="cursor-pointer font-medium text-ink">
+          How the Hermes bridge works
+        </summary>
+        <p className="mt-3 leading-relaxed">
+          Type <code className="rounded bg-gray-100 px-1 font-mono">/hermes</code>{" "}
+          in chat to open an agent sub-thread. Companion forwards your prompt
+          to the bridge running on your machine, which drives the Hermes
+          coding agent and streams its turns back.
+        </p>
+      </details>
+    </BridgeAddonPanel>
+  );
+}
+
+function PiAddonPanel() {
+  return (
+    <BridgeAddonPanel
+      urlPlaceholder="http://127.0.0.1:8014"
+      withCwd
+      load={() => api.piAddonInfo()}
+      save={(body) => api.piAddonSetConfig(body)}
+      probe={() => api.piAddonProbe()}
+    >
+      <details className="rounded-md border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-600">
+        <summary className="cursor-pointer font-medium text-ink">
+          How the Pi bridge works
+        </summary>
+        <p className="mt-3 leading-relaxed">
+          Type <code className="rounded bg-gray-100 px-1 font-mono">/pi</code>{" "}
+          in chat to open a Pi coding-agent sub-thread. The bridge wraps the{" "}
+          <code className="rounded bg-gray-100 px-1 font-mono">pi</code> CLI on
+          its host and can read, write, edit files and run shell commands in
+          the working directory above.
+        </p>
+      </details>
+    </BridgeAddonPanel>
   );
 }
 
@@ -1125,43 +1331,37 @@ function LiteLLMAddon() {
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white">
-      <div className="flex items-start gap-4 p-5">
-        <div className="mt-0.5 shrink-0 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-[10px] tracking-wider text-gray-500 uppercase">
-          add-on
+    <div className="flex flex-col gap-0 rounded-xl border border-gray-200 bg-white">
+      <div className="flex items-center gap-5 px-6 py-5">
+        <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg bg-[rgba(79,179,217,0.12)]">
+          <PackageIcon />
         </div>
-        <div className="flex flex-1 flex-col gap-1.5">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex items-center gap-2">
-            <h3 className="font-display text-[18px] font-medium text-navy">
+            <span className="text-[15px] font-medium text-ink">
               LiteLLM proxy
-            </h3>
-            <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600">
+            </span>
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
               optional
             </span>
           </div>
-          <p className="max-w-[640px] text-[13px] leading-relaxed text-gray-600">
+          <span className="text-[13px] leading-[20px] text-gray-600">
             Stand-alone LiteLLM proxy for cascade fallback, budget tracking,
             or the Anthropic protocol bridge. In gateway mode Odysseus
             already proxies cloud providers — most users can keep this off
             and run the simpler chain.
-          </p>
-        </div>
-        <label className="flex shrink-0 cursor-pointer items-center gap-2">
-          <span className="font-mono text-[11px] text-gray-500">
-            {enabled ? "ON" : "OFF"}
           </span>
-          <input
-            type="checkbox"
-            checked={enabled}
-            disabled={pending}
-            onChange={(e) => toggle(e.target.checked)}
-            className="h-4 w-4 cursor-pointer"
-          />
-        </label>
+        </div>
+        <StatusPill enabled={enabled} />
+        <Toggle
+          value={enabled}
+          onClick={() => toggle(!enabled)}
+          pending={pending}
+        />
       </div>
 
       {enabled && (
-        <div className="flex flex-col gap-3 border-t border-gray-100 px-5 py-4">
+        <div className="flex flex-col gap-3 border-t border-gray-200 bg-gray-50/60 px-6 py-5">
           <div className="flex flex-col gap-1">
             <label className="font-sans text-[11px] tracking-wider text-gray-500 uppercase">
               Proxy URL
