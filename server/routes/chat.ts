@@ -49,6 +49,7 @@ import {
 import type { GuestTokenContext } from "../lib/guest-token";
 import {
   appendInferenceContent,
+  appendInferenceReasoning,
   deleteInference,
   finishInference,
   markInferenceError,
@@ -910,6 +911,35 @@ chatRoute.post("/completions", async (c) => {
           // answer (or call more tools).
           continue;
         }
+        // Ghost guard: if the turn ends with NO assistant content and no
+        // tool calls, finishInference would skip persist (it requires
+        // inf.content truthy) → the bubble vanishes on reload. This is the
+        // recurring "ghost answer": a thinking model streams only
+        // `reasoning_content` (captured above into the reasoning channel)
+        // and never emits a `content` delta — e.g. thinking is enabled and
+        // the turn closes after the reasoning, or it hits the token cap
+        // mid-think. Mirror collectNonStream's fallback: emit a short note
+        // so the turn persists with something visible instead of ghosting.
+        if (!assistantContent.trim() && body.conversationId) {
+          const note =
+            "_(No answer was produced. If this model streams its reasoning on "
+            + "a separate channel, it may have spent the turn thinking without "
+            + "writing a reply — try disabling thinking for this model, or use a "
+            + "hosted model like `or:claude-haiku`.)_";
+          for (let i = 0; i < note.length; i += 32) {
+            const piece = note.slice(i, i + 32);
+            await safeWrite(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  choices: [
+                    { index: 0, delta: { content: piece }, finish_reason: null },
+                  ],
+                })}\n\n`,
+              ),
+            );
+            appendInferenceContent(body.conversationId, piece);
+          }
+        }
         // Either no tools requested, or finish_reason !== "tool_calls" → done.
         exitedNaturally = true;
         break;
@@ -1215,6 +1245,14 @@ async function pipeAndCollect(
           choices?: Array<{
             delta?: {
               content?: string | null;
+              // Thinking models stream chain-of-thought on a separate channel
+              // (`reasoning_content` for mlx-lm/Odysseus + DeepSeek-style
+              // servers, `reasoning` for some others). We must capture it:
+              // a turn that emits ONLY reasoning and never a `content` delta
+              // would otherwise leave the inference buffer empty → finishInference
+              // skips persist → the answer ghosts on reload.
+              reasoning_content?: string | null;
+              reasoning?: string | null;
               tool_calls?: Array<{
                 index?: number;
                 id?: string;
@@ -1252,6 +1290,11 @@ async function pipeAndCollect(
           assistantContent += choice.delta.content;
           chunkCount += 1;
           if (convId) appendInferenceContent(convId, choice.delta.content);
+        }
+        const reasoningPiece =
+          choice.delta?.reasoning_content ?? choice.delta?.reasoning;
+        if (reasoningPiece && convId) {
+          appendInferenceReasoning(convId, reasoningPiece);
         }
         if (choice.delta?.tool_calls) {
           for (const tc of choice.delta.tool_calls) {
