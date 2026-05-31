@@ -21,7 +21,7 @@
 
 import { promises as fs } from "node:fs";
 import { join, normalize } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index";
 import { projectMemoryFiles, projects } from "../db/schema";
 
@@ -56,18 +56,45 @@ type CorpusEntry = {
 };
 
 async function readDbFiles(projectId: string): Promise<CorpusEntry[]> {
+  // Two-phase byte-budgeted fetch — same shape as user-memory.readDbFiles (#7):
+  // metadata first, pick up to the per-turn byte cap in path order, then fetch
+  // content only for those rows instead of streaming the whole project corpus.
+  const metas = await db
+    .select({
+      path: projectMemoryFiles.path,
+      sizeBytes: projectMemoryFiles.sizeBytes,
+    })
+    .from(projectMemoryFiles)
+    .where(eq(projectMemoryFiles.projectId, projectId))
+    .orderBy(projectMemoryFiles.path);
+  const wanted: string[] = [];
+  let budget = 0;
+  for (const m of metas) {
+    wanted.push(m.path);
+    budget += m.sizeBytes ?? 0;
+    if (budget > MAX_CONTEXT_BYTES) break;
+  }
+  if (wanted.length === 0) return [];
   const rows = await db
     .select({
       path: projectMemoryFiles.path,
       content: projectMemoryFiles.content,
     })
     .from(projectMemoryFiles)
-    .where(eq(projectMemoryFiles.projectId, projectId));
-  return rows.map((r) => ({
-    path: r.path,
-    content: r.content,
-    origin: "imported" as const,
-  }));
+    .where(
+      and(
+        eq(projectMemoryFiles.projectId, projectId),
+        inArray(projectMemoryFiles.path, wanted),
+      ),
+    );
+  const byPath = new Map(rows.map((r) => [r.path, r.content]));
+  return wanted
+    .filter((p) => byPath.has(p))
+    .map((p) => ({
+      path: p,
+      content: byPath.get(p) as string,
+      origin: "imported" as const,
+    }));
 }
 
 /**

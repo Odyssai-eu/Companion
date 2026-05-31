@@ -23,7 +23,7 @@
 
 import { promises as fs } from "node:fs";
 import { join, normalize } from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index";
 import { userMemoryFiles, users } from "../db/schema";
 
@@ -73,18 +73,45 @@ type CorpusEntry = {
 };
 
 async function readDbFiles(userId: string): Promise<CorpusEntry[]> {
+  // Two-phase to bound the transfer: fetch metadata (cheap), pick files up to
+  // a byte budget in path order (the order the corpus is assembled in), then
+  // fetch content only for those — a large vault no longer streams tens of MB
+  // from Postgres to satisfy the ~200 KB per-turn cap (#7).
+  const metas = await db
+    .select({
+      path: userMemoryFiles.path,
+      sizeBytes: userMemoryFiles.sizeBytes,
+    })
+    .from(userMemoryFiles)
+    .where(eq(userMemoryFiles.userId, userId))
+    .orderBy(userMemoryFiles.path);
+  const wanted: string[] = [];
+  let budget = 0;
+  for (const m of metas) {
+    if (isMacOsCruft(m.path)) continue;
+    wanted.push(m.path);
+    budget += m.sizeBytes ?? 0;
+    if (budget > MAX_CONTEXT_BYTES) break;
+  }
+  if (wanted.length === 0) return [];
   const rows = await db
     .select({
       path: userMemoryFiles.path,
       content: userMemoryFiles.content,
     })
     .from(userMemoryFiles)
-    .where(eq(userMemoryFiles.userId, userId));
-  return rows
-    .filter((r) => !isMacOsCruft(r.path))
-    .map((r) => ({
-      path: r.path,
-      content: r.content,
+    .where(
+      and(
+        eq(userMemoryFiles.userId, userId),
+        inArray(userMemoryFiles.path, wanted),
+      ),
+    );
+  const byPath = new Map(rows.map((r) => [r.path, r.content]));
+  return wanted
+    .filter((p) => byPath.has(p))
+    .map((p) => ({
+      path: p,
+      content: byPath.get(p) as string,
       origin: "imported" as const,
     }));
 }

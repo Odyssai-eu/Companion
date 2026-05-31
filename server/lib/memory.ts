@@ -74,11 +74,15 @@ export async function getMemoryContext(
   // Load both sources in parallel — vault is local DB + disk, Karpathy is
   // an HTTP round-trip to the FastAPI sidecar. Slowest wins, but we don't
   // sequentialise them.
-  const [vault, autoEnabled] = await Promise.all([
+  const [vault, autoEnabled, karpathyRaw] = await Promise.all([
     getUserVaultBlock(userId),
     isAutoMemoryEnabled(userId),
+    fetchKarpathyMemory(userId, projectId),
   ]);
-  const karpathy = autoEnabled ? await fetchKarpathyMemory(userId, projectId) : "";
+  // fetchKarpathyMemory returns "" immediately when MEMORY_BASE_URL is unset
+  // (the common case), so fetching it inside the Promise.all adds no cost there
+  // and removes a serial round-trip when the memory service IS configured (#7).
+  const karpathy = autoEnabled ? karpathyRaw : "";
 
   if (!vault && !karpathy) return "";
   if (!vault) return karpathy;

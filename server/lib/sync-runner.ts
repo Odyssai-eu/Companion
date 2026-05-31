@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index";
 import { nodes, syncJobs, type Node, type SyncJob } from "../db/schema";
 import { logAuthEvent } from "./auth-log";
@@ -245,11 +245,15 @@ async function runJob(live: LiveJob): Promise<void> {
     .from(nodes)
     .where(eq(nodes.id, live.sourceNodeId))
     .limit(1);
-  const targetNodes: Node[] = [];
-  for (const tid of live.targetNodeIds) {
-    const [n] = await db.select().from(nodes).where(eq(nodes.id, tid)).limit(1);
-    if (n) targetNodes.push(n);
-  }
+  // Fetch all target nodes in one query (was one round-trip per id), then
+  // re-order to match targetNodeIds and drop any missing (#7).
+  const fetchedNodes = live.targetNodeIds.length
+    ? await db.select().from(nodes).where(inArray(nodes.id, live.targetNodeIds))
+    : [];
+  const nodeById = new Map(fetchedNodes.map((n) => [n.id, n]));
+  const targetNodes: Node[] = live.targetNodeIds
+    .map((tid) => nodeById.get(tid))
+    .filter((n): n is Node => Boolean(n));
 
   if (!sourceNode || targetNodes.length === 0) {
     await markStatus(live, "failed", "source or targets not found");

@@ -27,7 +27,7 @@
  * that conversation as the source context for the compile pass.
  */
 
-import { desc, eq, gte } from "drizzle-orm";
+import { desc, gte, inArray } from "drizzle-orm";
 import { db } from "../db/index";
 import { conversations, users } from "../db/schema";
 import { triggerCompile } from "./memory";
@@ -125,17 +125,28 @@ async function runGlobalSlot(slotLabel: string): Promise<void> {
     .select({ id: users.id })
     .from(users)
     .where(gte(users.lastInteractionAt, since));
+  if (activeUsers.length === 0) {
+    console.log(
+      `[memory-scheduler] slot=${slotLabel} (global) no active users`,
+    );
+    return;
+  }
+  const userIds = activeUsers.map((u) => u.id);
+
+  // Latest conversation per active user in ONE round-trip via DISTINCT ON
+  // (was N+1: a separate query per active user, awaited serially) (#7).
+  const latest = await db
+    .selectDistinctOn([conversations.userId], {
+      userId: conversations.userId,
+      id: conversations.id,
+    })
+    .from(conversations)
+    .where(inArray(conversations.userId, userIds))
+    .orderBy(conversations.userId, desc(conversations.updatedAt));
 
   let triggered = 0;
-  for (const u of activeUsers) {
-    const [conv] = await db
-      .select({ id: conversations.id })
-      .from(conversations)
-      .where(eq(conversations.userId, u.id))
-      .orderBy(desc(conversations.updatedAt))
-      .limit(1);
-    if (!conv) continue;
-    triggerCompile(u.id, conv.id);
+  for (const conv of latest) {
+    triggerCompile(conv.userId, conv.id);
     triggered++;
   }
   console.log(
