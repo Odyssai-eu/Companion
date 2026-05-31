@@ -50,18 +50,16 @@ export default function InferencePanel({ params, onChange, onClose }: Props) {
             value={params.thinking}
             onChange={(v) => onChange({ thinking: v })}
           />
-          {params.thinking && (
-            <SelectField
-              label="Reasoning effort"
-              value={params.reasoningEffort}
-              options={["none", "minimal", "low", "medium", "high", "xhigh"]}
-              onChange={(v) =>
-                onChange({
-                  reasoningEffort: v as InferenceParams["reasoningEffort"],
-                })
-              }
-            />
-          )}
+          <SelectField
+            label="Reasoning effort"
+            value={params.reasoningEffort}
+            options={["none", "minimal", "low", "medium", "high", "xhigh"]}
+            onChange={(v) =>
+              onChange({
+                reasoningEffort: v as InferenceParams["reasoningEffort"],
+              })
+            }
+          />
         </Column>
 
         <Divider />

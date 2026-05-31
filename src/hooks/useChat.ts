@@ -68,7 +68,9 @@ export const DEFAULT_INFERENCE: InferenceParams = {
   temperature: 0.7,
   maxTokens: 8192,
   thinking: false,
-  reasoningEffort: "medium",
+  // "none" = no explicit reasoning directive → the engine's per-model default
+  // decides (Step-3.7 → minimal, set server-side). Pick a level to override.
+  reasoningEffort: "none",
   topP: null,
   topK: null,
   minP: null,

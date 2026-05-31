@@ -519,7 +519,11 @@ chatRoute.post("/completions", async (c) => {
   // `enable_thinking: false` → `thinking: false` for Inferencer-style
   // providers, so we get consistent behaviour either way.
   baseBody.enable_thinking = body.thinking === true;
-  if (body.thinking && body.reasoning_effort)
+  // reasoning_effort is independent of the thinking toggle — reasoning-first
+  // models (Step-3.7) always think; the dial sets how much. Forward whenever
+  // the client sent a concrete level so it reaches the engine even with
+  // thinking off ("none"/empty → let the engine's per-model default decide).
+  if (body.reasoning_effort && body.reasoning_effort !== "none")
     baseBody.reasoning_effort = body.reasoning_effort;
 
   // Prefix-cache key for Odysseus (gateway mode). Odysseus reads

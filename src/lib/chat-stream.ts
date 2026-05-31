@@ -103,7 +103,11 @@ export async function streamChat(
         body.repetition_penalty = inf.repetition_penalty;
       if (inf.seed != null) body.seed = inf.seed;
       if (inf.thinking) body.thinking = true;
-      if (inf.thinking && inf.reasoning_effort)
+      // reasoning_effort is independent of the thinking toggle: reasoning-first
+      // models (Step-3.7) ALWAYS think — the dial controls how much, not
+      // whether. So send it whenever the user picked a level, even with
+      // thinking off. "none" means "let the engine decide" → omit it.
+      if (inf.reasoning_effort && inf.reasoning_effort !== "none")
         body.reasoning_effort = inf.reasoning_effort;
       if (inf.system_prompt) body.system_prompt = inf.system_prompt;
     }
