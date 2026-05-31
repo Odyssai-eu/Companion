@@ -928,6 +928,14 @@ export const agentSkills = pgTable(
   },
   (t) => ({
     userIdx: index("agent_skills_user_id_idx").on(t.userId),
+    // Case-insensitive uniqueness per user. Mirrors the index created in
+    // drizzle/0038_agent_skills.sql so a schema-first generate/push can't
+    // drop it (#6); the runtime duplicate-catch in skillCreate stays as
+    // defense-in-depth.
+    userNameCiUniq: uniqueIndex("agent_skills_user_name_unique").on(
+      t.userId,
+      sql`lower(${t.name})`,
+    ),
   }),
 );
 
