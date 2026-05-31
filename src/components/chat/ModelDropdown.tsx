@@ -5,6 +5,36 @@ import { formatBytes } from "~/lib/file-attach";
 import { formatTokenCount } from "~/lib/tokens";
 
 /**
+ * Turn a raw model path into a human label for the picker.
+ *
+ * The engine publishes the real model identity in `alias_for` (e.g.
+ * "mlx-community/Step-3.7-Flash-8bit") — the cluster alias the client
+ * dials ("kolos", "default") is just a routing handle, not something a
+ * user should read. So we strip the org prefix and the trailing quant
+ * token to get the model's actual name: "Step-3.7-Flash". The quant
+ * still shows in the row's subtitle, so dropping it here isn't lossy.
+ */
+function prettyModelName(raw?: string | null): string | null {
+  if (!raw) return null;
+  let s = raw.includes("/") ? raw.slice(raw.lastIndexOf("/") + 1) : raw;
+  // trailing quant: -8bit, -MLX-9bit, -4-bit, _8bit, … (optional MLX infix)
+  s = s.replace(/[-_](?:MLX[-_])?\d+(?:[._]\d+)?-?bit$/i, "");
+  s = s.replace(/[-_]MLX$/i, "");
+  return s.trim() || raw;
+}
+
+/**
+ * The label shown as the primary line of a picker row (and on the
+ * trigger). Prefer the real model name from the capability contract;
+ * fall back to the server-given name, then the raw id. The synthetic
+ * "Auto" entry and cloud aliases (no `odyssai`) fall straight through
+ * to `name`.
+ */
+function modelDisplayName(m: ApiGlobalModel): string {
+  return prettyModelName(m.odyssai?.alias_for) ?? m.name ?? m.id;
+}
+
+/**
  * The model picker used in the chat composer AND in the Auto Router
  * add-on settings. Renders a dropdown list grouped by tag, with rich
  * per-row metadata (cluster label, family, quant, status badges) when
@@ -120,7 +150,9 @@ export default function ModelDropdown({
     triggerLabel ??
     (value === "auto" && includeAuto
       ? "Auto"
-      : current?.name ?? value ?? placeholder);
+      : current
+        ? modelDisplayName(current)
+        : value || placeholder);
 
   return (
     <div ref={wrapperRef} className={`relative ${fullWidth ? "w-full" : ""}`}>
@@ -239,7 +271,7 @@ function ModelRow({
         className="flex flex-1 min-w-0 items-start justify-between gap-2 text-left"
       >
         <span className="flex min-w-0 flex-col gap-0.5">
-          <span className="truncate font-mono">{model.name}</span>
+          <span className="truncate font-mono">{modelDisplayName(model)}</span>
           {subtitle && (
             <span className="truncate font-mono text-[10px] text-gray-500">
               {subtitle}
@@ -348,8 +380,14 @@ function PoolBadge({
   if (!caps.pool && !caps.backend && !caps.cluster_label) return null;
   const isCloud = caps.backend === "http-proxy" && caps.kind !== "telemak";
   const isTelemak = caps.kind === "telemak";
-  const label =
-    caps.cluster_label ?? caps.pool ?? (isCloud ? "cloud" : "local");
+  // Pastille = the runtime identity, not the cluster's arbitrary nickname.
+  // Telemak nodes all read "Telemak" (the model name carries the row);
+  // local/distributed pools show the operator label ("Argo"); cloud shows
+  // the provider bucket. The cluster's own name (e.g. "Kolos") would just
+  // duplicate noise next to the model name now on the primary line.
+  const label = isTelemak
+    ? "Telemak"
+    : caps.cluster_label ?? caps.pool ?? (isCloud ? "cloud" : "local");
   return (
     <span
       title={
