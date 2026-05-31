@@ -34,6 +34,7 @@ import crypto from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index";
 import { mcpServers, type McpServerRow } from "../db/schema";
+import { assertFetchTargetAllowed } from "./net-guard";
 
 export type AuthServerMetadata = {
   issuer?: string;
@@ -61,6 +62,7 @@ const TOKEN_TIMEOUT_MS = 8_000;
 export async function discoverMetadata(
   mcpUrl: string,
 ): Promise<AuthServerMetadata> {
+  await assertFetchTargetAllowed(mcpUrl); // SSRF guard (#3)
   const u = new URL(mcpUrl);
   const candidates = [
     `${u.origin}/.well-known/oauth-authorization-server`,
@@ -110,6 +112,7 @@ export async function registerClient(
       "auth server has no registration_endpoint; manual client_id/secret required (not implemented yet)",
     );
   }
+  await assertFetchTargetAllowed(metadata.registration_endpoint); // SSRF guard (#3)
   const r = await fetch(metadata.registration_endpoint, {
     method: "POST",
     headers: {
@@ -235,6 +238,7 @@ async function tokenRequest(
   expiresInSec: number | null;
   scope: string | null;
 }> {
+  await assertFetchTargetAllowed(endpoint); // SSRF guard (#3)
   const r = await fetch(endpoint, {
     method: "POST",
     headers: {

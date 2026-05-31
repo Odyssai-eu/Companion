@@ -25,6 +25,7 @@ import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { users } from "../db/schema";
 import { scanForOdysseusEngines } from "../lib/discovery/odyssai-scan";
+import { assertFetchTargetAllowed } from "../lib/net-guard";
 import { invalidateEngineCache } from "../lib/odyssai-capabilities";
 import type { OdyssaiEngineMeta } from "../lib/odyssai-contract";
 
@@ -74,6 +75,16 @@ providersRoute.post(
     const userId = c.get("userId");
     const { host, port, user_label } = c.req.valid("json");
     const url = `http://${host}:${port}`;
+    // SSRF guard: block metadata/link-local/unspecified targets (#3). LAN
+    // engines on RFC1918 stay allowed — that is the intended join target.
+    try {
+      await assertFetchTargetAllowed(url);
+    } catch (e) {
+      return c.json(
+        { error: "blocked_target", detail: (e as Error).message },
+        400,
+      );
+    }
 
     const clientId = getOrCreateClientId();
     const clientName = `Companion @ ${hostname()}`;

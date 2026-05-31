@@ -11,6 +11,7 @@ import type {
   OdyssaiEngineMeta,
   OdyssaiModelList,
 } from "./odyssai-contract";
+import { assertFetchTargetAllowed } from "./net-guard";
 
 export type ProbeResult = {
   /** True if either /.well-known or /v1/models returned a 2xx. */
@@ -35,6 +36,23 @@ export async function probeEngine(
   capabilityToken?: string | null,
 ): Promise<ProbeResult> {
   const url = capabilityUrl.replace(/\/+$/, "");
+  // SSRF guard: reject metadata/link-local/unspecified targets (#3). LAN/RFC1918
+  // stays allowed (probing the LAN engine is the point). Never throws — surface
+  // the block as an unreachable result.
+  try {
+    await assertFetchTargetAllowed(url);
+  } catch (e) {
+    return {
+      reachable: false,
+      isOdyssai: false,
+      authRequired: false,
+      authProvided: !!capabilityToken,
+      modelsReachable: false,
+      supportsGateway: false,
+      cloudAliasesCount: 0,
+      error: (e as Error).message,
+    };
+  }
   let meta: OdyssaiEngineMeta | undefined;
   let isOdyssai = false;
   let modelsReachable = false;

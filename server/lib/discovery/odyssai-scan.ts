@@ -21,6 +21,7 @@
  */
 
 import os from "node:os";
+import { filterToPrivateCidrs } from "../net-guard";
 
 export type FoundEngine = {
   host: string;
@@ -149,7 +150,9 @@ export async function scanForOdysseusEngines(
   // Merge env-provided + host-detected, dedup. Env wins on placement
   // so admins can prepend a primary scan target.
   const merged = [...envSubnets, ...detected.filter((s) => !envSubnets.includes(s))];
-  const subnets = opts.subnetsOverride ?? merged;
+  // LAN discovery only scans private ranges — a user-supplied subnetsOverride
+  // can't turn this into an arbitrary external port-scanner (#3).
+  const subnets = filterToPrivateCidrs(opts.subnetsOverride ?? merged);
   const ports = opts.ports ?? DEFAULT_PORTS;
   const timeoutMs = opts.timeoutPerIpMs ?? DEFAULT_TIMEOUT_MS;
   const concurrency = opts.concurrency ?? DEFAULT_CONCURRENCY;
