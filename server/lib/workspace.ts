@@ -112,16 +112,6 @@ export async function fsRead(
   return row;
 }
 
-async function getWorkspaceUsage(userId: string): Promise<number> {
-  const [row] = await db
-    .select({
-      total: sql<number>`coalesce(sum(${workspaceFiles.sizeBytes}), 0)::int`,
-    })
-    .from(workspaceFiles)
-    .where(eq(workspaceFiles.userId, userId));
-  return row?.total ?? 0;
-}
-
 export async function fsWrite(
   userId: string,
   rawPath: string,
@@ -137,38 +127,49 @@ export async function fsWrite(
     );
   }
 
-  // Quota check — fetch current size of this file (if exists) to compute delta
-  const [existing] = await db
-    .select({ sizeBytes: workspaceFiles.sizeBytes })
-    .from(workspaceFiles)
-    .where(
-      and(eq(workspaceFiles.userId, userId), eq(workspaceFiles.path, path)),
-    )
-    .limit(1);
-
-  const usage = await getWorkspaceUsage(userId);
-  const delta = size - (existing?.sizeBytes ?? 0);
-  if (usage + delta > MAX_WORKSPACE_BYTES) {
-    throw new WorkspaceError(
-      "quota_exceeded",
-      `workspace quota exceeded (${MAX_WORKSPACE_BYTES} bytes max)`,
+  // Quota check + write run inside ONE transaction, serialized per-user via a
+  // Postgres advisory lock, so two concurrent fs_write calls can't both pass
+  // the check and together exceed MAX_WORKSPACE_BYTES (#5). The chat tool loop
+  // runs tool calls with Promise.all, so this race is reachable in practice.
+  let created = false;
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`,
     );
-  }
-
-  const created = !existing;
-
-  await db
-    .insert(workspaceFiles)
-    .values({ userId, path, content, sizeBytes: size, mimeType })
-    .onConflictDoUpdate({
-      target: [workspaceFiles.userId, workspaceFiles.path],
-      set: {
-        content,
-        sizeBytes: size,
-        mimeType,
-        updatedAt: sql`now()`,
-      },
-    });
+    const [existing] = await tx
+      .select({ sizeBytes: workspaceFiles.sizeBytes })
+      .from(workspaceFiles)
+      .where(
+        and(eq(workspaceFiles.userId, userId), eq(workspaceFiles.path, path)),
+      )
+      .limit(1);
+    const [usageRow] = await tx
+      .select({
+        total: sql<number>`coalesce(sum(${workspaceFiles.sizeBytes}), 0)::int`,
+      })
+      .from(workspaceFiles)
+      .where(eq(workspaceFiles.userId, userId));
+    const delta = size - (existing?.sizeBytes ?? 0);
+    if ((usageRow?.total ?? 0) + delta > MAX_WORKSPACE_BYTES) {
+      throw new WorkspaceError(
+        "quota_exceeded",
+        `workspace quota exceeded (${MAX_WORKSPACE_BYTES} bytes max)`,
+      );
+    }
+    created = !existing;
+    await tx
+      .insert(workspaceFiles)
+      .values({ userId, path, content, sizeBytes: size, mimeType })
+      .onConflictDoUpdate({
+        target: [workspaceFiles.userId, workspaceFiles.path],
+        set: {
+          content,
+          sizeBytes: size,
+          mimeType,
+          updatedAt: sql`now()`,
+        },
+      });
+  });
 
   return { path, sizeBytes: size, created };
 }
