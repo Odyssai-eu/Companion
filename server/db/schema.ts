@@ -611,6 +611,12 @@ export const authLog = pgTable(
     ip: text("ip"),
     userAgent: text("user_agent"),
     meta: jsonb("meta").$type<Record<string, unknown>>(),
+    // Enterprise audit fields (migration 0046)
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    resourceType: text("resource_type"),  // 'memory' | 'tool' | 'guest' | 'decision'
+    resourceId: text("resource_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
@@ -621,6 +627,7 @@ export const authLog = pgTable(
       t.userId,
       t.createdAt.desc(),
     ),
+    projectIdx: index("auth_log_project_idx").on(t.projectId, t.createdAt),
   }),
 );
 

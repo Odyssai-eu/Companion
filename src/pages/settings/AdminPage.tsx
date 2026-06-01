@@ -18,6 +18,7 @@ import { copyToClipboard } from "~/lib/clipboard";
 import {
   api,
   type ApiAdminUser,
+  type ApiAuditEntry,
   type ApiGuestToken,
   type AuthRole,
 } from "~/lib/api";
@@ -65,6 +66,7 @@ export default function AdminPage() {
 
       <UsersSection selfId={auth.user.id} />
       <GuestsSection />
+      <AuditLogSection />
     </div>
   );
 }
@@ -929,5 +931,115 @@ function XIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
       <path d="M18 6 6 18M6 6l12 12" />
     </svg>
+  );
+}
+
+// ── Audit log section ─────────────────────────────────────────────────────
+
+function AuditLogSection() {
+  const [entries, setEntries] = useState<ApiAuditEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState({ event: "", resourceType: "", from: "", to: "" });
+
+  useEffect(() => {
+    setLoading(true);
+    api.listAuditLog({ limit: 100, ...filter })
+      .then((r) => setEntries(r.entries))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [filter]);
+
+  const exportUrl = api.auditExportUrl(filter.from || undefined, filter.to || undefined);
+
+  return (
+    <section className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-[28px] font-light text-navy">Audit log</h2>
+        <a
+          href={exportUrl}
+          download
+          className="rounded-md border border-gray-200 px-3 py-1.5 font-mono text-[11px] text-gray-600 hover:border-cyan hover:text-navy"
+        >
+          Export CSV
+        </a>
+      </div>
+      <p className="text-[13px] text-gray-500">
+        Enterprise access log — memory reads, tool invocations, decisions, auth events.
+        For DPO export, use the CSV button above.
+      </p>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-2">
+        {[
+          { key: "event", placeholder: "Event type (e.g. memory.read)" },
+          { key: "resourceType", placeholder: "Resource type" },
+          { key: "from", placeholder: "From (YYYY-MM-DD)", type: "date" },
+          { key: "to", placeholder: "To (YYYY-MM-DD)", type: "date" },
+        ].map(({ key, placeholder, type }) => (
+          <input
+            key={key}
+            type={type ?? "text"}
+            placeholder={placeholder}
+            value={filter[key as keyof typeof filter]}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, [key]: e.target.value }))
+            }
+            className="rounded border border-gray-200 px-2 py-1 font-mono text-[11px] focus:border-cyan focus:outline-none"
+          />
+        ))}
+      </div>
+
+      {loading && <p className="font-mono text-[11px] text-gray-400">Loading…</p>}
+
+      <div className="overflow-x-auto rounded-lg border border-gray-200">
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50 font-mono text-[10px] uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 text-left">When</th>
+              <th className="px-3 py-2 text-left">Event</th>
+              <th className="px-3 py-2 text-left">User</th>
+              <th className="px-3 py-2 text-left">Resource</th>
+              <th className="px-3 py-2 text-left">IP</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.length === 0 && !loading && (
+              <tr>
+                <td colSpan={5} className="px-3 py-6 text-center font-mono text-[11px] text-gray-400">
+                  No entries matching the current filter.
+                </td>
+              </tr>
+            )}
+            {entries.map((e) => (
+              <tr key={e.id} className="border-b border-gray-50 hover:bg-gray-50">
+                <td className="px-3 py-2 font-mono text-[11px] text-gray-400 whitespace-nowrap">
+                  {new Date(e.createdAt).toLocaleString()}
+                </td>
+                <td className="px-3 py-2 font-mono text-[11px]">
+                  <span className={`rounded px-1.5 py-0.5 ${
+                    e.event.startsWith("memory") ? "bg-cyan/10 text-cyan-700"
+                    : e.event.startsWith("tool") ? "bg-amber-50 text-amber-700"
+                    : e.event.startsWith("login") ? "bg-gray-100 text-gray-600"
+                    : "bg-gray-50 text-gray-500"
+                  }`}>
+                    {e.event}
+                  </span>
+                </td>
+                <td className="px-3 py-2 font-mono text-[11px] text-gray-600">
+                  {e.userId ? e.userId.slice(0, 8) + "…" : "—"}
+                </td>
+                <td className="px-3 py-2 font-mono text-[11px] text-gray-500">
+                  {e.resourceType ? `${e.resourceType}` : "—"}
+                  {e.resourceId ? ` · ${e.resourceId.slice(0, 8)}…` : ""}
+                </td>
+                <td className="px-3 py-2 font-mono text-[11px] text-gray-400">
+                  {e.ip ?? "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

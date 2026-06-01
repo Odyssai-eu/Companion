@@ -15,6 +15,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
+import { logAuthEvent } from "../lib/auth-log";
 import { decisions, projects } from "../db/schema";
 
 // The route is mounted at /api/projects/:id/decisions — Hono receives the
@@ -103,6 +104,15 @@ decisionsRoute.post("/", zValidator("json", createSchema), async (c) => {
       revisitBy: body.revisitBy ?? null,
     })
     .returning();
+
+  logAuthEvent({
+    userId,
+    event: "decision.create",
+    projectId,
+    resourceType: "decision",
+    resourceId: created.id,
+    meta: { title: created.title },
+  });
 
   return c.json({ decision: publicDecision(created) }, 201);
 });

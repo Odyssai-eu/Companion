@@ -29,6 +29,7 @@ import helpRoute from "./routes/help";
 import { loadCorpus as loadHelpCorpus } from "./lib/help-search";
 import adminGuestTokensRoute from "./routes/admin-guest-tokens";
 import adminUsersRoute from "./routes/admin-users";
+import auditRoute from "./routes/admin-audit";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
@@ -43,6 +44,7 @@ import skillsRoute from "./routes/skills";
 import projectMemoryRoute from "./routes/project-memory";
 import projectsRoute from "./routes/projects";
 import { decisionsRoute } from "./routes/decisions";
+import { setupRoute } from "./routes/setup";
 import userMemoryRoute from "./routes/user-memory";
 import providersRoute from "./routes/providers";
 import ttsRoute from "./routes/tts";
@@ -71,6 +73,8 @@ app.get("/api/health", (c) =>
 
 // Auth routes are always open (they're how you get a session)
 app.route("/api/auth", authRoute);
+// Setup is unauthenticated — must be mounted before the user gate.
+app.route("/api/setup", setupRoute);
 
 // License gate + user gate on everything else.
 // hermesBearerLoader resolves `Authorization: Bearer hms_<…>` into a real
@@ -175,6 +179,7 @@ app.route("/api/skills", skillsRoute);
 app.get("/api/mcp-oauth/callback", handleOauthCallback);
 app.route("/api/admin/users", adminUsersRoute);
 app.route("/api/admin/guest-tokens", adminGuestTokensRoute);
+app.route("/api/admin/audit", auditRoute);
 app.route("/api/agent-tokens", agentTokensRoute);
 app.route("/api/guest", guestRoute);
 

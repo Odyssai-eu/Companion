@@ -454,6 +454,18 @@ export type ApiAdminUser = {
   lastInteractionAt: string | null;
 };
 
+export type ApiAuditEntry = {
+  id: string;
+  userId: string | null;
+  event: string;
+  ip: string | null;
+  projectId: string | null;
+  resourceType: string | null;
+  resourceId: string | null;
+  meta: Record<string, unknown> | null;
+  createdAt: string;
+};
+
 export type ApiAdminGroup = {
   id: string;
   name: string;
@@ -1425,6 +1437,37 @@ export const api = {
     ),
 
   // Users
+  // Audit log
+  listAuditLog: (params?: {
+    limit?: number;
+    offset?: number;
+    userId?: string;
+    event?: string;
+    resourceType?: string;
+    from?: string;
+    to?: string;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.offset) q.set("offset", String(params.offset));
+    if (params?.userId) q.set("userId", params.userId);
+    if (params?.event) q.set("event", params.event);
+    if (params?.resourceType) q.set("resourceType", params.resourceType);
+    if (params?.from) q.set("from", params.from);
+    if (params?.to) q.set("to", params.to);
+    const qs = q.toString();
+    return request<{ entries: ApiAuditEntry[]; limit: number; offset: number }>(
+      `/api/admin/audit${qs ? `?${qs}` : ""}`,
+    );
+  },
+  auditExportUrl: (from?: string, to?: string) => {
+    const q = new URLSearchParams();
+    if (from) q.set("from", from);
+    if (to) q.set("to", to);
+    const qs = q.toString();
+    return `/api/admin/audit/export.csv${qs ? `?${qs}` : ""}` as const;
+  },
+
   listAdminUsers: () =>
     request<{ users: ApiAdminUser[] }>("/api/admin/users"),
   createAdminUser: (body: {

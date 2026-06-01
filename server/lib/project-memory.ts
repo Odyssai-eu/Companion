@@ -23,6 +23,7 @@ import { promises as fs } from "node:fs";
 import { join, normalize } from "node:path";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db/index";
+import { logAuthEvent } from "./auth-log";
 import { decisions, projectMemoryFiles, projects } from "../db/schema";
 
 /**
@@ -196,6 +197,8 @@ async function readVaultFiles(rootPath: string): Promise<CorpusEntry[]> {
  */
 export async function getProjectMemoryContext(
   projectId: string,
+  /** userId for audit log — optional, omit for system calls */
+  callerUserId?: string,
 ): Promise<string> {
   const [proj] = await db
     .select({
@@ -277,7 +280,20 @@ export async function getProjectMemoryContext(
     }
   }
 
-  return parts.join("");
+  const result = parts.join("");
+
+  // Audit: log memory access when context is non-empty and caller is known.
+  if (result && callerUserId) {
+    logAuthEvent({
+      userId: callerUserId,
+      event: "memory.read",
+      projectId,
+      resourceType: "memory",
+      resourceId: projectId,
+    });
+  }
+
+  return result;
 }
 
 export type ProjectMemoryStats = {

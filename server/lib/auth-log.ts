@@ -35,7 +35,12 @@ export type AuthEvent =
   | "sync.start"
   | "sync.cancel"
   | "sync.done"
-  | "sync.failed";
+  | "sync.failed"
+  // Enterprise audit events (migration 0046)
+  | "memory.read"       // project memory injected into a conversation
+  | "tool.invoke"       // MCP tool called
+  | "decision.create"   // decision log entry created
+  | "setup.init";       // first-run operator account created
 
 export interface LogAuthEventInput {
   userId?: string | null;
@@ -43,6 +48,10 @@ export interface LogAuthEventInput {
   ip?: string | null;
   userAgent?: string | null;
   meta?: Record<string, unknown> | null;
+  // Enterprise audit fields
+  projectId?: string | null;
+  resourceType?: string | null;
+  resourceId?: string | null;
 }
 
 /**
@@ -58,6 +67,9 @@ export function logAuthEvent(input: LogAuthEventInput): void {
       ip: input.ip ?? null,
       userAgent: input.userAgent ?? null,
       meta: input.meta ?? null,
+      projectId: input.projectId ?? null,
+      resourceType: input.resourceType ?? null,
+      resourceId: input.resourceId ?? null,
     })
     .catch((err) => {
       console.error("[auth-log] insert failed:", err);

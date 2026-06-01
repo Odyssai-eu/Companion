@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router";
 import ProtectedRoute from "./components/ProtectedRoute";
+import SetupPage from "./pages/SetupPage";
 import ChatLayout from "./layouts/ChatLayout";
 import SettingsLayout from "./layouts/SettingsLayout";
 import LoginPage from "./pages/auth/LoginPage";
@@ -24,6 +25,8 @@ import ShortcutsPage from "./pages/settings/ShortcutsPage";
 export default function App() {
   return (
     <Routes>
+      {/* First-run setup — unauthenticated, one-shot */}
+      <Route path="/setup" element={<SetupPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/g/:token" element={<GuestEntry />} />
