@@ -265,12 +265,32 @@ function AssistantMessage({
   showMetrics?: boolean;
 }) {
   const thinking = !message.content && (message.streaming || !!message.reasoning);
+
+  // "Breathing" glow: when the stream finishes (streaming true→false with
+  // content), the bear icon pulses softly for ~2.5s — like Claude's asterisk,
+  // a quiet signal that the reply just landed. No artificial delay added.
+  const [justFinished, setJustFinished] = useState(false);
+  const wasStreamingRef = useRef(false);
+  useEffect(() => {
+    const wasStreaming = wasStreamingRef.current;
+    wasStreamingRef.current = !!message.streaming;
+    if (wasStreaming && !message.streaming && message.content) {
+      setJustFinished(true);
+      const t = setTimeout(() => setJustFinished(false), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [message.streaming, message.content]);
+
   return (
     <div className="flex gap-4">
       <img
         src="/logo/icon-192.png"
         alt="Bear"
-        className="h-8 w-8 flex-shrink-0 rounded-full"
+        className={`h-8 w-8 flex-shrink-0 rounded-full transition-shadow duration-700 ${
+          justFinished
+            ? "shadow-[0_0_0_3px_rgba(0,204,204,0.55),0_0_14px_4px_rgba(0,204,204,0.3)] animate-pulse"
+            : ""
+        }`}
       />
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         {message.reasoning && (
