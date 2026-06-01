@@ -4,7 +4,7 @@ Picking what's behind the chat. Companion can route to many models in many ways;
 
 ## Where the picker lives
 
-In the **chat header**, leftmost element. Click it to open the model panel. The label always reads `<alias> — <concrete>` when both are known (e.g. `my-cluster — Qwen3-MLX-8bit`), or just `<alias>` for cloud aliases that don't expose a concrete name.
+In the **chat header**, leftmost element. Click it to open the model panel. The label shows the **model name** when the engine provides it — org prefix and quantization suffix are stripped for readability (e.g. `mlx-community/Step-3.7-Flash-8bit` → `Step-3.7-Flash`). The quantization still appears in the row's subtitle. For cloud aliases that don't expose a concrete model name, the alias itself is shown.
 
 ## Inference modes
 
@@ -69,15 +69,19 @@ Click the model picker in the chat header → pick another model → next turn f
 
 This means **one conversation can span multiple models**. The session_id stays the same (= the conversation UUID), so Odysseus keeps the KV prefix cache between turns — but the cache hit depends on the new model loading the same prefix bytes. Mixing two different model families in one conv = expect cold prefill on every model change.
 
-## Aliases vs concrete model names
+## Model names vs cluster aliases
 
-Companion shows **aliases** in the picker (`<your-cluster-name>`, `or:claude-haiku`, `probe`). The engine resolves them to concrete model paths internally. The stats row shows both:
+The picker shows the **loaded model's name** as the primary label — not the cluster alias you use to route to it. So selecting "Argo" or "kolos" in your engine config shows up as `Qwen3.5-397B-A17B` or `Step-3.7-Flash` in the picker, because that's what's actually loaded behind the alias.
+
+The **pool badge** (the small chip next to the load state) carries the runtime identity: `Telemak` for Swift single-node runtimes, `Argo` (or your cluster's label) for distributed MLX pools, `cloud` for passthrough routes.
+
+The stats row shows both the alias and the concrete path:
 
 ```
 Model: <alias> — <concrete-model>
 ```
 
-If you only see the alias and the concrete is missing, the engine didn't return `x_odyssai.alias_for` for that model. Either pre-Odysseus engine, or cloud passthrough.
+If the picker shows just an alias with no model name, the engine didn't return `x_odyssai.alias_for` for that entry — pre-Odysseus engine or cloud passthrough without a concrete mapping.
 
 ## Alias prefix conventions
 

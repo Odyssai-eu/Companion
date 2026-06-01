@@ -152,6 +152,8 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Reasoner** — A model that supports `enable_thinking` (Hy3-preview, Qwen3-thinking, Claude with extended thinking). Longer turns, deeper output.
 
+**Reasoning effort** — OpenAI o-series convention adopted by some local models. Values: `none` / `minimal` / `low` / `medium` / `high` / `xhigh`. Controls how much the model reasons before answering. Independent of the thinking toggle — relevant especially for always-think models (Step-3.7-Flash, MiniMax) that can't be told to stop thinking but can be told to think less. The engine (Odysseus) applies a per-model default when nothing is sent (`minimal` for Step-3.7). See *Inference settings* (14).
+
 **Remember now** — Action in the chat header memory menu to refresh the conversation's wiki snapshot from the current wiki state.
 
 ## S
@@ -171,6 +173,8 @@ Terms used in Companion and the surrounding stack, with cross-references.
 **Talk mode** — Full-screen voice surface. `kind='talk'` conversation. On the roadmap; see *Voice & talk* (08).
 
 **TB5** — Thunderbolt 5. The mesh fabric between Apple Silicon nodes when JACCL/RDMA is used inside an Odysseus cluster.
+
+**Telemak** — Single-node Swift runtime (`mlx-swift-lm` fork) running on Apple Silicon. Orchestrated by Odysseus. Appears in the Companion picker with a `Telemak` pool badge. Fast for models that fit on one node; no multi-node sharding. Requires v0.6.33+ for mixed-quantization models (6-bit body + 8-bit MoE gate). See *Engine pairing* (16).
 
 **TTFT** — Time To First Token. Latency from request to first SSE event.
 

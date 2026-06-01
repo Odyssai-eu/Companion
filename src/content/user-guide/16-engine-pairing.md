@@ -122,9 +122,22 @@ Conversations stay — they're not engine-bound at the row level. The conversati
 
 If the new engine doesn't publish a given alias, future turns of those conversations error out until you re-route them. Bulk-edit via the API if needed, or open a fresh conv.
 
+## Telemak nodes
+
+Odysseus can orchestrate **Telemak** nodes — single-node Swift runtime (`mlx-swift-lm`) running on Apple Silicon. From Companion's perspective they're transparent: Odysseus proxies them and publishes their loaded models in the catalog alongside distributed pools.
+
+In the picker, Telemak-served models show the `Telemak` pool badge (instead of `Argo` or the cluster label). The model name, load state, and capability chips work the same way.
+
+What's different under the hood:
+- Telemak is a single-node runtime — no JACCL/RDMA, no multi-node sharding. Throughput is determined by that one node's memory bandwidth.
+- Load/unload is controlled from the Odysseus admin dashboard (Start / Stop / Restart / Quit per cluster).
+- Models with mixed quantization (e.g. 6-bit body + 8-bit MoE gate) require Telemak 0.6.33+. Earlier versions load but generate corrupted output.
+
+Telemak nodes are configured in Odysseus (not in Companion). Once configured and loaded, they appear in the picker automatically.
+
 ## Related
 
 - *Model picker* (06) — what gateway/hybrid/legacy modes feel like from the picker
 - *Inference settings* (14) — the cogwheel + presets
 - *Troubleshooting* (20) — pairing-specific failures
-- *Glossary* (21) — gateway, hybrid, legacy, KV cache, session_id
+- *Glossary* (21) — gateway, hybrid, legacy, KV cache, session_id, Telemak

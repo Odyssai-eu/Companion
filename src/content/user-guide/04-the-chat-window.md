@@ -32,13 +32,13 @@ Hover a row → mini-menu: rename, move to project, pin, export `.md`, export `.
 
 Left to right:
 
-- **Model picker** — opens the model panel (see *Model picker*, 06). The label shows the active alias + the concrete model behind it (e.g. `<your-alias> — <concrete-model>`).
+- **Model picker** — opens the model panel (see *Model picker*, 06). The label shows the **loaded model's name** (org prefix and quant suffix stripped), e.g. `Step-3.7-Flash` or `Qwen3-Coder-Next`. The pool badge next to it shows the runtime: `Telemak`, `Argo`, `cloud`, etc.
 - **Agent mode** toggle — On = inject the full agentic toolset (fs_*, rag_search, web_*, MCP servers) into the chat. Off = lean prompt (~250 tokens of overhead), no tools sent to the model. Default off.
 - **Memory** toggle — On = the conversation has injected its frozen memory snapshot. Off = no global wiki / project memory at all for this chat. See *Memory* (10).
 - **Voice** icon — reserved for auto-speak of assistant replies (coming; see *Voice & talk*, 08).
 - **⚙ cogwheel** — opens the per-conversation Inference settings panel (sampling, max tokens, thinking, system prompt). See *Inference settings* (14).
 
-The header also shows a stats line for the active reply when **Show metrics** is on (Settings → Inference). Format: `TTFT 1.2s · Duration 14s · Prompt 8.4k tok · Completion 1.1k tok · Speed 78 tok/s · Cached 6.2k tok (74%) · Model <alias> — <concrete-model>`.
+The header also shows a stats line for the active reply when **Show metrics** is on (Settings → Inference). Format: `TTFT 1.2s · Duration 14s · Prompt 8.4k tok · Completion 1.1k tok · Speed 78 tok/s · Cached 6.2k tok (74%) · Model <alias> — <concrete-model>`. The stats row always shows alias + full concrete path (with org prefix and quant) so you know exactly what served the turn.
 
 ## Message rows
 

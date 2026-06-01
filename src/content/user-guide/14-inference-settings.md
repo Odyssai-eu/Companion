@@ -26,18 +26,28 @@ The form field set you see varies by model:
 
 Some models expose a "thinking" budget — extended reasoning before the visible reply.
 
-- **Thinking toggle** — on/off. Default off.
-- **Reasoning effort** — low / medium / high / xhigh / minimal / none (only when thinking is on). Hints to the model how much reasoning to do.
+- **Thinking toggle** — on/off. Default off. For models that always reason (see below), the toggle has no effect — they think regardless.
+- **Reasoning effort** — `none` / `minimal` / `low` / `medium` / `high` / `xhigh`. Controls how much the model reasons. **Independent of the thinking toggle** — always visible, always sent when set.
 
 Companion always sends `enable_thinking` explicitly — never relies on provider defaults. This avoids drift between providers (each has its own default; sending the flag yourself keeps behaviour consistent across them).
 
-When thinking is on:
+### Always-think models (e.g. Step-3.7-Flash)
+
+Some reasoning-first models (Step-3.7-Flash, MiniMax) always open a `<think>` block regardless of the toggle — there is no off-switch. For these, `reasoning_effort` is the real control:
+
+- `minimal` — short reasoning, fast. **Default** for Step-3.7 when nothing is set explicitly.
+- `low` / `medium` — balanced.
+- `high` / `xhigh` — full reasoning budget. Useful for hard constrained tasks (long-form writing, strict JSON, count-exact output) but expect longer replies — 10k–30k+ tokens of reasoning on complex prompts.
+
+For always-think models, Companion filters the `<think>` block out of the visible content and routes it to the collapsed reasoning area automatically — you never see raw `<think>` text in the chat.
+
+When thinking is on (or always-think model):
 
 - The reply takes longer (proportional to effort).
-- The `<think>…</think>` block is collapsed by default behind a chevron in the chat (click to expand).
-- Some models stream the thinking content separately as `delta.reasoning_content` — Companion routes it to the collapsed area.
+- The reasoning block is collapsed behind a chevron (click to expand).
+- Some models stream it separately as `delta.reasoning_content` — Companion routes it to the collapsed area.
 
-Note: when Voice mode ships, pair it with thinking off or low — heavy thinking before any audio leaves long silences (see *Voice & talk*, 08).
+Note: when Voice mode ships, pair it with `minimal` effort or thinking off — heavy reasoning before audio leaves long silences (see *Voice & talk*, 08).
 
 ## Inference presets
 
