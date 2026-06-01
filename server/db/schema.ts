@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  date,
   doublePrecision,
   index,
   integer,
@@ -205,6 +206,40 @@ export const projects = pgTable(
       t.userId,
       t.updatedAt,
     ),
+  }),
+);
+
+/**
+ * Decision Log — append-only structured decisions scoped to a project.
+ *
+ * The wiki says what is *true*; the decision log says what was *decided*
+ * and why. Append-only contract: no updates, soft-delete only via
+ * deleted_at so the audit trail is never broken.
+ */
+export const decisions = pgTable(
+  "decisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    createdBy: uuid("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    title: text("title").notNull(),
+    context: text("context").notNull().default(""),
+    alternatives: text("alternatives").notNull().default(""),
+    choice: text("choice").notNull().default(""),
+    rationale: text("rationale").notNull().default(""),
+    revisitBy: date("revisit_by"),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    projectIdx: index("decisions_project_idx").on(t.projectId, t.createdAt),
+    createdByIdx: index("decisions_created_by_idx").on(t.createdBy),
   }),
 );
 

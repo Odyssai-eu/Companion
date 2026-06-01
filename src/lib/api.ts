@@ -343,6 +343,19 @@ export type ApiProjectCategory = {
   systemPrompt: string;
 };
 
+export type ApiDecision = {
+  id: string;
+  projectId: string;
+  createdBy: string | null;
+  title: string;
+  context: string;
+  alternatives: string;
+  choice: string;
+  rationale: string;
+  revisitBy: string | null;
+  createdAt: string;
+};
+
 export type ApiWorkspaceFile = {
   path: string;
   sizeBytes: number;
@@ -1012,6 +1025,31 @@ export const api = {
     ),
   wipeProjectMemory: (id: string) =>
     request<void>(`/api/projects/${id}/memory`, { method: "DELETE" }),
+
+  // Decision log ──────────────────────────────────────────────────────────
+  listDecisions: (projectId: string) =>
+    request<{ decisions: ApiDecision[] }>(
+      `/api/projects/${projectId}/decisions`,
+    ),
+  createDecision: (
+    projectId: string,
+    body: {
+      title: string;
+      context?: string;
+      alternatives?: string;
+      choice?: string;
+      rationale?: string;
+      revisitBy?: string | null;
+    },
+  ) =>
+    request<{ decision: ApiDecision }>(
+      `/api/projects/${projectId}/decisions`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  deleteDecision: (projectId: string, decisionId: string) =>
+    request<void>(`/api/projects/${projectId}/decisions/${decisionId}`, {
+      method: "DELETE",
+    }),
 
   // User memory vault (global, per-account) ─────────────────────────────
   listUserMemory: () =>

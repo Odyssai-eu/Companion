@@ -7,6 +7,7 @@ import { ProjectStatusIcons } from "~/components/ProjectStatusIcons";
 import {
   api,
   type ApiConversation,
+  type ApiDecision,
   type ApiProject,
   type ApiProjectCategory,
   type ApiProjectMemoryFile,
@@ -19,6 +20,8 @@ export default function ProjectPage() {
   const isNew = id === "new";
   const [project, setProject] = useState<ApiProject | null>(null);
   const [conversations, setConversations] = useState<ApiConversation[]>([]);
+  const [decisions, setDecisions] = useState<ApiDecision[]>([]);
+  const [showDecisionForm, setShowDecisionForm] = useState(false);
   const [categories, setCategories] = useState<ApiProjectCategory[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,8 +66,8 @@ export default function ProjectPage() {
     }
     if (!id) return;
     setError(null);
-    Promise.all([api.getProject(id), api.listConversations()])
-      .then(([p, c]) => {
+    Promise.all([api.getProject(id), api.listConversations(), api.listDecisions(id)])
+      .then(([p, c, d]) => {
         setProject(p.project);
         setName(p.project.name);
         setCategory(p.project.category);
@@ -77,6 +80,7 @@ export default function ProjectPage() {
         setExternalVaultReadOnly(p.project.externalVaultReadOnly ?? true);
         setSharingEnabled(p.project.sharingEnabled ?? false);
         setConversations(c.conversations.filter((x) => x.projectId === id));
+        setDecisions(d.decisions);
       })
       .catch((e) => setError((e as Error).message));
   }, [id, isNew]);
@@ -467,6 +471,19 @@ export default function ProjectPage() {
                 ))}
               </div>
             </section>
+          )}
+
+          {!isNew && (
+            <DecisionsPanel
+              projectId={id!}
+              decisions={decisions}
+              showForm={showDecisionForm}
+              onShowForm={setShowDecisionForm}
+              onCreated={(d) => setDecisions((prev) => [...prev, d])}
+              onDeleted={(did) =>
+                setDecisions((prev) => prev.filter((d) => d.id !== did))
+              }
+            />
           )}
         </div>
       </main>
@@ -920,5 +937,202 @@ function ProjectMemoryPanel({
         </div>
       )}
     </div>
+  );
+}
+
+// ── Decision Log panel ────────────────────────────────────────────────────
+
+function DecisionsPanel({
+  projectId,
+  decisions,
+  showForm,
+  onShowForm,
+  onCreated,
+  onDeleted,
+}: {
+  projectId: string;
+  decisions: ApiDecision[];
+  showForm: boolean;
+  onShowForm: (v: boolean) => void;
+  onCreated: (d: ApiDecision) => void;
+  onDeleted: (id: string) => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [form, setForm] = useState({
+    title: "",
+    context: "",
+    alternatives: "",
+    choice: "",
+    rationale: "",
+    revisitBy: "",
+  });
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.title.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await api.createDecision(projectId, {
+        title: form.title,
+        context: form.context,
+        alternatives: form.alternatives,
+        choice: form.choice,
+        rationale: form.rationale,
+        revisitBy: form.revisitBy || null,
+      });
+      onCreated(res.decision);
+      setForm({ title: "", context: "", alternatives: "", choice: "", rationale: "", revisitBy: "" });
+      onShowForm(false);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-[20px] font-light text-navy">
+          Decisions
+        </h2>
+        <button
+          type="button"
+          onClick={() => onShowForm(!showForm)}
+          className="rounded-md border border-gray-200 px-3 py-1 font-mono text-[11px] text-gray-600 hover:border-cyan hover:text-navy"
+        >
+          {showForm ? "Cancel" : "+ Log decision"}
+        </button>
+      </div>
+
+      {showForm && (
+        <form
+          onSubmit={handleSubmit}
+          className="flex flex-col gap-3 rounded-lg border border-cyan/40 bg-cyan/5 p-4"
+        >
+          <div className="flex flex-col gap-1">
+            <label className="font-mono text-[11px] text-gray-500">What was decided *</label>
+            <input
+              value={form.title}
+              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+              placeholder="One-line decision title"
+              className="rounded border border-gray-200 px-3 py-2 text-[13px] focus:border-cyan focus:outline-none"
+              required
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="font-mono text-[11px] text-gray-500">Context</label>
+              <textarea
+                value={form.context}
+                onChange={(e) => setForm((f) => ({ ...f, context: e.target.value }))}
+                placeholder="Why was this decision needed?"
+                rows={2}
+                className="rounded border border-gray-200 px-3 py-2 text-[13px] focus:border-cyan focus:outline-none"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="font-mono text-[11px] text-gray-500">Alternatives considered</label>
+              <textarea
+                value={form.alternatives}
+                onChange={(e) => setForm((f) => ({ ...f, alternatives: e.target.value }))}
+                placeholder="What was rejected and why?"
+                rows={2}
+                className="rounded border border-gray-200 px-3 py-2 text-[13px] focus:border-cyan focus:outline-none"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="font-mono text-[11px] text-gray-500">Decision retained</label>
+              <textarea
+                value={form.choice}
+                onChange={(e) => setForm((f) => ({ ...f, choice: e.target.value }))}
+                placeholder="What was chosen?"
+                rows={2}
+                className="rounded border border-gray-200 px-3 py-2 text-[13px] focus:border-cyan focus:outline-none"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="font-mono text-[11px] text-gray-500">Rationale</label>
+              <textarea
+                value={form.rationale}
+                onChange={(e) => setForm((f) => ({ ...f, rationale: e.target.value }))}
+                placeholder="Why this choice?"
+                rows={2}
+                className="rounded border border-gray-200 px-3 py-2 text-[13px] focus:border-cyan focus:outline-none"
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col gap-1">
+              <label className="font-mono text-[11px] text-gray-500">Revisit by (optional)</label>
+              <input
+                type="date"
+                value={form.revisitBy}
+                onChange={(e) => setForm((f) => ({ ...f, revisitBy: e.target.value }))}
+                className="rounded border border-gray-200 px-3 py-2 text-[13px] focus:border-cyan focus:outline-none"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={submitting || !form.title.trim()}
+              className="ml-auto mt-4 rounded-lg bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
+            >
+              {submitting ? "Logging…" : "Log decision"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {decisions.length === 0 && !showForm && (
+        <p className="text-[13px] text-gray-400">
+          No decisions logged yet. Decisions are append-only — they document what was chosen and why, not just what is true.
+        </p>
+      )}
+
+      <div className="flex flex-col gap-2">
+        {decisions.map((d) => (
+          <div
+            key={d.id}
+            className="flex flex-col gap-1.5 rounded-lg border border-gray-200 bg-white px-4 py-3"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-[14px] font-medium text-navy">{d.title}</span>
+              <div className="flex shrink-0 items-center gap-2">
+                {d.revisitBy && (
+                  <span className="font-mono text-[10px] text-amber-600">
+                    revisit {d.revisitBy}
+                  </span>
+                )}
+                <span className="font-mono text-[11px] text-gray-400">
+                  {new Date(d.createdAt).toLocaleDateString()}
+                </span>
+                <button
+                  type="button"
+                  title="Delete decision (soft)"
+                  onClick={async () => {
+                    await api.deleteDecision(projectId, d.id);
+                    onDeleted(d.id);
+                  }}
+                  className="text-[11px] text-gray-300 hover:text-red-400"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            {d.choice && (
+              <p className="text-[12px] text-gray-600">
+                <span className="font-medium">Decision:</span> {d.choice}
+              </p>
+            )}
+            {d.rationale && (
+              <p className="text-[12px] text-gray-500">{d.rationale}</p>
+            )}
+            {d.context && (
+              <p className="text-[11px] text-gray-400">Context: {d.context}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

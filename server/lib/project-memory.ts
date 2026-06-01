@@ -21,9 +21,9 @@
 
 import { promises as fs } from "node:fs";
 import { join, normalize } from "node:path";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db/index";
-import { projectMemoryFiles, projects } from "../db/schema";
+import { decisions, projectMemoryFiles, projects } from "../db/schema";
 
 /**
  * URL scheme for cross-project vault links. A project pastes
@@ -220,7 +220,14 @@ export async function getProjectMemoryContext(
     }
   }
 
-  if (dbFiles.length === 0 && vaultFiles.length === 0) return "";
+  // Decision log — always included when available (compact, always relevant).
+  const decisionRows = await db
+    .select()
+    .from(decisions)
+    .where(and(eq(decisions.projectId, projectId), isNull(decisions.deletedAt)))
+    .orderBy(decisions.createdAt);
+
+  if (dbFiles.length === 0 && vaultFiles.length === 0 && decisionRows.length === 0) return "";
 
   // Merge + sort lexically so the prefix stays byte-stable across turns.
   // If both sources contain the same path, the imported one wins — gives
@@ -257,6 +264,19 @@ export async function getProjectMemoryContext(
       )} KB per-turn cap. Phase 2 will replace this with RAG.)_\n`,
     );
   }
+  // Append decision log as a compact block after the corpus.
+  // Kept short intentionally — each decision is ~4 fields, no preamble.
+  if (decisionRows.length > 0) {
+    parts.push("\n\n# Project decisions\n");
+    for (const d of decisionRows) {
+      parts.push(`\n## ${d.title}\n`);
+      if (d.context) parts.push(`**Context:** ${d.context}\n`);
+      if (d.choice) parts.push(`**Decision:** ${d.choice}\n`);
+      if (d.rationale) parts.push(`**Rationale:** ${d.rationale}\n`);
+      if (d.revisitBy) parts.push(`**Revisit by:** ${d.revisitBy}\n`);
+    }
+  }
+
   return parts.join("");
 }
 

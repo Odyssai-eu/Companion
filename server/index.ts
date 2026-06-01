@@ -42,6 +42,7 @@ import profileRoute from "./routes/profile";
 import skillsRoute from "./routes/skills";
 import projectMemoryRoute from "./routes/project-memory";
 import projectsRoute from "./routes/projects";
+import { decisionsRoute } from "./routes/decisions";
 import userMemoryRoute from "./routes/user-memory";
 import providersRoute from "./routes/providers";
 import ttsRoute from "./routes/tts";
@@ -139,10 +140,9 @@ app.use("/api/agent-tokens/*", requireUser);
 app.route("/api/conversations", conversationsRoute);
 app.route("/api/chat", chatRoute);
 app.route("/api/projects", projectsRoute);
-// Project memory routes are also mounted under /api/projects (they share
-// the :id path prefix) — order matters in Hono only when handlers conflict;
-// here they don't, both can coexist on the same mount.
+// Project memory + decisions routes share the /api/projects/:id prefix.
 app.route("/api/projects", projectMemoryRoute);
+app.route("/api/projects/:id/decisions", decisionsRoute);
 app.route("/api/profile", profileRoute);
 // Global user memory vault — ZIP import + external filesystem path,
 // the user-scoped twin of /api/projects/:id/memory. Mounted under
