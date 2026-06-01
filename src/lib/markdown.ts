@@ -5,6 +5,7 @@
 //   - <think>...</think> blocks become collapsible <details>
 //   - Output sanitised before injection
 
+import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { marked, type Tokens } from "marked";
 
@@ -77,45 +78,28 @@ const ALLOWED_ATTRS: Record<string, Set<string>> = {
 
 function sanitize(html: string): string {
   if (typeof window === "undefined") return html;
+  // DOMPurify replaces the hand-rolled walker — handles mutation XSS,
+  // data: URIs, event-handler injection and parser differentials the
+  // custom walker could miss. ALLOWED_TAGS / ALLOWED_ATTRS preserved.
+  const clean = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: Array.from(ALLOWED_TAGS),
+    ALLOWED_ATTR: [
+      ...new Set(
+        Object.values(ALLOWED_ATTRS).flatMap((s) => Array.from(s)),
+      ),
+      "target",
+      "rel",
+    ],
+  });
+  // Re-add target + rel on external links (DOMPurify strips them by default
+  // when not in FORCE_BODY mode; we do it via DOM post-pass instead).
   const tpl = document.createElement("template");
-  tpl.innerHTML = html;
-  walk(tpl.content);
+  tpl.innerHTML = clean;
+  tpl.content.querySelectorAll("a[href]").forEach((a) => {
+    a.setAttribute("target", "_blank");
+    a.setAttribute("rel", "noopener noreferrer");
+  });
   return tpl.innerHTML;
-}
-
-function walk(node: Node) {
-  const children = Array.from(node.childNodes);
-  for (const child of children) {
-    if (child.nodeType !== Node.ELEMENT_NODE) continue;
-    const el = child as Element;
-    const tag = el.tagName.toLowerCase();
-
-    if (!ALLOWED_TAGS.has(tag)) {
-      el.replaceWith(document.createTextNode(el.textContent ?? ""));
-      continue;
-    }
-
-    const allowed = ALLOWED_ATTRS[tag] ?? new Set<string>();
-    for (const attr of Array.from(el.attributes)) {
-      if (!allowed.has(attr.name)) {
-        el.removeAttribute(attr.name);
-        continue;
-      }
-      if (
-        (attr.name === "href" || attr.name === "src") &&
-        /^\s*javascript:/i.test(attr.value)
-      ) {
-        el.removeAttribute(attr.name);
-      }
-    }
-
-    if (tag === "a" && el.getAttribute("href")) {
-      el.setAttribute("target", "_blank");
-      el.setAttribute("rel", "noopener noreferrer");
-    }
-
-    walk(el);
-  }
 }
 
 // ── Think blocks ───────────────────────────────────────────────────────────

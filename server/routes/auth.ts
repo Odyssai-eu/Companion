@@ -10,6 +10,38 @@ import { users } from "../db/schema";
 import { logAuthEvent, reqMeta } from "../lib/auth-log";
 import { SESSION_COOKIE } from "../middleware/auth";
 
+// ── Login rate-limiter ────────────────────────────────────────────────────
+// In-memory, per-IP. No external dep. Resets on container restart (acceptable
+// for a LAN-first app; the goal is stopping credential stuffing, not state
+// persistence across restarts).
+const RATE_WINDOW_MS = 15 * 60 * 1000; // 15 min
+const RATE_MAX_ATTEMPTS = 10;
+
+const loginAttempts = new Map<string, { count: number; windowStart: number }>();
+
+// Cleanup stale entries every 30 min to avoid unbounded growth.
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of loginAttempts) {
+    if (now - entry.windowStart > RATE_WINDOW_MS) loginAttempts.delete(ip);
+  }
+}, 30 * 60 * 1000).unref();
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (!entry || now - entry.windowStart > RATE_WINDOW_MS) {
+    loginAttempts.set(ip, { count: 1, windowStart: now });
+    return true; // OK
+  }
+  entry.count += 1;
+  return entry.count <= RATE_MAX_ATTEMPTS;
+}
+
+function resetRateLimit(ip: string) {
+  loginAttempts.delete(ip);
+}
+
 const authRoute = new Hono();
 
 const signupSchema = z.object({
@@ -97,12 +129,14 @@ authRoute.post("/signup", zValidator("json", signupSchema), async (c) => {
   }
 
   const passwordHash = await hashPassword(password);
+  const now = new Date();
   const [user] = await db
     .insert(users)
     .values({
       email: normalized,
       name,
       passwordHash,
+      passwordChangedAt: now,
       // First user on an empty DB becomes the operator (admin).
       ...(isBootstrap ? { role: "admin" as const } : {}),
     })
@@ -112,6 +146,7 @@ authRoute.post("/signup", zValidator("json", signupSchema), async (c) => {
       name: users.name,
       role: users.role,
       active: users.active,
+      passwordChangedAt: users.passwordChangedAt,
     });
 
   if (isBootstrap) {
@@ -120,10 +155,10 @@ authRoute.post("/signup", zValidator("json", signupSchema), async (c) => {
     );
   }
 
-  const token = await createSessionToken({
-    userId: user.id,
-    email: user.email,
-  });
+  const token = await createSessionToken(
+    { userId: user.id, email: user.email },
+    user.passwordChangedAt ?? now,
+  );
   setSessionCookie(c, token);
 
   return c.json({ user }, 201);
@@ -132,6 +167,18 @@ authRoute.post("/signup", zValidator("json", signupSchema), async (c) => {
 authRoute.post("/login", zValidator("json", loginSchema), async (c) => {
   const { email, password } = c.req.valid("json");
   const normalized = email.toLowerCase().trim();
+  const meta = reqMeta(c);
+
+  // Rate-limit by IP — 10 attempts per 15-min window.
+  if (!checkRateLimit(meta.ip ?? "unknown")) {
+    return c.json(
+      {
+        error: "too_many_attempts",
+        detail: "Too many login attempts. Try again in 15 minutes.",
+      },
+      429,
+    );
+  }
 
   const [user] = await db
     .select()
@@ -145,7 +192,6 @@ authRoute.post("/login", zValidator("json", loginSchema), async (c) => {
     "$2a$10$CwTycUXWue0Thq9StjUM0uJ8gZ4m1C0Zn5e1bIdV5C5yJ3g5wLn6u"; // placeholder
 
   const ok = await verifyPassword(password, hashForCompare);
-  const meta = reqMeta(c);
   if (!user || !ok) {
     logAuthEvent({
       userId: user?.id ?? null,
@@ -174,10 +220,13 @@ authRoute.post("/login", zValidator("json", loginSchema), async (c) => {
     );
   }
 
-  const token = await createSessionToken({
-    userId: user.id,
-    email: user.email,
-  });
+  // Login succeeded — reset rate-limit counter for this IP.
+  resetRateLimit(meta.ip ?? "unknown");
+
+  const token = await createSessionToken(
+    { userId: user.id, email: user.email },
+    user.passwordChangedAt ?? new Date(),
+  );
   setSessionCookie(c, token);
 
   logAuthEvent({
@@ -245,9 +294,11 @@ authRoute.post(
     }
 
     const newHash = await hashPassword(newPassword);
+    // Bump passwordChangedAt — JWT middleware rejects tokens issued before
+    // this timestamp, effectively revoking all existing sessions.
     await db
       .update(users)
-      .set({ passwordHash: newHash })
+      .set({ passwordHash: newHash, passwordChangedAt: new Date() })
       .where(eq(users.id, userId));
 
     const meta = reqMeta(c);

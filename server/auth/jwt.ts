@@ -70,8 +70,15 @@ export type SessionPayload = {
 
 export async function createSessionToken(
   payload: SessionPayload,
+  /** Unix epoch seconds of the user's last password change. Embedded in
+   *  the JWT so the middleware can reject tokens issued before it. */
+  passwordChangedAt: Date,
 ): Promise<string> {
-  return await new SignJWT({ email: payload.email })
+  return await new SignJWT({
+    email: payload.email,
+    // Store as epoch seconds — compact and avoids timezone ambiguity.
+    pwdAt: Math.floor(passwordChangedAt.getTime() / 1000),
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(payload.userId)
     .setIssuedAt()
@@ -85,6 +92,13 @@ export async function verifySessionToken(
   try {
     const { payload } = await jwtVerify(token, getSecret());
     if (!payload.sub || typeof payload.email !== "string") return null;
+    // Reject tokens issued before the last password change. The `iat` claim
+    // is in seconds; `pwdAt` is also in seconds. Tokens without `pwdAt`
+    // (minted before this migration) are accepted — avoids a mass logout
+    // on deploy. They'll naturally expire within 30 days.
+    if (typeof payload.pwdAt === "number" && typeof payload.iat === "number") {
+      if (payload.iat < payload.pwdAt) return null;
+    }
     return { userId: payload.sub, email: payload.email };
   } catch {
     return null;

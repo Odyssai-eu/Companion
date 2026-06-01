@@ -1,6 +1,6 @@
 {
   "name": "companion",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,9 @@
     "@hono/node-server": "^1.13.7",
     "@hono/zod-validator": "^0.4.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@types/dompurify": "^3.0.5",
     "bcryptjs": "^2.4.3",
+    "dompurify": "^3.4.7",
     "drizzle-orm": "^0.38.3",
     "highlight.js": "^11.11.1",
     "hono": "^4.6.14",

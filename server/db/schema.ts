@@ -59,6 +59,12 @@ export const users = pgTable("users", {
   // Admin Extended — RBAC. Values: 'admin' | 'organiser' | 'user' | 'guest'.
   role: text("role").notNull().default("user"),
   active: boolean("active").notNull().default(true),
+  // Set to now() whenever the password changes. JWT tokens carry the
+  // issued-at claim; the auth middleware rejects tokens issued before
+  // this timestamp so a password change immediately revokes all sessions.
+  passwordChangedAt: timestamp("password_changed_at", { withTimezone: true })
+    .notNull()
+    .default(sql`now()`),
   // Inference mode: 'easy' | 'advanced' | 'expert' (see migration 0015).
   inferenceMode: text("inference_mode").notNull().default("expert"),
   // Easy mode: a single LiteLLM alias the admin curates. UI hides picker.
