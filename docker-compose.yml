@@ -41,6 +41,8 @@ services:
       # Unset: defaults to ON in production (current behaviour), OFF
       # otherwise.
       COOKIE_SECURE: ${COOKIE_SECURE:-}
+      # nemo-memory RAG service (native on host, LightRAG + Qwen3-Embedding)
+      NEMO_MEMORY_URL: ${NEMO_MEMORY_URL:-}
     ports:
       # By default we bind to 127.0.0.1 only — Companion is reachable
       # from the same host (browser, IDE, MCP clients), but NOT from
