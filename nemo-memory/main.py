@@ -107,17 +107,19 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     loop = asyncio.get_event_loop()
     def _run():
         import mlx.core as mx
+        import numpy as np
         model, tokenizer = _mlx_model
         inputs = tokenizer(
             texts, return_tensors="mlx", padding=True,
             truncation=True, max_length=512,
         )
         out = model(**inputs)
-        # mean-pool over token dimension → (n, dim)
         hidden = out.last_hidden_state          # (n, seq_len, dim)
         vecs = hidden.mean(axis=1)              # (n, dim)
         mx.eval(vecs)
-        return vecs.tolist()
+        # Return numpy array — LightRAG's nano-vectordb requires ndarray,
+        # not a plain Python list (raises AttributeError: 'list' has no .size)
+        return np.array(vecs.tolist(), dtype=np.float32)
     return await loop.run_in_executor(None, _run)
 
 
