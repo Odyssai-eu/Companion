@@ -1,0 +1,8 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+# fastembed: ONNX-based embeddings, no Rust build, no GPU required,
+# works out-of-the-box on any aarch64 linux container.
+fastembed>=0.4
+qdrant-client>=1.9
+pydantic>=2.0
+numpy>=1.24
