@@ -343,6 +343,20 @@ export type ApiProjectCategory = {
   systemPrompt: string;
 };
 
+export type ApiTeam = {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+};
+
+export type ApiTeamMember = {
+  userId: string;
+  role: "admin" | "member";
+  email: string;
+  name: string | null;
+};
+
 export type ApiDecision = {
   id: string;
   projectId: string;
@@ -1039,6 +1053,24 @@ export const api = {
     request<void>(`/api/projects/${id}/memory`, { method: "DELETE" }),
 
   // Decision log ──────────────────────────────────────────────────────────
+  // Teams
+  listTeams: () => request<{ teams: ApiTeam[] }>("/api/teams"),
+  createTeam: (body: { name: string; description?: string }) =>
+    request<{ team: ApiTeam }>("/api/teams", { method: "POST", body: JSON.stringify(body) }),
+  getTeam: (id: string) =>
+    request<{ team: ApiTeam; members: ApiTeamMember[] }>(`/api/teams/${id}`),
+  updateTeam: (id: string, body: { name?: string; description?: string }) =>
+    request<{ team: ApiTeam }>(`/api/teams/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteTeam: (id: string) => request<void>(`/api/teams/${id}`, { method: "DELETE" }),
+  addTeamMember: (teamId: string, body: { userId: string; role?: string }) =>
+    request<{ ok: boolean }>(`/api/teams/${teamId}/members`, {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  removeTeamMember: (teamId: string, userId: string) =>
+    request<void>(`/api/teams/${teamId}/members/${userId}`, { method: "DELETE" }),
+  nemoSyncTeam: (teamId: string) =>
+    request<{ ok: boolean }>(`/api/admin/nemo-sync?scope=team&teamId=${teamId}`, { method: "POST" }),
+
   listDecisions: (projectId: string) =>
     request<{ decisions: ApiDecision[] }>(
       `/api/projects/${projectId}/decisions`,

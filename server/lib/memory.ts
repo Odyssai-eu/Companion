@@ -198,20 +198,18 @@ export function isNemoAvailable(): boolean {
   return Boolean(NEMO_MEMORY_URL);
 }
 
-/** Query nemo-memory for context relevant to `question`.
- *  Returns a ready-to-inject markdown block, or "" on failure. */
-export async function nemoQuery(
-  userId: string,
+/** Single-collection nemo query (internal helper). */
+async function _nemoQueryOne(
+  collectionId: string,
   question: string,
   projectId?: string | null,
 ): Promise<string> {
-  if (!NEMO_MEMORY_URL || !question.trim()) return "";
   try {
     const res = await fetch(`${NEMO_MEMORY_URL}/query/context`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        user_id: userId,
+        user_id: collectionId,
         text: question,
         top_k: NEMO_TOP_K,
         project_id: projectId ?? null,
@@ -221,10 +219,45 @@ export async function nemoQuery(
     if (!res.ok) return "";
     const data = (await res.json()) as { context?: string };
     return data.context ?? "";
-  } catch (err) {
-    console.warn("[memory] nemoQuery failed:", (err as Error).message);
+  } catch {
     return "";
   }
+}
+
+/**
+ * Query nemo-memory across up to 3 collections in parallel:
+ *   1. user   — personal knowledge graph
+ *   2. team   — shared team knowledge (optional)
+ *   3. company — org-wide knowledge (optional, future)
+ *
+ * Results are merged into a single markdown block. Empty collections are
+ * silently skipped. Falls back to "" if all fail.
+ */
+export async function nemoQuery(
+  userId: string,
+  question: string,
+  projectId?: string | null,
+  teamId?: string | null,
+  companyId?: string | null,
+): Promise<string> {
+  if (!NEMO_MEMORY_URL || !question.trim()) return "";
+
+  const queries: Promise<string>[] = [_nemoQueryOne(userId, question, projectId)];
+  if (teamId) queries.push(_nemoQueryOne(teamId, question, projectId));
+  if (companyId) queries.push(_nemoQueryOne(companyId, question, projectId));
+
+  const results = await Promise.all(queries);
+  const blocks = results.filter((r) => r.trim());
+
+  if (blocks.length === 0) return "";
+  if (blocks.length === 1) return blocks[0];
+
+  // Merge with section labels when multiple collections respond
+  const labels = ["## Personal memory", "## Team memory", "## Company memory"];
+  const merged = blocks
+    .map((b, i) => `${labels[i] ?? "## Context"}\n\n${b.replace(/^# Relevant memory\n\n/, "")}`)
+    .join("\n\n---\n\n");
+  return `# Relevant memory\n\n${merged}`;
 }
 
 /** Ingest a memory article into nemo-memory (fire-and-forget).

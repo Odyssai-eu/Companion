@@ -20,6 +20,8 @@ import {
   type ApiAdminUser,
   type ApiAuditEntry,
   type ApiGuestToken,
+  type ApiTeam,
+  type ApiTeamMember,
   type AuthRole,
 } from "~/lib/api";
 
@@ -65,6 +67,7 @@ export default function AdminPage() {
       </header>
 
       <UsersSection selfId={auth.user.id} />
+      <TeamsSection />
       <GuestsSection />
       <AuditLogSection />
     </div>
@@ -1039,6 +1042,118 @@ function AuditLogSection() {
             ))}
           </tbody>
         </table>
+      </div>
+    </section>
+  );
+}
+
+// ── Teams section ─────────────────────────────────────────────────────────
+
+function TeamsSection() {
+  const [teams, setTeams] = useState<ApiTeam[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [members, setMembers] = useState<ApiTeamMember[]>([]);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    api.listTeams().then((r) => setTeams(r.teams)).catch(() => {});
+  }, []);
+
+  async function selectTeam(id: string) {
+    setSelected(id);
+    const r = await api.getTeam(id).catch(() => null);
+    if (r) setMembers(r.members);
+  }
+
+  async function createTeam(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newName.trim()) return;
+    setCreating(true);
+    try {
+      const r = await api.createTeam({ name: newName });
+      setTeams((prev) => [...prev, r.team]);
+      setNewName("");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleDeleteTeam(id: string) {
+    await api.deleteTeam(id);
+    setTeams((prev) => prev.filter((t) => t.id !== id));
+    if (selected === id) { setSelected(null); setMembers([]); }
+  }
+
+  const selectedTeam = teams.find((t) => t.id === selected);
+
+  return (
+    <section className="flex flex-col gap-4">
+      <h2 className="font-display text-[28px] font-light text-navy">Teams</h2>
+      <p className="text-[13px] text-gray-500">
+        Teams share a LightRAG memory collection. Conversations in a team project
+        query both personal and team memory in parallel.
+      </p>
+
+      <div className="flex gap-4">
+        <div className="flex flex-col gap-2 min-w-[180px]">
+          {teams.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => selectTeam(t.id)}
+              className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left text-[13px] ${
+                selected === t.id
+                  ? "border-cyan bg-cyan/5 text-navy"
+                  : "border-gray-200 hover:border-cyan text-ink"
+              }`}
+            >
+              <span className="truncate">{t.name}</span>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); void handleDeleteTeam(t.id); }}
+                className="ml-2 text-gray-300 hover:text-red-400 text-[12px]"
+              >×</button>
+            </button>
+          ))}
+          <form onSubmit={createTeam} className="flex gap-1 mt-1">
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="New team…"
+              className="flex-1 rounded border border-gray-200 px-2 py-1 text-[12px] focus:border-cyan focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={creating || !newName.trim()}
+              className="rounded border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:border-cyan disabled:opacity-50"
+            >+</button>
+          </form>
+        </div>
+
+        {selectedTeam && (
+          <div className="flex-1 flex flex-col gap-3 rounded-lg border border-gray-200 p-4">
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[12px] font-medium text-navy">{selectedTeam.name}</span>
+              <button
+                type="button"
+                onClick={() => void api.nemoSyncTeam(selectedTeam.id).catch(() => {})}
+                className="rounded border border-gray-200 px-2 py-1 font-mono text-[10px] text-gray-500 hover:border-cyan"
+              >Sync memory</button>
+            </div>
+            <div className="flex flex-col gap-1">
+              {members.map((m) => (
+                <div key={m.userId} className="flex items-center justify-between text-[12px]">
+                  <span className="text-gray-600">{m.email}</span>
+                  <span className="font-mono text-[10px] text-gray-400">{m.role}</span>
+                </div>
+              ))}
+              {members.length === 0 && (
+                <p className="text-[12px] text-gray-400">No members yet.</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

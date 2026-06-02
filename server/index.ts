@@ -31,6 +31,7 @@ import adminGuestTokensRoute from "./routes/admin-guest-tokens";
 import adminUsersRoute from "./routes/admin-users";
 import auditRoute from "./routes/admin-audit";
 import nemoSyncRoute from "./routes/nemo-sync";
+import { teamsRoute } from "./routes/teams";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
@@ -182,6 +183,7 @@ app.route("/api/admin/users", adminUsersRoute);
 app.route("/api/admin/guest-tokens", adminGuestTokensRoute);
 app.route("/api/admin/audit", auditRoute);
 app.route("/api/admin/nemo-sync", nemoSyncRoute);
+app.route("/api/teams", teamsRoute);
 app.route("/api/agent-tokens", agentTokensRoute);
 app.route("/api/guest", guestRoute);
 

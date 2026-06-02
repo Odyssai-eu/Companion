@@ -356,11 +356,13 @@ chatRoute.post("/completions", async (c) => {
         // checkboxes.
         let dedicated = false;
         let globalReadOnly = false;
+        let projectTeamId: string | null = null;
         if (projectId) {
           const [proj] = await db
             .select({
               dedicatedMemoryEnabled: projects.dedicatedMemoryEnabled,
               globalMemoryReadOnly: projects.globalMemoryReadOnly,
+              teamId: projects.teamId,
             })
             .from(projects)
             .where(eq(projects.id, projectId))
@@ -370,6 +372,7 @@ chatRoute.post("/completions", async (c) => {
             globalReadOnly = proj.globalMemoryReadOnly;
             projectGlobalReadOnly = globalReadOnly;
             projectDedicatedMemoryEnabled = dedicated;
+            projectTeamId = proj.teamId ?? null;
           }
         }
 
@@ -408,7 +411,9 @@ chatRoute.post("/completions", async (c) => {
               typeof lastUserMsg?.content === "string"
                 ? lastUserMsg.content
                 : "";
-            globalBlock = await nemoQuery(userId, query, projectId);
+            // Pass teamId when the conversation belongs to a team project
+            // → nemoQuery fires user + team collections in parallel.
+            globalBlock = await nemoQuery(userId, query, projectId, projectTeamId);
             // Fallback: if nemo returns nothing (cold / empty index), use
             // the legacy full-wiki path so the user isn't left with no memory.
             if (!globalBlock) {

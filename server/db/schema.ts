@@ -143,6 +143,33 @@ export const userMemoryFiles = pgTable(
 
 export type UserMemoryFile = typeof userMemoryFiles.$inferSelect;
 
+// ── Teams ──────────────────────────────────────────────────────────────────
+
+export const teams = pgTable("teams", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
+});
+
+export const teamMembers = pgTable(
+  "team_members",
+  {
+    teamId: uuid("team_id").notNull().references(() => teams.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("member"), // 'admin' | 'member'
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.teamId, t.userId] }),
+    userIdx: index("team_members_user_idx").on(t.userId),
+  }),
+);
+
+export type Team = typeof teams.$inferSelect;
+export type TeamMember = typeof teamMembers.$inferSelect;
+
 export const projects = pgTable(
   "projects",
   {
@@ -194,6 +221,8 @@ export const projects = pgTable(
     // sharing is explicit. The Share path field in the UI is hidden
     // (or greyed out) until this is on.
     sharingEnabled: boolean("sharing_enabled").notNull().default(false),
+    // Team scope — null = personal project.
+    teamId: uuid("team_id").references(() => teams.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
