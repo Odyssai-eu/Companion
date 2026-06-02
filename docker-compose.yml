@@ -97,6 +97,28 @@ services:
           # deploys don't lose their wiki.
           - thecompai-db
 
+  nemo-memory:
+    build:
+      context: ./nemo-memory
+      dockerfile: Dockerfile
+    image: nemo-memory:local
+    container_name: nemo-memory
+    restart: unless-stopped
+    environment:
+      EMBED_MODEL_ID: ${NEMO_EMBED_MODEL:-mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ}
+      QDRANT_URL: ${QDRANT_URL:-http://192.168.86.44:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-nemo}
+      EMBED_DIM: ${EMBED_DIM:-1024}
+      TOP_K_DEFAULT: ${TOP_K_DEFAULT:-5}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "0.0.0.0:8765:8765"
+    volumes:
+      - nemo_models:/app/models
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
 volumes:
+  nemo_models:
   db_data:
   app_data:
