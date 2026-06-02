@@ -1,20 +1,22 @@
 """
-nemo-memory — LightRAG-based memory service for Companion / Nemo.
+nemo-memory — LightRAG knowledge graph memory service for Companion/Nemo.
+
+Native macOS service (no Docker) — uses mlx-embeddings with
+Qwen3-Embedding-0.6B-4bit-DWQ on Apple Silicon Metal.
 
 Architecture:
   - LightRAG builds a knowledge graph from ingested text (entities +
-    relations + communities). Queries combine graph traversal with vector
-    search (hybrid mode) → far better than pure similarity for relational
-    memory ("what do I know about X that relates to Y").
-  - LLM for entity extraction: Odysseus (local, OpenAI-compat API).
-  - Embedding: fastembed + nomic-embed-text-v1.5 (ONNX, no Rust/Metal).
-  - Storage: /app/data volume (JSON files + nano-vectordb — no external DB).
+    relations). Queries combine graph + vector (hybrid) or pure vector
+    (naive, default for injection — no LLM call needed at query time).
+  - LLM for entity extraction at ingest: Odysseus local API.
+  - Embedding: mlx-embeddings + Qwen3-Embedding-0.6B-4bit-DWQ (Metal).
+  - Storage: LIGHTRAG_DIR (JSON files + nano-vectordb, no external DB).
 
 Endpoints:
   GET  /health
   POST /v1/embeddings   — OpenAI-compat (for Companion smart routing)
   POST /ingest          — insert text into the knowledge graph
-  POST /query/context   — hybrid graph+vector query → markdown block
+  POST /query/context   — vector or hybrid query → markdown block
 """
 
 import asyncio
@@ -24,9 +26,8 @@ import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
-import numpy as np
 import httpx
-from fastembed import TextEmbedding
+from mlx_embeddings import load as mlx_load
 from fastapi import FastAPI
 from lightrag import LightRAG, QueryParam
 from lightrag.utils import EmbeddingFunc
@@ -34,34 +35,30 @@ from pydantic import BaseModel, Field
 
 # ── Config ────────────────────────────────────────────────────────────────
 
-ODYSSEUS_URL   = os.environ.get("ODYSSEUS_URL",   "http://host.docker.internal:8000")
+ODYSSEUS_URL   = os.environ.get("ODYSSEUS_URL",   "http://localhost:8000")
 ODYSSEUS_MODEL = os.environ.get("ODYSSEUS_MODEL",  "default")
-EMBED_MODEL    = os.environ.get("EMBED_MODEL",     "nomic-ai/nomic-embed-text-v1.5")
-EMBED_DIM      = int(os.environ.get("EMBED_DIM",   "768"))
-WORKING_DIR    = os.environ.get("LIGHTRAG_DIR",    "/app/data/lightrag")
+EMBED_MODEL    = os.environ.get("EMBED_MODEL",
+                     "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ")
+EMBED_DIM      = int(os.environ.get("EMBED_DIM",   "1024"))
+WORKING_DIR    = os.environ.get("LIGHTRAG_DIR",
+                     os.path.expanduser("~/nemo-memory-data/lightrag"))
 TOP_K_DEFAULT  = int(os.environ.get("TOP_K",       "5"))
 LOG_LEVEL      = os.environ.get("LOG_LEVEL",       "INFO")
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
 log = logging.getLogger("nemo-memory")
 
-# Per-user LightRAG instances (each user has its own knowledge graph)
-_rags:   dict[str, LightRAG] = {}
-_embed:  Optional[TextEmbedding] = None
+_mlx_model = None   # (model, tokenizer) tuple from mlx_load
+_rags: dict[str, LightRAG] = {}
 
-# ── LightRAG factory ──────────────────────────────────────────────────────
-
-def _rag_dir(user_id: str) -> str:
-    """Separate working dir per user keeps graphs isolated."""
-    d = os.path.join(WORKING_DIR, user_id)
-    os.makedirs(d, exist_ok=True)
-    return d
-
+# ── LightRAG per-user factory ─────────────────────────────────────────────
 
 async def _get_rag(user_id: str) -> LightRAG:
     if user_id not in _rags:
+        d = os.path.join(WORKING_DIR, user_id)
+        os.makedirs(d, exist_ok=True)
         rag = LightRAG(
-            working_dir=_rag_dir(user_id),
+            working_dir=d,
             llm_model_func=llm_complete,
             embedding_func=EmbeddingFunc(
                 embedding_dim=EMBED_DIM,
@@ -75,7 +72,7 @@ async def _get_rag(user_id: str) -> LightRAG:
     return _rags[user_id]
 
 
-# ── LLM function (Odysseus via OpenAI-compat) ─────────────────────────────
+# ── LLM (Odysseus, for entity extraction at ingest only) ──────────────────
 
 async def llm_complete(
     prompt: str,
@@ -89,18 +86,13 @@ async def llm_complete(
     for h in history_messages:
         messages.append(h)
     messages.append({"role": "user", "content": prompt})
-
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.post(
                 f"{ODYSSEUS_URL}/v1/chat/completions",
-                json={
-                    "model": ODYSSEUS_MODEL,
-                    "messages": messages,
-                    "max_tokens": 2048,
-                    "temperature": 0.1,
-                    "enable_thinking": False,
-                },
+                json={"model": ODYSSEUS_MODEL, "messages": messages,
+                      "max_tokens": 2048, "temperature": 0.1,
+                      "enable_thinking": False},
             )
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"]
@@ -109,32 +101,44 @@ async def llm_complete(
         return ""
 
 
-# ── Embedding function (fastembed) ────────────────────────────────────────
+# ── Embedding (mlx-embeddings + Qwen3 on Apple Silicon Metal) ────────────
 
 async def embed_texts(texts: list[str]) -> list[list[float]]:
     loop = asyncio.get_event_loop()
-    vecs = await loop.run_in_executor(
-        None, lambda: [v.tolist() for v in _embed.embed(texts)]
-    )
-    return vecs
+    def _run():
+        import mlx.core as mx
+        model, tokenizer = _mlx_model
+        inputs = tokenizer(
+            texts, return_tensors="mlx", padding=True,
+            truncation=True, max_length=512,
+        )
+        out = model(**inputs)
+        # mean-pool over token dimension → (n, dim)
+        hidden = out.last_hidden_state          # (n, seq_len, dim)
+        vecs = hidden.mean(axis=1)              # (n, dim)
+        mx.eval(vecs)
+        return vecs.tolist()
+    return await loop.run_in_executor(None, _run)
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _embed
+    global _mlx_model, EMBED_DIM
 
-    log.info("Loading fastembed model %s …", EMBED_MODEL)
+    log.info("Loading mlx embedding model %s …", EMBED_MODEL)
     t0 = time.time()
-    _embed = TextEmbedding(model_name=EMBED_MODEL)
-    # warm up
-    list(_embed.embed(["warmup"]))
-    log.info("Embed model ready (%.1fs)", time.time() - t0)
+    # mlx_load returns (model, tokenizer) tuple
+    _mlx_model = mlx_load(EMBED_MODEL)
+    # Detect actual output dimension
+    test = await embed_texts(["warmup"])
+    EMBED_DIM = len(test[0])
+    log.info("MLX embed model ready (%.1fs) dim=%d", time.time() - t0, EMBED_DIM)
 
     os.makedirs(WORKING_DIR, exist_ok=True)
-    log.info("nemo-memory (LightRAG) ready — odysseus=%s embed=%s",
-             ODYSSEUS_URL, EMBED_MODEL)
+    log.info("nemo-memory (LightRAG + mlx) ready — odysseus=%s embed=%s dim=%d",
+             ODYSSEUS_URL, EMBED_MODEL, EMBED_DIM)
     yield
     log.info("nemo-memory shutting down")
 
@@ -146,16 +150,12 @@ app = FastAPI(title="nemo-memory", lifespan=lifespan)
 
 @app.get("/health")
 def health():
-    return {
-        "status": "ok",
-        "mode": "lightrag",
-        "embed_model": EMBED_MODEL,
-        "odysseus": ODYSSEUS_URL,
-        "graphs_loaded": len(_rags),
-    }
+    return {"status": "ok", "mode": "lightrag-mlx",
+            "embed_model": EMBED_MODEL, "embed_dim": EMBED_DIM,
+            "odysseus": ODYSSEUS_URL, "graphs_loaded": len(_rags)}
 
 
-# ── /v1/embeddings (OpenAI-compat, for smart routing) ────────────────────
+# ── /v1/embeddings (OpenAI-compat) ───────────────────────────────────────
 
 class EmbedRequest(BaseModel):
     input: list[str] | str
@@ -179,7 +179,7 @@ async def embeddings(req: EmbedRequest):
 
 class IngestRequest(BaseModel):
     user_id: str
-    article_id: str   # used as doc id / label, not as a filter key
+    article_id: str
     text: str
     source: str = "wiki"
     project_id: Optional[str] = None
@@ -192,7 +192,8 @@ async def ingest(req: IngestRequest):
     rag = await _get_rag(req.user_id)
     t0 = time.time()
     await rag.ainsert(req.text)
-    log.info("Inserted article=%s user=%s (%.1fs)", req.article_id, req.user_id[:8], time.time()-t0)
+    log.info("Inserted article=%s user=%s (%.1fs)",
+             req.article_id, req.user_id[:8], time.time() - t0)
     return {"ingested": True, "article_id": req.article_id}
 
 
@@ -203,27 +204,29 @@ class QueryRequest(BaseModel):
     text: str
     top_k: int = Field(default=TOP_K_DEFAULT, ge=1, le=20)
     project_id: Optional[str] = None
-    mode: str = "hybrid"  # local | global | hybrid | naive
+    # naive = pure vector, no LLM call — right default for memory injection.
+    # Nemo (the chat model) reasons over the context himself; we just need
+    # relevant chunks, not a pre-synthesised answer.
+    mode: str = "naive"
 
 
 @app.post("/query/context")
 async def query_context(req: QueryRequest):
     rag = await _get_rag(req.user_id)
     t0 = time.time()
-    # Try hybrid first (graph + vector), fall back to naive (vector-only)
-    # if the LLM (Odysseus) is unavailable / no model loaded.
-    for mode in [req.mode, "naive"]:
+    modes = [req.mode] if req.mode == "naive" else [req.mode, "naive"]
+    for mode in modes:
         try:
             result = await rag.aquery(
                 req.text,
                 param=QueryParam(mode=mode, top_k=req.top_k),
             )
             elapsed = time.time() - t0
-            log.info("Query user=%s mode=%s (%.1fs) result_len=%d",
+            log.info("Query user=%s mode=%s (%.1fs) len=%d",
                      req.user_id[:8], mode, elapsed, len(result or ""))
-            if result and result.strip():
-                context = f"# Relevant memory\n\n{result.strip()}"
-                return {"context": context, "chunks_used": 1}
+            if result and result.strip() and "[no-context]" not in result:
+                return {"context": f"# Relevant memory\n\n{result.strip()}",
+                        "chunks_used": 1}
         except Exception as e:
-            log.warning("query_context mode=%s failed: %s — trying fallback", mode, e)
+            log.warning("query mode=%s failed: %s", mode, e)
     return {"context": "", "chunks_used": 0}
