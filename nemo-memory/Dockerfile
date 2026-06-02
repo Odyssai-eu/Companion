@@ -1,9 +1,8 @@
 FROM python:3.11-slim
 
-# mlx requires macOS — this Dockerfile is intentionally for ARM macOS host
-# running Docker (colima or Docker Desktop on Apple Silicon).
-# The container shares the Metal GPU with the host via /dev/dri or the
-# Apple Silicon accelerator via MPS — mlx-embeddings detects this automatically.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git curl \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -12,10 +11,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 
-# Model is downloaded on first run and cached in /app/models (mounted as a
-# Docker volume so rebuilds don't re-download ~350 MB every time).
-ENV TRANSFORMERS_CACHE=/app/models
 ENV HF_HOME=/app/models
+ENV LIGHTRAG_DIR=/app/data/lightrag
 
 EXPOSE 8765
 

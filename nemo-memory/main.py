@@ -1,116 +1,161 @@
 """
-nemo-memory — embedding + RAG service for Companion.
+nemo-memory — LightRAG-based memory service for Companion / Nemo.
 
-Two responsibilities in one process:
-  1. Embedding  POST /v1/embeddings  (OpenAI-compatible)
-  2. RAG        POST /ingest / POST /query / POST /query/context
+Architecture:
+  - LightRAG builds a knowledge graph from ingested text (entities +
+    relations + communities). Queries combine graph traversal with vector
+    search (hybrid mode) → far better than pure similarity for relational
+    memory ("what do I know about X that relates to Y").
+  - LLM for entity extraction: Odysseus (local, OpenAI-compat API).
+  - Embedding: fastembed + nomic-embed-text-v1.5 (ONNX, no Rust/Metal).
+  - Storage: /app/data volume (JSON files + nano-vectordb — no external DB).
 
-Stack: fastembed (ONNX, no Rust/Metal required) + Qdrant client.
-Default model: BAAI/bge-m3 (multilingual, 1024-dim, same as obsidian-context
-collection) — downloaded once on first start, cached in /app/models volume.
+Endpoints:
+  GET  /health
+  POST /v1/embeddings   — OpenAI-compat (for Companion smart routing)
+  POST /ingest          — insert text into the knowledge graph
+  POST /query/context   — hybrid graph+vector query → markdown block
 """
 
+import asyncio
+import logging
 import os
 import time
-import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
+import numpy as np
+import httpx
 from fastembed import TextEmbedding
 from fastapi import FastAPI
+from lightrag import LightRAG, QueryParam
+from lightrag.utils import EmbeddingFunc
 from pydantic import BaseModel, Field
-from qdrant_client import QdrantClient
-from qdrant_client.models import (
-    Distance,
-    VectorParams,
-    PointStruct,
-    Filter,
-    FieldCondition,
-    MatchValue,
-)
 
 # ── Config ────────────────────────────────────────────────────────────────
 
-MODEL_NAME = os.environ.get("EMBED_MODEL_ID", "BAAI/bge-m3")
-QDRANT_URL = os.environ.get("QDRANT_URL", "http://192.168.86.44:6333")
-QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "nemo")
-EMBED_DIM = int(os.environ.get("EMBED_DIM", "1024"))
-TOP_K_DEFAULT = int(os.environ.get("TOP_K_DEFAULT", "5"))
-CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", "512"))
-CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "64"))
-CACHE_DIR = os.environ.get("HF_HOME", "/app/models")
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+ODYSSEUS_URL   = os.environ.get("ODYSSEUS_URL",   "http://host.docker.internal:8000")
+ODYSSEUS_MODEL = os.environ.get("ODYSSEUS_MODEL",  "default")
+EMBED_MODEL    = os.environ.get("EMBED_MODEL",     "nomic-ai/nomic-embed-text-v1.5")
+EMBED_DIM      = int(os.environ.get("EMBED_DIM",   "768"))
+WORKING_DIR    = os.environ.get("LIGHTRAG_DIR",    "/app/data/lightrag")
+TOP_K_DEFAULT  = int(os.environ.get("TOP_K",       "5"))
+LOG_LEVEL      = os.environ.get("LOG_LEVEL",       "INFO")
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
 log = logging.getLogger("nemo-memory")
 
-# ── Global state ──────────────────────────────────────────────────────────
+# Per-user LightRAG instances (each user has its own knowledge graph)
+_rags:   dict[str, LightRAG] = {}
+_embed:  Optional[TextEmbedding] = None
 
-_model: Optional[TextEmbedding] = None
-_qdrant: Optional[QdrantClient] = None
+# ── LightRAG factory ──────────────────────────────────────────────────────
+
+def _rag_dir(user_id: str) -> str:
+    """Separate working dir per user keeps graphs isolated."""
+    d = os.path.join(WORKING_DIR, user_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+async def _get_rag(user_id: str) -> LightRAG:
+    if user_id not in _rags:
+        rag = LightRAG(
+            working_dir=_rag_dir(user_id),
+            llm_model_func=llm_complete,
+            embedding_func=EmbeddingFunc(
+                embedding_dim=EMBED_DIM,
+                max_token_size=512,
+                func=embed_texts,
+            ),
+        )
+        await rag.initialize_storages()
+        _rags[user_id] = rag
+        log.info("Created LightRAG graph for user %s", user_id[:8])
+    return _rags[user_id]
+
+
+# ── LLM function (Odysseus via OpenAI-compat) ─────────────────────────────
+
+async def llm_complete(
+    prompt: str,
+    system_prompt: Optional[str] = None,
+    history_messages: list = [],
+    **kwargs,
+) -> str:
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    for h in history_messages:
+        messages.append(h)
+    messages.append({"role": "user", "content": prompt})
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(
+                f"{ODYSSEUS_URL}/v1/chat/completions",
+                json={
+                    "model": ODYSSEUS_MODEL,
+                    "messages": messages,
+                    "max_tokens": 2048,
+                    "temperature": 0.1,
+                    "enable_thinking": False,
+                },
+            )
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        log.warning("llm_complete failed: %s", e)
+        return ""
+
+
+# ── Embedding function (fastembed) ────────────────────────────────────────
+
+async def embed_texts(texts: list[str]) -> list[list[float]]:
+    loop = asyncio.get_event_loop()
+    vecs = await loop.run_in_executor(
+        None, lambda: [v.tolist() for v in _embed.embed(texts)]
+    )
+    return vecs
+
 
 # ── Lifespan ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _model, _qdrant, EMBED_DIM
+    global _embed
 
-    log.info("Loading fastembed model %s …", MODEL_NAME)
+    log.info("Loading fastembed model %s …", EMBED_MODEL)
     t0 = time.time()
-    _model = TextEmbedding(model_name=MODEL_NAME, cache_dir=CACHE_DIR)
-    # Warm up + detect actual dim
-    test = list(_model.embed(["warmup"]))
-    EMBED_DIM = len(test[0])
-    log.info("Model ready in %.1fs — dim=%d", time.time() - t0, EMBED_DIM)
+    _embed = TextEmbedding(model_name=EMBED_MODEL)
+    # warm up
+    list(_embed.embed(["warmup"]))
+    log.info("Embed model ready (%.1fs)", time.time() - t0)
 
-    log.info("Connecting to Qdrant at %s …", QDRANT_URL)
-    _qdrant = QdrantClient(url=QDRANT_URL, timeout=10)
-    _ensure_collection()
-    log.info("nemo-memory ready — collection=%s dim=%d", QDRANT_COLLECTION, EMBED_DIM)
-
+    os.makedirs(WORKING_DIR, exist_ok=True)
+    log.info("nemo-memory (LightRAG) ready — odysseus=%s embed=%s",
+             ODYSSEUS_URL, EMBED_MODEL)
     yield
-
     log.info("nemo-memory shutting down")
 
 
 app = FastAPI(title="nemo-memory", lifespan=lifespan)
-
-# ── Helpers ───────────────────────────────────────────────────────────────
-
-def _ensure_collection():
-    existing = {c.name for c in _qdrant.get_collections().collections}
-    if QDRANT_COLLECTION not in existing:
-        _qdrant.create_collection(
-            collection_name=QDRANT_COLLECTION,
-            vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
-        )
-        log.info("Created Qdrant collection '%s' dim=%d", QDRANT_COLLECTION, EMBED_DIM)
-
-
-def _embed(texts: list[str]) -> list[list[float]]:
-    return [v.tolist() for v in _model.embed(texts)]
-
-
-def _chunk(text: str) -> list[str]:
-    chunks, start = [], 0
-    while start < len(text):
-        end = min(start + CHUNK_SIZE, len(text))
-        chunks.append(text[start:end])
-        if end == len(text):
-            break
-        start += CHUNK_SIZE - CHUNK_OVERLAP
-    return chunks
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_NAME, "dim": EMBED_DIM,
-            "collection": QDRANT_COLLECTION, "qdrant": QDRANT_URL}
+    return {
+        "status": "ok",
+        "mode": "lightrag",
+        "embed_model": EMBED_MODEL,
+        "odysseus": ODYSSEUS_URL,
+        "graphs_loaded": len(_rags),
+    }
 
 
-# ── /v1/embeddings (OpenAI-compatible) ───────────────────────────────────
+# ── /v1/embeddings (OpenAI-compat, for smart routing) ────────────────────
 
 class EmbedRequest(BaseModel):
     input: list[str] | str
@@ -118,9 +163,9 @@ class EmbedRequest(BaseModel):
 
 
 @app.post("/v1/embeddings")
-def embeddings(req: EmbedRequest):
+async def embeddings(req: EmbedRequest):
     texts = [req.input] if isinstance(req.input, str) else req.input
-    vecs = _embed(texts)
+    vecs = await embed_texts(texts)
     return {
         "object": "list",
         "data": [{"object": "embedding", "index": i, "embedding": v}
@@ -134,84 +179,51 @@ def embeddings(req: EmbedRequest):
 
 class IngestRequest(BaseModel):
     user_id: str
-    article_id: str
+    article_id: str   # used as doc id / label, not as a filter key
     text: str
     source: str = "wiki"
     project_id: Optional[str] = None
 
 
 @app.post("/ingest")
-def ingest(req: IngestRequest):
-    _qdrant.delete(
-        collection_name=QDRANT_COLLECTION,
-        points_selector=Filter(must=[
-            FieldCondition(key="user_id", match=MatchValue(value=req.user_id)),
-            FieldCondition(key="article_id", match=MatchValue(value=req.article_id)),
-        ]),
-    )
-    chunks = _chunk(req.text)
-    if not chunks:
-        return {"ingested": 0}
-
-    vecs = _embed(chunks)
-    points = [
-        PointStruct(
-            id=abs(hash(f"{req.user_id}:{req.article_id}:{i}")) % (2**63),
-            vector=v,
-            payload={"user_id": req.user_id, "article_id": req.article_id,
-                     "chunk_index": i, "text": chunk, "source": req.source,
-                     "project_id": req.project_id},
-        )
-        for i, (chunk, v) in enumerate(zip(chunks, vecs))
-    ]
-    _qdrant.upsert(collection_name=QDRANT_COLLECTION, points=points)
-    log.info("Ingested %d chunks article=%s user=%s", len(points), req.article_id, req.user_id)
-    return {"ingested": len(points), "article_id": req.article_id}
+async def ingest(req: IngestRequest):
+    if not req.text.strip():
+        return {"ingested": False, "reason": "empty text"}
+    rag = await _get_rag(req.user_id)
+    t0 = time.time()
+    await rag.ainsert(req.text)
+    log.info("Inserted article=%s user=%s (%.1fs)", req.article_id, req.user_id[:8], time.time()-t0)
+    return {"ingested": True, "article_id": req.article_id}
 
 
-# ── /query ────────────────────────────────────────────────────────────────
+# ── /query/context ────────────────────────────────────────────────────────
 
 class QueryRequest(BaseModel):
     user_id: str
     text: str
     top_k: int = Field(default=TOP_K_DEFAULT, ge=1, le=20)
     project_id: Optional[str] = None
-    score_threshold: float = 0.3
-
-
-@app.post("/query")
-def query(req: QueryRequest):
-    vec = _embed([req.text])[0]
-    must = [FieldCondition(key="user_id", match=MatchValue(value=req.user_id))]
-    if req.project_id:
-        must.append(FieldCondition(key="project_id", match=MatchValue(value=req.project_id)))
-
-    response = _qdrant.query_points(
-        collection_name=QDRANT_COLLECTION,
-        query=vec,
-        query_filter=Filter(must=must),
-        limit=req.top_k,
-        score_threshold=req.score_threshold,
-        with_payload=True,
-    )
-    results = response.points
-    return {
-        "chunks": [{"text": r.payload["text"], "score": r.score,
-                    "source": r.payload.get("source", ""),
-                    "article_id": r.payload.get("article_id", "")}
-                   for r in results],
-        "total": len(results),
-    }
+    mode: str = "hybrid"  # local | global | hybrid | naive
 
 
 @app.post("/query/context")
-def query_context(req: QueryRequest):
-    """Ready-to-inject markdown block for Companion system prompt."""
-    chunks = query(req)["chunks"]
-    if not chunks:
-        return {"context": "", "chunks_used": 0}
-    lines = ["# Relevant memory\n"]
-    for c in chunks:
-        lines.append(c["text"].strip())
-        lines.append("")
-    return {"context": "\n".join(lines), "chunks_used": len(chunks)}
+async def query_context(req: QueryRequest):
+    rag = await _get_rag(req.user_id)
+    t0 = time.time()
+    # Try hybrid first (graph + vector), fall back to naive (vector-only)
+    # if the LLM (Odysseus) is unavailable / no model loaded.
+    for mode in [req.mode, "naive"]:
+        try:
+            result = await rag.aquery(
+                req.text,
+                param=QueryParam(mode=mode, top_k=req.top_k),
+            )
+            elapsed = time.time() - t0
+            log.info("Query user=%s mode=%s (%.1fs) result_len=%d",
+                     req.user_id[:8], mode, elapsed, len(result or ""))
+            if result and result.strip():
+                context = f"# Relevant memory\n\n{result.strip()}"
+                return {"context": context, "chunks_used": 1}
+        except Exception as e:
+            log.warning("query_context mode=%s failed: %s — trying fallback", mode, e)
+    return {"context": "", "chunks_used": 0}

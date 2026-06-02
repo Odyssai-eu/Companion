@@ -105,20 +105,22 @@ services:
     container_name: nemo-memory
     restart: unless-stopped
     environment:
-      EMBED_MODEL_ID: ${NEMO_EMBED_MODEL:-nomic-ai/nomic-embed-text-v1.5}
-      QDRANT_URL: ${QDRANT_URL:-http://192.168.86.44:6333}
-      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-nemo}
+      ODYSSEUS_URL: ${ODYSSEUS_URL:-http://host.docker.internal:8000}
+      ODYSSEUS_MODEL: ${ODYSSEUS_MODEL:-default}
+      EMBED_MODEL: ${NEMO_EMBED_MODEL:-nomic-ai/nomic-embed-text-v1.5}
       EMBED_DIM: ${EMBED_DIM:-768}
-      TOP_K_DEFAULT: ${TOP_K_DEFAULT:-5}
+      TOP_K: ${TOP_K:-5}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "0.0.0.0:8765:8765"
     volumes:
       - nemo_models:/app/models
+      - nemo_data:/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
 volumes:
   nemo_models:
+  nemo_data:
   db_data:
   app_data:

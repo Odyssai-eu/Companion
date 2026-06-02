@@ -1,8 +1,12 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
-# fastembed: ONNX-based embeddings, no Rust build, no GPU required,
-# works out-of-the-box on any aarch64 linux container.
+# LightRAG: knowledge graph + vector retrieval
+lightrag-hku>=1.3
+# Embedding: fastembed ONNX (no Rust/Metal, works on aarch64 linux)
 fastembed>=0.4
-qdrant-client>=1.9
+# HTTP client for Odysseus LLM calls
+httpx>=0.27
 pydantic>=2.0
-numpy>=1.24
+# Pin numpy<2 — lightrag-hku 1.4.x has a bug with numpy 2.x
+# (nano-vectordb returns list where .size is expected)
+numpy>=1.24,<2.0
