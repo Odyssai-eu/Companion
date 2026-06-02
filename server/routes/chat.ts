@@ -38,7 +38,7 @@ import {
   EmbeddingServiceError,
 } from "../lib/semantic-router";
 import { loadRouterConfigForUser } from "./addon-router";
-import { getMemoryContext } from "../lib/memory";
+import { getMemoryContext, isNemoAvailable, nemoQuery } from "../lib/memory";
 import { registerInactivityCompile } from "../lib/memory-scheduler";
 import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
 import { getProjectMemoryContext } from "../lib/project-memory";
@@ -396,7 +396,27 @@ chatRoute.post("/completions", async (c) => {
         // changes when the compiler runs, not when the user asks something.
         let globalBlock = "";
         if (convMemoryEnabled) {
-          globalBlock = await getMemoryContext(userId, projectId);
+          if (isNemoAvailable()) {
+            // Phase 2 — semantic retrieval: embed the user's latest message,
+            // return only the relevant chunks (~2-4k tokens) instead of the
+            // full wiki (~12k tokens). Falls back to the raw wiki if nemo
+            // returns empty (service cold-start, no indexed content yet).
+            const lastUserMsg = body.messages
+              ?.filter((m: { role: string }) => m.role === "user")
+              .at(-1);
+            const query =
+              typeof lastUserMsg?.content === "string"
+                ? lastUserMsg.content
+                : "";
+            globalBlock = await nemoQuery(userId, query, projectId);
+            // Fallback: if nemo returns nothing (cold / empty index), use
+            // the legacy full-wiki path so the user isn't left with no memory.
+            if (!globalBlock) {
+              globalBlock = await getMemoryContext(userId, projectId);
+            }
+          } else {
+            globalBlock = await getMemoryContext(userId, projectId);
+          }
         }
         memoryBlock = [projectMemory, globalBlock]
           .filter((s) => s.trim().length > 0)

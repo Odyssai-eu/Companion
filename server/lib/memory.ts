@@ -185,6 +185,73 @@ const RAG_QDRANT_URL = process.env.RAG_QDRANT_URL ?? "";
 const RAG_EMBED_URL = process.env.RAG_EMBED_URL ?? "";
 const RAG_COLLECTION = process.env.RAG_COLLECTION ?? "obsidian-context";
 
+// ── nemo-memory service (Phase 2 — smart RAG injection) ──────────────────
+// When NEMO_MEMORY_URL is set, we replace the full-wiki injection with a
+// per-turn semantic query: embed the user's message, retrieve top-K relevant
+// chunks (~2-4k tokens) instead of the raw wiki (~12k tokens).
+// Falls back to the legacy full-wiki path when the service is unavailable.
+const NEMO_MEMORY_URL = (process.env.NEMO_MEMORY_URL || "").replace(/\/$/, "");
+const NEMO_TOP_K = Number(process.env.NEMO_TOP_K ?? "5");
+const NEMO_TIMEOUT_MS = Number(process.env.NEMO_TIMEOUT_MS ?? "3000");
+
+export function isNemoAvailable(): boolean {
+  return Boolean(NEMO_MEMORY_URL);
+}
+
+/** Query nemo-memory for context relevant to `question`.
+ *  Returns a ready-to-inject markdown block, or "" on failure. */
+export async function nemoQuery(
+  userId: string,
+  question: string,
+  projectId?: string | null,
+): Promise<string> {
+  if (!NEMO_MEMORY_URL || !question.trim()) return "";
+  try {
+    const res = await fetch(`${NEMO_MEMORY_URL}/query/context`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        text: question,
+        top_k: NEMO_TOP_K,
+        project_id: projectId ?? null,
+      }),
+      signal: AbortSignal.timeout(NEMO_TIMEOUT_MS),
+    });
+    if (!res.ok) return "";
+    const data = (await res.json()) as { context?: string };
+    return data.context ?? "";
+  } catch (err) {
+    console.warn("[memory] nemoQuery failed:", (err as Error).message);
+    return "";
+  }
+}
+
+/** Ingest a memory article into nemo-memory (fire-and-forget).
+ *  Called after Karpathy compiles a new wiki snapshot. */
+export function nemoIngest(
+  userId: string,
+  articleId: string,
+  text: string,
+  source: string = "wiki",
+  projectId?: string | null,
+): void {
+  if (!NEMO_MEMORY_URL || !text.trim()) return;
+  fetch(`${NEMO_MEMORY_URL}/ingest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: userId,
+      article_id: articleId,
+      text,
+      source,
+      project_id: projectId ?? null,
+    }),
+  }).catch((err: Error) => {
+    console.warn("[memory] nemoIngest failed:", err.message);
+  });
+}
+
 export type RagHit = {
   score: number;
   path: string;
@@ -372,9 +439,31 @@ export async function compileNow(
       signal: ctrl.signal,
     });
     clearTimeout(timer);
+    if (res.ok) {
+      // After a successful compile, sync the fresh wiki into nemo-memory
+      // so the next turn benefits from semantic retrieval on the new content.
+      void nemoSyncWiki(userId);
+    }
     return res.ok;
   } catch (err) {
     console.warn("[memory] compileNow failed:", (err as Error).message);
     return false;
+  }
+}
+
+/** After a Karpathy compile, refetch the user's wiki and ingest it into
+ *  nemo-memory so semantic retrieval picks up the fresh content. Fire-and-forget. */
+async function nemoSyncWiki(userId: string): Promise<void> {
+  if (!NEMO_MEMORY_URL || !MEMORY_BASE_URL) return;
+  try {
+    const url = new URL(`/context/${userId}`, MEMORY_BASE_URL);
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) return;
+    const data = (await res.json()) as { markdown?: string };
+    const text = stripWikilinks(data.markdown ?? "");
+    if (!text.trim()) return;
+    nemoIngest(userId, `wiki:${userId}`, text, "wiki");
+  } catch (err) {
+    console.warn("[memory] nemoSyncWiki failed:", (err as Error).message);
   }
 }
