@@ -30,6 +30,7 @@ import { loadCorpus as loadHelpCorpus } from "./lib/help-search";
 import adminGuestTokensRoute from "./routes/admin-guest-tokens";
 import adminUsersRoute from "./routes/admin-users";
 import auditRoute from "./routes/admin-audit";
+import nemoSyncRoute from "./routes/nemo-sync";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
 import conversationsRoute from "./routes/conversations";
@@ -180,6 +181,7 @@ app.get("/api/mcp-oauth/callback", handleOauthCallback);
 app.route("/api/admin/users", adminUsersRoute);
 app.route("/api/admin/guest-tokens", adminGuestTokensRoute);
 app.route("/api/admin/audit", auditRoute);
+app.route("/api/admin/nemo-sync", nemoSyncRoute);
 app.route("/api/agent-tokens", agentTokensRoute);
 app.route("/api/guest", guestRoute);
 
