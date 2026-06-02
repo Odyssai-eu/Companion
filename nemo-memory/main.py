@@ -117,9 +117,10 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
         hidden = out.last_hidden_state          # (n, seq_len, dim)
         vecs = hidden.mean(axis=1)              # (n, dim)
         mx.eval(vecs)
-        # Return numpy array — LightRAG's nano-vectordb requires ndarray,
-        # not a plain Python list (raises AttributeError: 'list' has no .size)
-        return np.array(vecs.tolist(), dtype=np.float32)
+        # Return numpy array for LightRAG (nano-vectordb requires ndarray).
+        # Callers that need JSON-serializable lists must call .tolist() themselves.
+        result = np.array(vecs.tolist(), dtype=np.float32)
+        return result
     return await loop.run_in_executor(None, _run)
 
 
@@ -164,14 +165,21 @@ class EmbedRequest(BaseModel):
     model: str = "nemo-embed"
 
 
+MAX_CHARS = 2048  # ~512 tokens — hard cap to avoid OOM on long chunks
+
+@app.post("/embeddings")
 @app.post("/v1/embeddings")
 async def embeddings(req: EmbedRequest):
-    texts = [req.input] if isinstance(req.input, str) else req.input
+    raw = [req.input] if isinstance(req.input, str) else req.input
+    # Truncate oversized inputs so the model never OOMs on long chunks
+    texts = [t[:MAX_CHARS] if len(t) > MAX_CHARS else t for t in raw]
     vecs = await embed_texts(texts)
+    # Convert to Python lists for JSON serialization (vecs is np.ndarray)
+    vecs_list = vecs.tolist() if hasattr(vecs, "tolist") else vecs
     return {
         "object": "list",
         "data": [{"object": "embedding", "index": i, "embedding": v}
-                 for i, v in enumerate(vecs)],
+                 for i, v in enumerate(vecs_list)],
         "model": req.model,
         "usage": {"prompt_tokens": sum(len(t.split()) for t in texts), "total_tokens": 0},
     }
