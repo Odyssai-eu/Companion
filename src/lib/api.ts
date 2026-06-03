@@ -295,6 +295,9 @@ export type ApiProject = {
   /** Sharing consent: must be true for other projects (same user) to be
    *  able to link to this one via tcai://project/<id>. Default false. */
   sharingEnabled: boolean;
+  /** Working directory on the user's machine — companion-local runs bash/fs
+   *  there. null → default ~/companion. */
+  workingDir: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -992,6 +995,7 @@ export const api = {
       externalVaultPath: string | null;
       externalVaultReadOnly: boolean;
       sharingEnabled: boolean;
+      workingDir: string | null;
     }>,
   ) =>
     request<{ project: ApiProject }>(`/api/projects/${id}`, {
@@ -1000,6 +1004,18 @@ export const api = {
     }),
   deleteProject: (id: string) =>
     request<void>(`/api/projects/${id}`, { method: "DELETE" }),
+
+  // Local-agent folder picker (browses the user's machine via companion-local)
+  browseLocal: (path: string) =>
+    request<{ dir: string; files: { name: string; path: string; isDir: boolean }[] }>(
+      "/api/local-agent/browse",
+      { method: "POST", body: JSON.stringify({ path }) },
+    ),
+  mkdirLocal: (path: string) =>
+    request<{ ok: boolean; path: string }>("/api/local-agent/mkdir", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
 
   // Project memory (per-project vault corpus) ──────────────────────────
   listProjectMemory: (id: string) =>

@@ -73,6 +73,9 @@ const updateSchema = z.object({
   externalVaultPath: z.string().max(1000).nullish(),
   externalVaultReadOnly: z.boolean().optional(),
   sharingEnabled: z.boolean().optional(),
+  /** Working directory on the user's machine — companion-local executes
+   *  bash/fs there. null/empty → default ~/companion. */
+  workingDir: z.string().max(1000).nullish(),
 });
 
 function iconForCategory(id: string): string | null {
@@ -175,6 +178,10 @@ projectsRoute.patch(
       patch.externalVaultReadOnly = data.externalVaultReadOnly;
     if (data.sharingEnabled !== undefined)
       patch.sharingEnabled = data.sharingEnabled;
+    if (data.workingDir !== undefined) {
+      patch.workingDir =
+        data.workingDir && data.workingDir.trim() ? data.workingDir.trim() : null;
+    }
     const [updated] = await db
       .update(projects)
       .set(patch)

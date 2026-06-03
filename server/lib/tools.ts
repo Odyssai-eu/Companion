@@ -1141,12 +1141,14 @@ export async function executeTool(
   name: string,
   args: ToolArgs,
   userId: string,
+  cwd?: string | null,
 ): Promise<ToolResult> {
-  // Route to local agent if connected — bash + fs tools run on user's Mac.
+  // Route to local agent if connected — bash + fs tools run on user's Mac,
+  // in the resolved working directory (project.working_dir or ~/companion).
   // Server-side execution is the fallback when no local agent is connected.
   const LOCAL_TOOLS = new Set(["bash", "fs_read", "fs_write", "fs_list", "fs_edit"]);
   if (LOCAL_TOOLS.has(name) && isLocalAgentConnected(userId)) {
-    const result = await localAgentExecute(userId, name, args as Record<string, unknown>);
+    const result = await localAgentExecute(userId, name, args as Record<string, unknown>, cwd);
     if (result) return result as ToolResult;
     // null = agent disconnected between check and call, fall through to server
   }

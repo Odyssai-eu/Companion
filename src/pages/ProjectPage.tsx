@@ -35,6 +35,8 @@ export default function ProjectPage() {
   const [externalVaultPath, setExternalVaultPath] = useState("");
   const [externalVaultReadOnly, setExternalVaultReadOnly] = useState(true);
   const [sharingEnabled, setSharingEnabled] = useState(false);
+  const [workingDir, setWorkingDir] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   // Project settings panel — gates the system prompt + memory + vault
   // controls. Default closed so the project view stays focused on
   // chats; user opens it when they actually want to tune. Instructions
@@ -79,6 +81,7 @@ export default function ProjectPage() {
         setExternalVaultPath(p.project.externalVaultPath ?? "");
         setExternalVaultReadOnly(p.project.externalVaultReadOnly ?? true);
         setSharingEnabled(p.project.sharingEnabled ?? false);
+        setWorkingDir(p.project.workingDir ?? "");
         setConversations(c.conversations.filter((x) => x.projectId === id));
         setDecisions(d.decisions);
       })
@@ -128,6 +131,7 @@ export default function ProjectPage() {
           externalVaultPath: externalVaultPath.trim() || null,
           externalVaultReadOnly: externalVaultReadOnly,
           sharingEnabled: sharingEnabled,
+          workingDir: workingDir.trim() || null,
         });
         setProject(project);
       }
@@ -404,6 +408,28 @@ export default function ProjectPage() {
                   />
                 </Field>
 
+                <Field
+                  label="Working directory"
+                  hint="Where bash & file tools run on your machine (via companion-local). Empty = default ~/companion."
+                >
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={workingDir}
+                      onChange={(e) => setWorkingDir(e.target.value)}
+                      placeholder="~/companion"
+                      className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setPickerOpen(true)}
+                      className="rounded-lg border border-gray-200 bg-white px-3 text-[12px] font-medium text-ink hover:border-cyan"
+                    >
+                      Browse…
+                    </button>
+                  </div>
+                </Field>
+
                 <Field label="Memory">
                   <MemoryControls
                     globalEnabled={memoryEnabled}
@@ -448,6 +474,17 @@ export default function ProjectPage() {
               </button>
             </div>
           </form>
+
+          {pickerOpen && (
+            <FolderPicker
+              initial={workingDir || "~"}
+              onClose={() => setPickerOpen(false)}
+              onSelect={(p) => {
+                setWorkingDir(p);
+                setPickerOpen(false);
+              }}
+            />
+          )}
 
           {!isNew && conversations.length > 0 && (
             <section className="flex flex-col gap-3">
@@ -1134,5 +1171,147 @@ function DecisionsPanel({
         ))}
       </div>
     </section>
+  );
+}
+
+// ── Folder picker ───────────────────────────────────────────────────────────
+// Browses the user's machine via companion-local (fs_list over the SSE
+// bridge). Navigate into dirs, go up, create a new folder, select the
+// current dir. Requires companion-local connected — shows a hint otherwise.
+function FolderPicker({
+  initial,
+  onClose,
+  onSelect,
+}: {
+  initial: string;
+  onClose: () => void;
+  onSelect: (path: string) => void;
+}) {
+  const [cwd, setCwd] = useState(initial || "~");
+  const [entries, setEntries] = useState<{ name: string; path: string; isDir: boolean }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [newFolder, setNewFolder] = useState("");
+
+  async function load(path: string) {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.browseLocal(path);
+      setCwd(res.dir || path);
+      setEntries((res.files || []).filter((f) => f.isDir));
+    } catch (e: unknown) {
+      const msg = (e as Error).message || "";
+      setError(
+        msg.includes("409") || msg.includes("no_local_agent")
+          ? "companion-local n'est pas connecté — lance l'app menubar d'abord."
+          : msg,
+      );
+      setEntries([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load(initial || "~");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function up() {
+    const parent = cwd.replace(/\/+$/, "").split("/").slice(0, -1).join("/") || "/";
+    void load(parent);
+  }
+
+  async function createFolder() {
+    const name = newFolder.trim();
+    if (!name) return;
+    const target = `${cwd.replace(/\/+$/, "")}/${name}`;
+    try {
+      await api.mkdirLocal(target);
+      setNewFolder("");
+      await load(cwd);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[70vh] w-[520px] flex-col gap-3 rounded-xl border border-gray-200 bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="font-display text-[18px] font-light text-navy">
+            Choose working directory
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-ink">✕</button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={up}
+            className="rounded border border-gray-200 px-2 py-1 text-[12px] hover:border-cyan"
+          >↑ Up</button>
+          <code className="flex-1 truncate rounded bg-gray-50 px-2 py-1 font-mono text-[12px] text-ink">
+            {cwd}
+          </code>
+        </div>
+
+        {error && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+            {error}
+          </div>
+        )}
+
+        <div className="min-h-[180px] flex-1 overflow-y-auto rounded-lg border border-gray-100">
+          {loading ? (
+            <div className="p-4 font-mono text-[11px] text-gray-400">Loading…</div>
+          ) : entries.length === 0 && !error ? (
+            <div className="p-4 font-mono text-[11px] text-gray-400">No sub-folders here.</div>
+          ) : (
+            entries.map((f) => (
+              <button
+                key={f.path}
+                onClick={() => void load(f.path)}
+                className="flex w-full items-center gap-2 border-b border-gray-50 px-3 py-2 text-left text-[13px] hover:bg-gray-50"
+              >
+                <span className="text-amber-500">📁</span>
+                <span className="truncate text-ink">{f.name}</span>
+              </button>
+            ))
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <input
+            value={newFolder}
+            onChange={(e) => setNewFolder(e.target.value)}
+            placeholder="New folder name…"
+            className="flex-1 rounded border border-gray-200 px-2 py-1.5 text-[12px] focus:border-cyan focus:outline-none"
+          />
+          <button
+            onClick={createFolder}
+            disabled={!newFolder.trim()}
+            className="rounded border border-gray-200 px-3 text-[12px] hover:border-cyan disabled:opacity-50"
+          >+ New folder</button>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-gray-200 px-4 py-2 text-[13px] hover:bg-gray-50"
+          >Cancel</button>
+          <button
+            onClick={() => onSelect(cwd)}
+            className="rounded-lg bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95"
+          >Select this folder</button>
+        </div>
+      </div>
+    </div>
   );
 }

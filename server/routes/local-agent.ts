@@ -45,7 +45,7 @@ type PendingRequest = {
 
 type AgentSession = {
   userId: string;
-  sendEvent: (id: string, tool: string, args: Record<string, unknown>) => void;
+  sendEvent: (id: string, tool: string, args: Record<string, unknown>, cwd?: string | null) => void;
   pending: Map<string, PendingRequest>;
   connectedAt: Date;
 };
@@ -88,10 +88,10 @@ localAgentRoute.get("/events", async (c) => {
   return streamSSE(c, async (stream) => {
     const pending = new Map<string, PendingRequest>();
 
-    const sendEvent = (id: string, tool: string, args: Record<string, unknown>) => {
+    const sendEvent = (id: string, tool: string, args: Record<string, unknown>, cwd?: string | null) => {
       void stream.writeSSE({
         event: "tool_execute",
-        data: JSON.stringify({ requestId: id, tool, args }),
+        data: JSON.stringify({ requestId: id, tool, args, cwd: cwd ?? null }),
         id,
       });
     };
@@ -152,6 +152,44 @@ localAgentRoute.post("/result", async (c) => {
   return c.json({ ok: true });
 });
 
+// ── POST /api/local-agent/browse ───────────────────────────────────────────
+// Browse a directory on the user's machine (for the project working-dir
+// picker). Auth via session cookie (mounted under requireUser at index.ts),
+// so we read userId from context, not a token.
+
+localAgentRoute.post("/browse", async (c) => {
+  // This route is session-authed (see index.ts mount). userId from context.
+  const userId = (c.get as (k: string) => string | undefined)("userId");
+  if (!userId) return c.json({ error: "unauthenticated" }, 401);
+  if (!isLocalAgentConnected(userId)) {
+    return c.json({ error: "no_local_agent", detail: "companion-local not connected" }, 409);
+  }
+  const body = await c.req.json().catch(() => ({})) as { path?: string };
+  const result = await localAgentExecute(userId, "fs_list", { prefix: body.path || "~" });
+  if (!result) return c.json({ error: "no_local_agent" }, 409);
+  if (!result.ok) return c.json({ error: "browse_failed", detail: result.error }, 502);
+  return c.json(result.data);
+});
+
+// ── POST /api/local-agent/mkdir ────────────────────────────────────────────
+// Create a folder on the user's machine (picker "New folder").
+
+localAgentRoute.post("/mkdir", async (c) => {
+  const userId = (c.get as (k: string) => string | undefined)("userId");
+  if (!userId) return c.json({ error: "unauthenticated" }, 401);
+  if (!isLocalAgentConnected(userId)) {
+    return c.json({ error: "no_local_agent" }, 409);
+  }
+  const body = await c.req.json().catch(() => ({})) as { path?: string };
+  if (!body.path) return c.json({ error: "missing path" }, 400);
+  // Use bash mkdir -p (quoted) on the local agent.
+  const safe = body.path.replace(/'/g, "'\\''");
+  const result = await localAgentExecute(userId, "bash", { command: `mkdir -p '${safe}' && echo created` });
+  if (!result) return c.json({ error: "no_local_agent" }, 409);
+  if (!result.ok) return c.json({ error: "mkdir_failed", detail: result.error }, 502);
+  return c.json({ ok: true, path: body.path });
+});
+
 // ── GET /api/local-agent/status ────────────────────────────────────────────
 
 localAgentRoute.get("/status", async (c) => {
@@ -180,6 +218,7 @@ export async function localAgentExecute(
   userId: string,
   tool: string,
   args: Record<string, unknown>,
+  cwd?: string | null,
 ): Promise<{ ok: boolean; data?: unknown; error?: string } | null> {
   const session = sessions.get(userId);
   if (!session) return null; // no local agent connected
@@ -193,8 +232,17 @@ export async function localAgentExecute(
     }, TOOL_TIMEOUT_MS);
 
     session.pending.set(id, { id, tool, args, resolve, timer });
-    session.sendEvent(id, tool, args);
+    session.sendEvent(id, tool, args, cwd);
   });
+}
+
+/** Browse a directory on the user's machine via the connected local agent.
+ *  Used by the project working-dir picker. Returns null if no agent. */
+export async function localAgentBrowse(
+  userId: string,
+  path: string,
+): Promise<{ ok: boolean; data?: unknown; error?: string } | null> {
+  return localAgentExecute(userId, "fs_list", { prefix: path || "~" });
 }
 
 /** Check if a local agent is connected for this user. */

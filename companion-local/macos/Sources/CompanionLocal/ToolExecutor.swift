@@ -5,7 +5,11 @@ import Foundation
 enum ToolExecutor {
     static let bashTimeout: TimeInterval = 30
 
-    static func run(tool: String, args: [String: Any], cwd: String) async -> [String: Any] {
+    static func run(tool: String, args: [String: Any], cwd rawCwd: String) async -> [String: Any] {
+        // Expand ~ so a project working_dir like "~/projects/foo" resolves.
+        let cwd = (rawCwd as NSString).expandingTildeInPath
+        try? FileManager.default.createDirectory(
+            atPath: cwd, withIntermediateDirectories: true)
         switch tool {
         case "bash":      return runBash(args, cwd: cwd)
         case "fs_read":   return runRead(args, cwd: cwd)

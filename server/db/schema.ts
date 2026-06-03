@@ -223,6 +223,10 @@ export const projects = pgTable(
     sharingEnabled: boolean("sharing_enabled").notNull().default(false),
     // Team scope — null = personal project.
     teamId: uuid("team_id").references(() => teams.id, { onDelete: "set null" }),
+    // Working directory on the USER's machine (companion-local executes bash/
+    // fs there). A path string, e.g. "/Users/x/projects/foo". null = use the
+    // default (~/companion) that companion-local creates at install.
+    workingDir: text("working_dir"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),

@@ -28,9 +28,15 @@
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+// Default working directory, created at install. Per-tool cwd from the
+// server (project working_dir) overrides this; null/empty → this default.
+const DEFAULT_CWD = join_home("companion");
+function join_home(...parts) { return [homedir(), ...parts].join("/"); }
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -49,32 +55,46 @@ if (!COMPANION_URL || !TOKEN) {
   process.exit(1);
 }
 
-// Working directory for bash commands (defaults to current dir)
-const BASH_CWD = flag("cwd") ?? process.env.COMPANION_LOCAL_CWD ?? process.cwd();
+// Fallback working dir when the server doesn't specify one (global chat with
+// no project working_dir). --cwd overrides the ~/companion default.
+const BASH_CWD = flag("cwd") ?? process.env.COMPANION_LOCAL_CWD ?? DEFAULT_CWD;
 const BASH_TIMEOUT = parseInt(flag("timeout") ?? process.env.COMPANION_LOCAL_TIMEOUT ?? "30000", 10);
 
 // ── Tool executors ────────────────────────────────────────────────────────
 
-async function executeTool(tool, toolArgs) {
+// Expand ~ and resolve a path relative to the effective cwd.
+function resolveIn(cwd, p) {
+  const s = String(p ?? "");
+  if (s.startsWith("~")) return s.replace(/^~/, homedir());
+  if (s.startsWith("/")) return s;
+  return resolve(cwd, s);
+}
+
+async function executeTool(tool, toolArgs, cwd) {
+  // cwd: server-provided (project working_dir) or fall back to the default.
+  const effectiveCwd = (cwd && String(cwd).trim())
+    ? String(cwd).replace(/^~/, homedir())
+    : BASH_CWD;
   switch (tool) {
     case "bash": {
       const command = String(toolArgs.command ?? "").trim();
       if (!command) return { ok: false, error: "missing 'command'" };
       try {
+        await mkdir(effectiveCwd, { recursive: true }); // ensure cwd exists
         const { stdout, stderr } = await execFileAsync("/bin/bash", ["-c", command], {
-          cwd: BASH_CWD,
+          cwd: effectiveCwd,
           timeout: BASH_TIMEOUT,
           maxBuffer: 2_000_000,
           env: { ...process.env },
         });
-        return { ok: true, data: { stdout: stdout.slice(0, 16000), stderr: stderr.slice(0, 4000), command } };
+        return { ok: true, data: { stdout: stdout.slice(0, 16000), stderr: stderr.slice(0, 4000), command, cwd: effectiveCwd } };
       } catch (e) {
         return { ok: false, error: [e.stderr?.slice(0, 500), e.message].filter(Boolean).join("\n") };
       }
     }
 
     case "fs_read": {
-      const path = resolve(String(toolArgs.path ?? ""));
+      const path = resolveIn(effectiveCwd, toolArgs.path);
       try {
         const content = await readFile(path, "utf8");
         return { ok: true, data: { path, content, sizeBytes: Buffer.byteLength(content) } };
@@ -84,7 +104,7 @@ async function executeTool(tool, toolArgs) {
     }
 
     case "fs_write": {
-      const path = resolve(String(toolArgs.path ?? ""));
+      const path = resolveIn(effectiveCwd, toolArgs.path);
       const content = String(toolArgs.content ?? "");
       try {
         await mkdir(dirname(path), { recursive: true });
@@ -98,7 +118,7 @@ async function executeTool(tool, toolArgs) {
     case "fs_list": {
       const { readdir, stat } = await import("node:fs/promises");
       const prefix = String(toolArgs.prefix ?? ".");
-      const dir = resolve(prefix);
+      const dir = resolveIn(effectiveCwd, prefix);
       try {
         const entries = await readdir(dir);
         const files = await Promise.all(
@@ -106,13 +126,13 @@ async function executeTool(tool, toolArgs) {
             const full = `${dir}/${name}`;
             try {
               const s = await stat(full);
-              return { path: `${prefix}/${name}`, sizeBytes: s.size, isDir: s.isDirectory() };
+              return { path: `${dir}/${name}`, name, sizeBytes: s.size, isDir: s.isDirectory() };
             } catch {
-              return { path: `${prefix}/${name}`, sizeBytes: 0, isDir: false };
+              return { path: `${dir}/${name}`, name, sizeBytes: 0, isDir: false };
             }
           })
         );
-        return { ok: true, data: files };
+        return { ok: true, data: { dir, files } };
       } catch (e) {
         return { ok: false, error: e.message };
       }
@@ -191,9 +211,9 @@ async function connect() {
           if (eventType === "connected") {
             console.log("[companion-local] handshake OK");
           } else if (eventType === "tool_execute" && eventData) {
-            const { requestId, tool, args } = JSON.parse(eventData);
-            console.log(`[companion-local] → ${tool}(${JSON.stringify(args).slice(0, 80)})`);
-            const result = await executeTool(tool, args);
+            const { requestId, tool, args, cwd } = JSON.parse(eventData);
+            console.log(`[companion-local] → ${tool}(${JSON.stringify(args).slice(0, 60)})${cwd ? ` @ ${cwd}` : ""}`);
+            const result = await executeTool(tool, args, cwd);
             const status = result.ok ? "✓" : "✗";
             console.log(`[companion-local] ${status} ${requestId}`);
             await sendResult(requestId, result);
@@ -218,6 +238,9 @@ async function connect() {
 // ── Main loop with reconnect ──────────────────────────────────────────────
 
 async function main() {
+  // Ensure the default working dir exists at install/first-run.
+  await mkdir(DEFAULT_CWD, { recursive: true }).catch(() => {});
+  console.log(`[companion-local] default working dir: ${DEFAULT_CWD}`);
   let delay = 2000;
   while (true) {
     await connect();

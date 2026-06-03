@@ -306,6 +306,9 @@ chatRoute.post("/completions", async (c) => {
   // backfill the snapshot on first chat so the same stability kicks in from
   // turn 2 onwards.
   let projectId: string | null = null;
+  // Working directory for local-agent tool execution. null → companion-local
+  // uses its default (~/companion). A project can override it via its picker.
+  let projectCwd: string | null = null;
   let memoryBlock = "";
   let convKind: "chat" | "talk" = "chat";
   // Project-level memory toggles. When the conv belongs to a project,
@@ -366,6 +369,7 @@ chatRoute.post("/completions", async (c) => {
               dedicatedMemoryEnabled: projects.dedicatedMemoryEnabled,
               globalMemoryReadOnly: projects.globalMemoryReadOnly,
               teamId: projects.teamId,
+              workingDir: projects.workingDir,
             })
             .from(projects)
             .where(eq(projects.id, projectId))
@@ -376,6 +380,7 @@ chatRoute.post("/completions", async (c) => {
             projectGlobalReadOnly = globalReadOnly;
             projectDedicatedMemoryEnabled = dedicated;
             projectTeamId = proj.teamId ?? null;
+            projectCwd = proj.workingDir ?? null;
           }
         }
 
@@ -960,7 +965,7 @@ chatRoute.post("/completions", async (c) => {
           // Execute tools in parallel
           const results = await Promise.all(
             toolCalls.map((tc) =>
-              executeTool(tc.name, tryParseJson(tc.argumentsRaw), userId),
+              executeTool(tc.name, tryParseJson(tc.argumentsRaw), userId, projectCwd),
             ),
           );
 

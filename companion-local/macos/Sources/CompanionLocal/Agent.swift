@@ -121,8 +121,12 @@ final class Agent {
                   let requestId = obj["requestId"] as? String,
                   let tool = obj["tool"] as? String else { return }
             let args = obj["args"] as? [String: Any] ?? [:]
+            // Server sends a per-tool cwd (project working_dir). Fall back to
+            // the app's configured cwd (~/companion default) when null.
+            let eventCwd = (obj["cwd"] as? String)?.trimmingCharacters(in: .whitespaces)
+            let cwd = (eventCwd?.isEmpty == false) ? eventCwd! : config.cwd
             lastAction = "\(tool)(\(shortArgs(args)))"
-            let result = await ToolExecutor.run(tool: tool, args: args, cwd: config.cwd)
+            let result = await ToolExecutor.run(tool: tool, args: args, cwd: cwd)
             await sendResult(requestId: requestId, result: result)
         default:
             break

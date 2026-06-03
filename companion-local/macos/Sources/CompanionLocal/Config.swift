@@ -16,8 +16,12 @@ struct Config {
     static func load() -> Config {
         let d = UserDefaults.standard
         let url = d.string(forKey: urlKey) ?? "https://nemo.thecomp.ai"
-        let cwd = d.string(forKey: cwdKey)
-            ?? FileManager.default.homeDirectoryForCurrentUser.path
+        // Default working dir: ~/companion, created at first run.
+        let defaultCwd = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("companion").path
+        let cwd = d.string(forKey: cwdKey) ?? defaultCwd
+        try? FileManager.default.createDirectory(
+            atPath: cwd, withIntermediateDirectories: true)
         return Config(url: url, cwd: cwd)
     }
 
