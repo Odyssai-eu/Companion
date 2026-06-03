@@ -15,6 +15,11 @@
  */
 
 import { and, asc, eq, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { db } from "../db/index";
 import { addons, agentSkills, mcpServers } from "../db/schema";
 import {
@@ -25,6 +30,8 @@ import {
 } from "./mcp-client";
 import { parseSkillMd, SkillParseError } from "./skill-format";
 import { fsEdit, fsList, fsRead, fsWrite, WorkspaceError } from "./workspace";
+
+const execFileAsync = promisify(execFile);
 
 const ADDON_NAME = "Web Search";
 
@@ -197,6 +204,100 @@ const FS_TOOLS = [
           },
         },
         required: ["path", "old_string", "new_string"],
+      },
+    },
+  },
+];
+
+// ── Native web + bash tools (no addon, no API key) ───────────────────────
+
+const NATIVE_TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "web_search",
+      description:
+        "Search the web using DuckDuckGo. Returns title, URL and snippet " +
+        "for each result. Use when the user asks about current events, " +
+        "projects, real-time data, or anything you wouldn't reliably know. " +
+        "No API key required.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "The search query." },
+          num_results: {
+            type: "integer",
+            description: "Number of results to return (1–20, default 5).",
+            default: 5,
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "web_read",
+      description:
+        "Fetch a URL and return clean text (scripts/styles stripped). " +
+        "Paginated via start_pos + max_length. Use after web_search to " +
+        "read a specific page, or when given a direct URL. Results cached " +
+        "24 h.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "The URL to fetch." },
+          start_pos: {
+            type: "integer",
+            description: "Start reading from this character offset (default 0).",
+            default: 0,
+          },
+          max_length: {
+            type: "integer",
+            description: "Max characters to return (default 8000).",
+            default: 8000,
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "web_read_full",
+      description:
+        "Fetch a URL and return the complete text content (no pagination). " +
+        "WARNING: can return very large amounts of text. Prefer web_read " +
+        "with pagination unless you need the full document. Cached 24 h.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "The URL to fetch." },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "bash",
+      description:
+        "Run a shell command on the server. Runs in a sandboxed working " +
+        "directory, timeout 30 s, no network-modifying commands. Use for " +
+        "git, grep, find, build commands, file transformations. Returns " +
+        "stdout + stderr. For file read/write prefer fs_read/fs_write.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: {
+            type: "string",
+            description: "The shell command to run, e.g. 'git log --oneline -10'.",
+          },
+        },
+        required: ["command"],
       },
     },
   },
@@ -409,7 +510,7 @@ export function alwaysOnTools(): unknown[] {
  *  - MCP servers are per-user (dynamic, see collectMcpTools).
  *  Note: SKILL_TOOLS are NOT here — see alwaysOnTools(). */
 export async function toolsForUser(userId: string): Promise<unknown[]> {
-  const out: unknown[] = [...FS_TOOLS];
+  const out: unknown[] = [...FS_TOOLS, ...NATIVE_TOOLS];
   if (isRagConfigured()) out.push(...RAG_TOOLS);
   if (await isWebSearchEnabled(userId)) out.push(...WEB_SEARCH_TOOLS);
 
@@ -816,6 +917,225 @@ async function executeFsTool(
   }
 }
 
+// ── Native tools implementation ───────────────────────────────────────────
+
+const WEB_CACHE_DIR = process.env.WEB_CACHE_DIR ?? "/tmp/companion-web-cache";
+const WEB_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 h
+const BASH_TIMEOUT_MS = 30_000;
+const BASH_SANDBOX_DIR = process.env.BASH_SANDBOX_DIR ?? "/tmp/companion-bash";
+
+/** Fetch a URL, strip HTML, cache 24 h. Returns plain text. */
+async function fetchUrl(url: string): Promise<string> {
+  const key = createHash("sha256").update(url).digest("hex");
+  const cacheFile = join(WEB_CACHE_DIR, key + ".txt");
+
+  // Cache hit?
+  try {
+    const s = await stat(cacheFile);
+    if (Date.now() - s.mtimeMs < WEB_CACHE_TTL_MS) {
+      return await readFile(cacheFile, "utf8");
+    }
+  } catch {
+    // cache miss — proceed
+  }
+
+  const resp = await fetch(url, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
+  const html = await resp.text();
+
+  // Strip script/style/comments/tags
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&[a-z]+;/gi, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+
+  // Write cache
+  await mkdir(WEB_CACHE_DIR, { recursive: true });
+  await writeFile(cacheFile, text, "utf8").catch(() => undefined);
+  return text;
+}
+
+async function executeNativeTool(
+  name: string,
+  args: ToolArgs,
+): Promise<ToolResult> {
+  try {
+    // ── web_search ──────────────────────────────────────────────────────
+    if (name === "web_search") {
+      const query = String(args.query ?? "").trim();
+      if (!query) return { ok: false, error: "missing 'query'" };
+      const numResults = Math.min(20, Math.max(1, Number(args.num_results ?? 5)));
+
+      const encoded = encodeURIComponent(query);
+      const ddgUrl = `https://lite.duckduckgo.com/lite/?q=${encoded}`;
+      // Parse DuckDuckGo Lite HTML: split by numbered result markers
+      // then extract href + title + snippet from each block.
+      const rawHtml = await (async () => {
+        // fetchUrl strips HTML — we need raw HTML for DDG parsing
+        const key = createHash("sha256").update(ddgUrl).digest("hex");
+        const cacheFile = join(WEB_CACHE_DIR, key + ".html");
+        try {
+          const s = await stat(cacheFile);
+          if (Date.now() - s.mtimeMs < WEB_CACHE_TTL_MS) {
+            return await readFile(cacheFile, "utf8");
+          }
+        } catch { /* miss */ }
+        const r = await fetch(ddgUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+          },
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!r.ok) throw new Error(`DDG HTTP ${r.status}`);
+        const html = await r.text();
+        await mkdir(WEB_CACHE_DIR, { recursive: true });
+        await writeFile(cacheFile, html, "utf8").catch(() => undefined);
+        return html;
+      })();
+
+      const results: { title: string; link: string; snippet: string }[] = [];
+      // Split by numbered td markers
+      const sections = rawHtml.split(/<tr>\s*<td[^>]*valign="top"[^>]*>\s*\d+\.\s*&nbsp;\s*<\/td>/i);
+      for (const section of sections.slice(1, numResults + 1)) {
+        const hrefM = section.match(/href=['"]([^'"]+)['"]/);
+        if (!hrefM) continue;
+        let link = hrefM[1];
+        // Extract real URL from DDG redirect param
+        try {
+          const uddg = new URL(link).searchParams.get("uddg");
+          if (uddg) link = uddg;
+        } catch { /* not a full URL */ }
+        const titleM = section.match(/href=['"][^'"]+['"]>([^<]+)<\/a>/i);
+        const title = titleM ? titleM[1].trim() : "";
+        const snippetM = section.match(/class=['"]result-snippet['"][^>]*>([^<]*)</i);
+        const snippet = snippetM
+          ? snippetM[1].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim()
+          : "";
+        if (link && title) results.push({ title, link, snippet });
+      }
+      return {
+        ok: true,
+        data: { query, results, result_count: results.length },
+      };
+    }
+
+    // ── web_read ────────────────────────────────────────────────────────
+    if (name === "web_read") {
+      const url = String(args.url ?? "").trim();
+      if (!url) return { ok: false, error: "missing 'url'" };
+      const startPos = Math.max(0, Number(args.start_pos ?? 0));
+      const maxLength = Math.max(1, Number(args.max_length ?? 8000));
+      const text = await fetchUrl(url);
+      const slice = text.slice(startPos, startPos + maxLength);
+      return {
+        ok: true,
+        data: {
+          url,
+          content: slice,
+          content_length: slice.length,
+          total_length: text.length,
+          start_pos: startPos,
+        },
+      };
+    }
+
+    // ── web_read_full ───────────────────────────────────────────────────
+    if (name === "web_read_full") {
+      const url = String(args.url ?? "").trim();
+      if (!url) return { ok: false, error: "missing 'url'" };
+      const text = await fetchUrl(url);
+      return {
+        ok: true,
+        data: { url, content: text, content_length: text.length },
+      };
+    }
+
+    // ── bash ────────────────────────────────────────────────────────────
+    if (name === "bash") {
+      const command = String(args.command ?? "").trim();
+      if (!command) return { ok: false, error: "missing 'command'" };
+
+      // Basic safety: block obviously dangerous patterns
+      const blocked = [
+        /rm\s+-rf\s+\//,
+        /mkfs/,
+        /dd\s+if=/,
+        /:\(\)\{.*\}/,  // fork bomb
+        /shutdown|reboot|halt/,
+        /chmod\s+777\s+\//,
+        /sudo\s+rm/,
+      ];
+      for (const pattern of blocked) {
+        if (pattern.test(command)) {
+          return { ok: false, error: "command blocked by safety filter" };
+        }
+      }
+
+      await mkdir(BASH_SANDBOX_DIR, { recursive: true });
+      try {
+        const { stdout, stderr } = await execFileAsync(
+          "/bin/bash",
+          ["-c", command],
+          {
+            cwd: BASH_SANDBOX_DIR,
+            timeout: BASH_TIMEOUT_MS,
+            maxBuffer: 1_000_000, // 1 MB output cap
+            env: {
+              ...process.env,
+              HOME: BASH_SANDBOX_DIR,
+              TMPDIR: BASH_SANDBOX_DIR,
+            },
+          },
+        );
+        return {
+          ok: true,
+          data: {
+            stdout: stdout.slice(0, 8000),
+            stderr: stderr.slice(0, 2000),
+            command,
+          },
+        };
+      } catch (e: unknown) {
+        const err = e as { stdout?: string; stderr?: string; message?: string };
+        return {
+          ok: false,
+          error: [
+            err.stderr?.slice(0, 500) || "",
+            err.message || "command failed",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        };
+      }
+    }
+
+    return { ok: false, error: `unknown native tool: ${name}` };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
 export async function executeTool(
   name: string,
   args: ToolArgs,
@@ -828,7 +1148,27 @@ export async function executeTool(
     if (!q) return { ok: false, error: "missing 'query' argument" };
     return ragSearch(q, limit);
   }
-  if (name === "web_search" || name === "web_fetch") {
+  // Native tools — no addon or API key required
+  if (
+    name === "web_search" ||
+    name === "web_read" ||
+    name === "web_read_full" ||
+    name === "bash"
+  ) {
+    // web_search: native DDG first, Tavily fallback if addon enabled
+    if (name === "web_search") {
+      const native = await executeNativeTool(name, args);
+      if (native.ok && (native.data as { result_count?: number })?.result_count) {
+        return native;
+      }
+      // Fallback to Tavily if configured
+      const hasAddon = await isWebSearchEnabled(userId);
+      if (hasAddon) return executeWebTool("web_search", args, userId);
+      return native;
+    }
+    return executeNativeTool(name, args);
+  }
+  if (name === "web_fetch") {
     return executeWebTool(name, args, userId);
   }
   if (name.startsWith("skill_")) {
