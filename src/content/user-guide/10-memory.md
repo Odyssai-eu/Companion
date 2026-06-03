@@ -1,29 +1,41 @@
 # Memory
 
-Companion has two memory layers — both optional, both searchable, both editable. They serve different purposes. Once you understand the snapshot lifecycle, the rest is straightforward.
+Companion's memory system gives you a persistent, queryable knowledge base that grows with every conversation. It runs on **nemo-memory** — a native macOS service using `Qwen3-Embedding-0.6B-4bit-DWQ` via MLX on Apple Silicon — and organises context across three levels.
 
-## The two layers
+## Memory levels
 
-### Global wiki — Némo
+### Personal memory (your knowledge graph)
 
-A markdown wiki that captures **who you are** across all conversations. The agent that lives in Companion calls itself Némo and treats this wiki as its memory.
+A LightRAG knowledge graph scoped to your user account. Auto-populated from your wiki vault via nemo-memory.
 
-- **Where it lives** — Postgres in the `companion-memory` service. Table `memory_articles`. Per-user, scoped by `user_id`.
-- **What goes in** — anything you'd want any conversation in any project to remember. Identity, preferences, expertise, working style, ongoing context. Typical articles: profile, expertise, key relationships, infrastructure, ongoing projects, decisions.
-- **Structure** — articles have a `path` (`profile/identity.md`, `relationship/partnership.md`, `projects/your-project.md`), `title`, `summary`, `body`. Wiki-link `[[path]]` syntax for cross-references.
-- **How the agent reads it** — full wiki concatenated and capped at ~50 KB before injection into the system prompt. Snapshotted per conversation (see lifecycle below).
-- **Who writes it** — you (manually) **and** an LLM compiler (a small auxiliary model) that periodically reads recent conversations and emits diffs.
+- **Where it lives** — nemo-memory service (port 8765, native macOS). LightRAG + nano-vectordb.
+- **What goes in** — your identity, preferences, expertise, ongoing projects, key relationships, decisions. Everything you'd want any conversation to know about you.
+- **Who writes it** — the LLM compiler (reads recent conversations, emits diffs) and you (manually via Obsidian vault sync).
 
-### Project wiki
+### Team memory (shared knowledge graph)
 
-Markdown files scoped to one project. Independent of the global wiki.
+A shared LightRAG knowledge graph per team. Members of the same team query the same graph.
 
-- **Where it lives** — table `project_memory_files`, scoped by `project_id`.
-- **What goes in** — project-specific learnings: gotchas, decisions, vocabulary, infra notes, recurring snippets.
-- **How the agent reads it** — substring grep when the conversation is bound to the project. Injected via the project corpus part of the system prompt.
-- **Who writes it** — you (via *Project settings → Project vault*) **or** the agent via `companion_remember(projectId, title, body)`. Agent writes land under `agent-notes/<YYYY-MM-DD>-<slug>.md`.
+- **How to populate** — *Settings → Admin → Teams* → select a team → "Sync memory". Pulls from the team's shared vault into the team graph.
+- **How it activates** — assign a project to a team in Settings → Admin → Teams. Conversations in that project automatically query both personal AND team memory at each turn.
 
-The Qdrant collections (`obsidian-context`, `alpha_centauri`) are separate from both wikis — they're for RAG semantic search, not wiki injection.
+### Company memory (V2)
+
+Org-wide knowledge graph. Structure is ready; the UI is coming in a future release.
+
+## How memory gets injected
+
+At each chat turn, nemo-memory is queried in parallel across all available collections using the user's last message as the search query:
+
+- Top-5 relevant chunks from each available collection are retrieved.
+- Total injection is approximately 4.5K tokens (vs 12K+ for a raw vault dump).
+- All three collections are queried concurrently — no sequential overhead.
+
+**Fallback**: if nemo returns empty (cold start, service not yet built), Companion falls back to the full wiki vault with a 50KB cap.
+
+### KV cache benefit
+
+After turn 1 (expensive prefill of the full memory context), subsequent turns only pay for the delta — approximately 48 tokens per turn. This gives roughly 8× faster TTFT on follow-up turns compared to naive full-context injection every turn.
 
 ## The memory snapshot
 
@@ -63,6 +75,20 @@ Useful when you want to:
 - Save tokens on a conversation where the wiki context is irrelevant.
 
 The toggle survives across turns until you flip it back. Each conversation has its own setting.
+
+## Decision Log
+
+Companion supports **Decision Log** entries as a first-class memory object — append-only structured decisions per project.
+
+Each entry captures:
+- **Title** — short name for the decision.
+- **Context** — what situation prompted the decision.
+- **Alternatives** — what other options were considered.
+- **Choice** — what was decided.
+- **Rationale** — why this choice over the alternatives.
+- **Revisit date** — when to reconsider.
+
+Decision Log entries are injected in the project context automatically. They're append-only by design — decisions aren't edited, they're superseded by new ones.
 
 ## The compile pipeline
 
@@ -131,13 +157,13 @@ No in-app wiki editor today. On the roadmap.
 
 The agent searches automatically via:
 
-- `companion_search_memory(query)` — semantic search over the wiki (RAG-backed via Qdrant `obsidian-context` collection).
+- `companion_search_memory(query)` — semantic search over the wiki (RAG-backed via nemo-memory / LightRAG).
 - Implicit injection — the conversation's frozen snapshot is in the system prompt every turn.
 
 You can also search manually:
 
 - *Settings → Extensions → Add-ons → Obsidian* — export the vault ZIP and grep locally.
-- Direct Qdrant query if you have access to the vector store endpoint.
+- Direct nemo-memory query if you have access to the service endpoint (port 8765).
 
 ## What memory is *not*
 
@@ -162,6 +188,9 @@ A: Flip the Memory toggle off in the chat header. The conv is excluded from comp
 
 **Q: Why does the wiki say things about me I didn't write?**
 A: The compiler does (it reads your conversations). If a fact is wrong, edit the article + lock it. If it's right but you didn't realise it was being captured: same fix, plus consider the privacy implications and adjust which conversations qualify for compile.
+
+**Q: How do I enable team memory?**
+A: Create a team in *Settings → Admin → Teams*, assign a project to that team. Conversations in that project will automatically query both personal and team memory. Populate team memory via the "Sync memory" button on the team.
 
 ## Related
 
