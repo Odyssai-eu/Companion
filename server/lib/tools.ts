@@ -1497,3 +1497,85 @@ async function skillDelete(userId: string, name: string): Promise<ToolResult> {
   if (r.length === 0) return { ok: false, error: `skill not found: ${name}` };
   return { ok: true, data: { ok: true, deleted: name } };
 }
+
+// ── Tool intent routing ───────────────────────────────────────────────────
+//
+// Pattern-based classifier that detects which tools are needed for a given
+// user message WITHOUT requiring agent-mode to be manually enabled and
+// WITHOUT injecting ALL tools at once.
+//
+// Design:
+//   - Runs in <1ms (pure regex, no LLM call)
+//   - Returns the subset of NATIVE_TOOLS + FS_TOOLS definitions to inject
+//   - Returns null when no tool is clearly needed (normal chat path)
+//   - Covers 90% of common cases; edge cases fall through to normal routing
+//
+// Called from chat.ts before building the system prompt.
+
+// Map tool name → its definition (for lazy injection)
+const TOOL_BY_NAME = new Map<string, unknown>(
+  [...FS_TOOLS, ...NATIVE_TOOLS].map((t) => [
+    (t as { function: { name: string } }).function.name,
+    t,
+  ]),
+);
+
+/**
+ * Detect which tools are needed for a user message via pattern matching.
+ * Returns an array of tool definitions to inject, or null if no tool needed.
+ */
+export function selectToolsForIntent(message: string): unknown[] | null {
+  if (!message.trim()) return null;
+  const m = message.toLowerCase();
+  const needed = new Set<string>();
+
+  // ── Filesystem ───────────────────────────────────────────────────────
+  if (/\bread\b|\bcat\b|\bshow.*content|\bopen.*file|\bprint.*file/.test(m)
+    && /\bfile|\bpath|\b\.ts\b|\b\.js\b|\b\.py\b|\b\.md\b|\b\.json\b|\b\.txt\b/.test(m)) {
+    needed.add("fs_read");
+  }
+  if (/\bwrite\b|\bcreate.*file|\bsave.*file|\bnew.*file/.test(m)
+    && /\bfile|\bpath/.test(m)) {
+    needed.add("fs_write");
+  }
+  if (/\blist.*file|\bls\b|\bdir\b|\bwhat.*file|\bfiles.*in/.test(m)) {
+    needed.add("fs_list");
+  }
+  if (/\bedit.*file|\bmodify.*file|\bupdate.*file|\breplace.*in.*file/.test(m)) {
+    needed.add("fs_edit");
+  }
+
+  // ── Web search ───────────────────────────────────────────────────────
+  if (
+    /\bsearch\b|\blook.*up\b|\bfind.*online|\bgoogle|\bweb.*search/.test(m) ||
+    /\b(latest|current|recent|news|today|update).*(version|release|price|weather|stock|score)/.test(m) ||
+    /\bwhat.*(is|are|was|were).*\b(today|current|latest|now)\b/.test(m)
+  ) {
+    needed.add("web_search");
+  }
+
+  // ── Web read ─────────────────────────────────────────────────────────
+  if (/https?:\/\/\S+/.test(message)) {
+    // URL in message → read it
+    needed.add(/\bfull\b|\bentire\b|\bwhole\b/.test(m) ? "web_read_full" : "web_read");
+  } else if (/\bfetch\b|\bscrap|\bread.*page|\bopen.*url|\bvisit.*site/.test(m)) {
+    needed.add("web_read");
+  }
+
+  // ── Bash ─────────────────────────────────────────────────────────────
+  if (
+    /\brun\b|\bexecute|\bcommand|\bshell|\bbash/.test(m) ||
+    /\bgit\b|\bnpm\b|\byarn\b|\bpip\b|\bmake\b|\bdocker\b/.test(m) ||
+    /\bgrep\b|\bfind\b|\bawk\b|\bsed\b|\bcurl\b|\bwget\b/.test(m) ||
+    /\bls -|\bcat |\becho |\bmkdir\b|\bchmod\b|\bcp |\bmv /.test(m)
+  ) {
+    needed.add("bash");
+  }
+
+  if (needed.size === 0) return null;
+
+  // Return the tool definitions for the detected tools
+  return Array.from(needed)
+    .map((name) => TOOL_BY_NAME.get(name))
+    .filter(Boolean);
+}

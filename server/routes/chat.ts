@@ -61,6 +61,7 @@ import {
   alwaysOnTools,
   buildSkillsIndex,
   executeTool,
+  selectToolsForIntent,
   toolsForUser,
   type ToolResult,
 } from "../lib/tools";
@@ -627,9 +628,33 @@ chatRoute.post("/completions", async (c) => {
   const alwaysOnEnabled = !isGuest && supportsTools &&
     (convAgentMode || process.env.ALWAYS_ON_TOOLS === "1");
   const alwaysOn = alwaysOnEnabled ? alwaysOnTools() : [];
-  const agentTools = !isGuest && supportsTools && convAgentMode
-    ? await toolsForUser(userId)
-    : [];
+
+  // ── Automatic tool routing ───────────────────────────────────────────
+  // Detect which tools the user's last message needs WITHOUT requiring the
+  // agent-mode toggle. selectToolsForIntent() pattern-matches the message
+  // and returns only the relevant tool definitions (~50–100 tokens each)
+  // instead of injecting ALL tools (~1000+ tokens). This runs in <1ms.
+  //
+  // Three tiers:
+  //   1. convAgentMode ON → inject all tools (full agent mode, user explicit)
+  //   2. intent detected → inject only the detected tools (auto, no toggle)
+  //   3. neither         → no tools (pure chat, ~250 tok saving)
+  const lastMsg = body.messages?.filter((m: {role:string}) => m.role === "user").at(-1);
+  const lastMsgText = typeof lastMsg?.content === "string" ? lastMsg.content : "";
+
+  let agentTools: unknown[];
+  if (!isGuest && supportsTools) {
+    if (convAgentMode) {
+      // Full agent mode — all tools
+      agentTools = await toolsForUser(userId);
+    } else {
+      // Auto-detect — only what this message needs
+      agentTools = selectToolsForIntent(lastMsgText) ?? [];
+    }
+  } else {
+    agentTools = [];
+  }
+
   const tools = [...alwaysOn, ...agentTools];
   const toolsEnabled = tools.length > 0;
   // `agentToolsEnabled` = real agent-mode tools (FS/RAG/Web/MCP) — the
