@@ -101,6 +101,91 @@ const ANCHORS: Record<RouterLabel, string[]> = {
 
 const LABELS: RouterLabel[] = ["chat", "deep", "code"];
 
+// ── Tool intent anchors ─────────────────────────────────────────────────────
+//
+// Orthogonal to the chat/deep/code model routing: a message can be "code"
+// AND need a tool (fix the bug in app.py → fs_read+fs_edit), or "chat" with
+// no tool at all. We reuse the SAME message embedding (computed once for
+// model routing) and compare it against per-tool centroids.
+//
+// The "none" bucket is the guard against false positives: a pure
+// conversational message scores highest on "none", so we only inject a tool
+// when its score beats "none". Relative comparison > brittle absolute
+// threshold. FR + EN anchors because Nemo is talked to in both.
+const TOOL_ANCHORS: Record<string, string[]> = {
+  none: [
+    "bonjour comment vas-tu",
+    "raconte-moi une histoire",
+    "explique-moi ce concept en détail",
+    "qu'en penses-tu",
+    "merci c'est parfait",
+    "écris un poème sur la mer",
+    "what do you think about this",
+    "summarize our conversation",
+    "donne-moi ton avis",
+    "continue",
+  ],
+  fs_read: [
+    "lis le fichier config.json",
+    "montre-moi le contenu de ce fichier",
+    "ouvre le fichier app.py et affiche-le",
+    "read the file server.ts",
+    "cat the contents of package.json",
+    "affiche ce que contient ce fichier",
+  ],
+  fs_write: [
+    "écris ce texte dans un fichier",
+    "crée un nouveau fichier notes.md",
+    "sauvegarde ça dans un fichier",
+    "write this to a file",
+    "create a file called readme",
+    "enregistre le résultat dans output.txt",
+  ],
+  fs_list: [
+    "liste les fichiers du dossier",
+    "qu'est-ce qu'il y a dans ce répertoire",
+    "montre-moi les fichiers disponibles",
+    "list the files in this directory",
+    "what files are in the project",
+    "ls le dossier src",
+  ],
+  fs_edit: [
+    "modifie le fichier et corrige le bug",
+    "remplace cette ligne dans le fichier",
+    "édite la fonction dans app.py",
+    "edit the file to change this",
+    "replace this string in the config",
+    "change cette valeur dans le fichier",
+  ],
+  bash: [
+    "exécute git log",
+    "lance la commande npm install",
+    "fais un git status",
+    "run this shell command",
+    "execute grep to find the pattern",
+    "build le projet avec make",
+    "vérifie l'état du dépôt git",
+  ],
+  web_search: [
+    "cherche sur le web les dernières nouvelles",
+    "recherche en ligne des informations sur",
+    "trouve-moi des infos récentes à propos de",
+    "search the web for this topic",
+    "look up the latest version online",
+    "google ce sujet pour moi",
+  ],
+  web_read: [
+    "lis cette page web et résume-la",
+    "récupère le contenu de cette url",
+    "ouvre ce lien et dis-moi ce qu'il contient",
+    "read this webpage for me",
+    "fetch the content of this url",
+    "scrape les infos de cette page",
+  ],
+};
+
+const TOOL_NAMES = Object.keys(TOOL_ANCHORS).filter((t) => t !== "none");
+
 // ── Math helpers ──────────────────────────────────────────────────────────
 
 function l2norm(v: number[]): number {
@@ -300,4 +385,115 @@ export const DEFAULT_EMBEDDINGS_URL =
 /** Exposed for the test endpoint — read-only snapshot of the anchors. */
 export function getAnchors(): Record<RouterLabel, string[]> {
   return ANCHORS;
+}
+
+// ── Tool intent detection ───────────────────────────────────────────────────
+//
+// Reuses the router's embedding service. Tool centroids are deterministic
+// from the anchors + embedding model, so we cache them per-embeddings-URL in
+// process memory (rebuilt on restart — one batch embed call). No config
+// schema change, no migration.
+
+interface ToolCentroids {
+  centroids: Record<string, number[]>; // includes "none"
+  builtAt: number;
+}
+const _toolCentroidCache = new Map<string, ToolCentroids>();
+let _toolBuildInflight: Map<string, Promise<ToolCentroids>> = new Map();
+
+async function getToolCentroids(
+  embeddingsUrl: string,
+  embeddingsModel?: string,
+): Promise<ToolCentroids> {
+  const cached = _toolCentroidCache.get(embeddingsUrl);
+  if (cached) return cached;
+
+  // Deduplicate concurrent builds for the same URL.
+  const inflight = _toolBuildInflight.get(embeddingsUrl);
+  if (inflight) return inflight;
+
+  const build = (async (): Promise<ToolCentroids> => {
+    const labels = ["none", ...TOOL_NAMES];
+    const flat: string[] = [];
+    const ranges: Record<string, [number, number]> = {};
+    let cursor = 0;
+    for (const label of labels) {
+      const arr = TOOL_ANCHORS[label];
+      ranges[label] = [cursor, cursor + arr.length];
+      flat.push(...arr);
+      cursor += arr.length;
+    }
+    const all = await embed(embeddingsUrl, flat, embeddingsModel);
+    const centroids: Record<string, number[]> = {};
+    for (const label of labels) {
+      const [start, end] = ranges[label];
+      centroids[label] = normalize(mean(all.slice(start, end).map(normalize)));
+    }
+    const result = { centroids, builtAt: Date.now() };
+    _toolCentroidCache.set(embeddingsUrl, result);
+    _toolBuildInflight.delete(embeddingsUrl);
+    return result;
+  })();
+
+  _toolBuildInflight.set(embeddingsUrl, build);
+  return build;
+}
+
+export interface ToolIntentResult {
+  tools: string[];                       // tool names to inject (may be empty)
+  scores: Record<string, number>;        // per-tool cosine (incl. "none")
+  ms: number;
+}
+
+/**
+ * Detect which tools a message needs via the SAME embedding the router
+ * computes for model selection. Pass the precomputed message embedding to
+ * avoid a second round-trip; otherwise it embeds the text itself.
+ *
+ * A tool is selected when its centroid score beats the "none" centroid by
+ * `margin` (default 0.02). This makes detection relative — conversational
+ * messages land on "none" and inject nothing, no brittle absolute threshold.
+ */
+export async function detectToolIntent(
+  text: string,
+  config: RouterConfig,
+  opts?: { embedding?: number[]; margin?: number; maxTools?: number },
+): Promise<ToolIntentResult> {
+  if (!config.embeddingsUrl) {
+    return { tools: [], scores: {}, ms: 0 };
+  }
+  const margin = opts?.margin ?? 0.02;
+  const maxTools = opts?.maxTools ?? 3;
+  const t0 = Date.now();
+
+  const tc = await getToolCentroids(config.embeddingsUrl, config.embeddingsModel);
+
+  let q: number[];
+  if (opts?.embedding && opts.embedding.length) {
+    q = normalize(opts.embedding);
+  } else {
+    const [vec] = await embed(config.embeddingsUrl, [text], config.embeddingsModel);
+    q = normalize(vec);
+  }
+
+  const scores: Record<string, number> = {};
+  for (const label of Object.keys(tc.centroids)) {
+    scores[label] = dot(q, tc.centroids[label]);
+  }
+  const noneScore = scores["none"] ?? 0;
+
+  // Tools beating "none" by the margin, best first, capped.
+  const winners = TOOL_NAMES
+    .map((t) => ({ t, s: scores[t] ?? -Infinity }))
+    .filter((x) => x.s > noneScore + margin)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, maxTools)
+    .map((x) => x.t);
+
+  return { tools: winners, scores, ms: Date.now() - t0 };
+}
+
+/** Read-only snapshot of tool anchors (for a UI/test endpoint). */
+export function getToolAnchors(): Record<string, string[]> {
+  return TOOL_ANCHORS;
 }

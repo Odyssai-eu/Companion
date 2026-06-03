@@ -1531,6 +1531,25 @@ const TOOL_BY_NAME = new Map<string, unknown>(
 );
 
 /**
+ * Map tool names → their OpenAI tool definitions. Used by the semantic
+ * router path (detectToolIntent returns names; chat.ts needs the defs).
+ * Unknown names are dropped. web_read also pulls in web_read_full so the
+ * model can choose full-page fetch when the paginated read isn't enough.
+ */
+export function getToolDefs(names: string[]): unknown[] {
+  const out: unknown[] = [];
+  const seen = new Set<string>();
+  for (const name of names) {
+    for (const n of name === "web_read" ? ["web_read", "web_read_full"] : [name]) {
+      if (seen.has(n)) continue;
+      const def = TOOL_BY_NAME.get(n);
+      if (def) { out.push(def); seen.add(n); }
+    }
+  }
+  return out;
+}
+
+/**
  * Detect which tools are needed for a user message via pattern matching.
  * Returns an array of tool definitions to inject, or null if no tool needed.
  */

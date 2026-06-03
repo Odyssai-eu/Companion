@@ -35,6 +35,7 @@ import { incrementGuestUsage } from "../lib/guest-token";
 import { authHeaders } from "../lib/litellm";
 import {
   routeMessage,
+  detectToolIntent,
   EmbeddingServiceError,
 } from "../lib/semantic-router";
 import { loadRouterConfigForUser } from "./addon-router";
@@ -62,6 +63,7 @@ import {
   buildSkillsIndex,
   executeTool,
   selectToolsForIntent,
+  getToolDefs,
   toolsForUser,
   type ToolResult,
 } from "../lib/tools";
@@ -639,6 +641,12 @@ chatRoute.post("/completions", async (c) => {
   //   1. convAgentMode ON → inject all tools (full agent mode, user explicit)
   //   2. intent detected → inject only the detected tools (auto, no toggle)
   //   3. neither         → no tools (pure chat, ~250 tok saving)
+  //
+  // Tier 2 detection is two-stage:
+  //   a. Semantic — if the router add-on is configured, embed the message
+  //      and compare against per-tool centroids (language-agnostic, robust).
+  //   b. Pattern — regex fallback when the router isn't configured. English-
+  //      biased, brittle on FR phrasing, but free (no embed call).
   const lastMsg = body.messages?.filter((m: {role:string}) => m.role === "user").at(-1);
   const lastMsgText = typeof lastMsg?.content === "string" ? lastMsg.content : "";
 
@@ -648,8 +656,28 @@ chatRoute.post("/completions", async (c) => {
       // Full agent mode — all tools
       agentTools = await toolsForUser(userId);
     } else {
-      // Auto-detect — only what this message needs
-      agentTools = selectToolsForIntent(lastMsgText) ?? [];
+      // Auto-detect — semantic first, regex fallback.
+      let detected: unknown[] | null = null;
+      try {
+        const routerCfg = await loadRouterConfigForUser(userId);
+        if (routerCfg?.embeddingsUrl && lastMsgText.trim()) {
+          const intent = await detectToolIntent(lastMsgText.slice(0, 2000), routerCfg);
+          if (intent.tools.length > 0) {
+            detected = getToolDefs(intent.tools);
+            console.log(
+              "[chat] semantic tool intent → %s (%dms)",
+              intent.tools.join(","),
+              intent.ms,
+            );
+          } else {
+            detected = []; // semantic ran, found nothing → trust it, no tools
+          }
+        }
+      } catch (e) {
+        console.warn("[chat] semantic tool detection failed, regex fallback:", (e as Error).message);
+        detected = null; // fall through to regex
+      }
+      agentTools = detected ?? selectToolsForIntent(lastMsgText) ?? [];
     }
   } else {
     agentTools = [];
