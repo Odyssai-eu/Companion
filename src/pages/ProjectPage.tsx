@@ -477,7 +477,7 @@ export default function ProjectPage() {
 
           {pickerOpen && (
             <FolderPicker
-              initial={workingDir || "~"}
+              initial={workingDir || "~/companion"}
               onClose={() => setPickerOpen(false)}
               onSelect={(p) => {
                 setWorkingDir(p);

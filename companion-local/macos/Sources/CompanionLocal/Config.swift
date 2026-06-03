@@ -1,17 +1,13 @@
 import Foundation
-import Security
 
-/// Persistent configuration. URL + cwd live in UserDefaults; the token is
-/// stored in the macOS Keychain (it's a secret — UserDefaults is a plaintext
-/// plist any process running as the user could read).
+/// Persistent configuration. URL, cwd, and token all live in UserDefaults
+/// (see token note below for why not Keychain).
 struct Config {
     var url: String
     var cwd: String
 
     private static let urlKey = "companion.url"
     private static let cwdKey = "companion.cwd"
-    private static let keychainService = "eu.odyssai.companion-local"
-    private static let keychainAccount = "agents-token"
 
     static func load() -> Config {
         let d = UserDefaults.standard
@@ -36,38 +32,22 @@ struct Config {
         !url.isEmpty && !(Config.loadToken() ?? "").isEmpty
     }
 
-    // ── Token (Keychain) ────────────────────────────────────────────────
+    // ── Token (UserDefaults) ───────────────────────────────────────────
+    //
+    // Stored in UserDefaults rather than Keychain: the app is ad-hoc signed
+    // and re-signed on every rebuild, which changes the code identity and
+    // breaks Keychain ACLs — the user would have to re-enter the token after
+    // every update. This is a self-hosted tool running on the user's own
+    // machine against their own LAN; the token in the app's prefs has the
+    // same threat model as the Node daemon's --token flag.
+    private static let tokenKey = "companion.token"
 
     static func loadToken() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess,
-              let data = item as? Data,
-              let token = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        return token
+        let t = UserDefaults.standard.string(forKey: tokenKey)
+        return (t?.isEmpty == false) ? t : nil
     }
 
     static func saveToken(_ token: String) {
-        // Delete any existing, then add fresh.
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
-        ]
-        SecItemDelete(base as CFDictionary)
-        guard !token.isEmpty else { return }
-        var add = base
-        add[kSecValueData as String] = token.data(using: .utf8)!
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(add as CFDictionary, nil)
+        UserDefaults.standard.set(token, forKey: tokenKey)
     }
 }

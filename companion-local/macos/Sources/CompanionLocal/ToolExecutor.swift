@@ -115,21 +115,26 @@ enum ToolExecutor {
         let dir = resolve(prefix, cwd: cwd)
         let fm = FileManager.default
         do {
-            let entries = try fm.contentsOfDirectory(atPath: dir)
+            // URL API with resource keys: directory-ness + size come back in
+            // the enumeration itself, avoiding a per-entry stat() that would
+            // trip macOS TCC on protected subfolders and hang the call.
+            let dirURL = URL(fileURLWithPath: dir)
+            let urls = try fm.contentsOfDirectory(
+                at: dirURL,
+                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
+                options: [])
             var files: [[String: Any]] = []
-            for name in entries.sorted() {
-                let full = (dir as NSString).appendingPathComponent(name)
-                var isDir: ObjCBool = false
-                fm.fileExists(atPath: full, isDirectory: &isDir)
-                let attrs = try? fm.attributesOfItem(atPath: full)
-                let size = (attrs?[.size] as? Int) ?? 0
+            for u in urls.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                let vals = try? u.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
                 files.append([
-                    "path": "\(prefix)/\(name)",
-                    "sizeBytes": size,
-                    "isDir": isDir.boolValue,
+                    "name": u.lastPathComponent,
+                    "path": u.path,
+                    "sizeBytes": vals?.fileSize ?? 0,
+                    "isDir": vals?.isDirectory ?? false,
                 ])
             }
-            return ["ok": true, "data": files]
+            // Shape matches the Node daemon + folder-picker UI: {dir, files}.
+            return ["ok": true, "data": ["dir": dir, "files": files]]
         } catch {
             return ["ok": false, "error": error.localizedDescription]
         }

@@ -36,12 +36,21 @@ cat > "$APP/Contents/Info.plist" << PLIST
   <!-- LSUIElement: menubar-only agent, no Dock icon -->
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
+  <!-- Allow plain-HTTP to LAN hosts (e.g. http://192.168.x:3100). Without
+       this, ATS interferes with the SSE stream over http. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key><true/>
+  </dict>
 </dict>
 </plist>
 PLIST
 
-echo "→ ad-hoc codesign (required for SMAppService login-item registration)"
-codesign --force --deep --sign - "$APP" 2>&1 | sed 's/^/  /' || true
+echo "→ ad-hoc codesign (single binary, no --deep — --deep corrupts the sig)"
+codesign --force --sign - --timestamp=none "$APP/Contents/MacOS/CompanionLocal" 2>&1 | sed 's/^/  /' || true
+codesign --force --sign - --timestamp=none "$APP" 2>&1 | sed 's/^/  /' || true
+echo "→ verify"
+codesign --verify --strict "$APP" 2>&1 | sed 's/^/  /' && echo "  signature valid"
 
 echo "✓ built $APP"
 echo ""
