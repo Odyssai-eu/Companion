@@ -20,6 +20,7 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { isLocalAgentConnected, localAgentExecute } from "../routes/local-agent";
 import { db } from "../db/index";
 import { addons, agentSkills, mcpServers } from "../db/schema";
 import {
@@ -1141,6 +1142,15 @@ export async function executeTool(
   args: ToolArgs,
   userId: string,
 ): Promise<ToolResult> {
+  // Route to local agent if connected — bash + fs tools run on user's Mac.
+  // Server-side execution is the fallback when no local agent is connected.
+  const LOCAL_TOOLS = new Set(["bash", "fs_read", "fs_write", "fs_list", "fs_edit"]);
+  if (LOCAL_TOOLS.has(name) && isLocalAgentConnected(userId)) {
+    const result = await localAgentExecute(userId, name, args as Record<string, unknown>);
+    if (result) return result as ToolResult;
+    // null = agent disconnected between check and call, fall through to server
+  }
+
   if (name.startsWith("fs_")) return executeFsTool(name, args, userId);
   if (name === "rag_search") {
     const q = String(args.query ?? "");
