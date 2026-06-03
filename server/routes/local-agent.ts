@@ -43,11 +43,17 @@ type PendingRequest = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+type QueuedEvent = { id: string; tool: string; args: Record<string, unknown>; cwd: string | null };
+
 type AgentSession = {
   userId: string;
-  sendEvent: (id: string, tool: string, args: Record<string, unknown>, cwd?: string | null) => void;
+  // Events are drained by the stream loop itself (reliable flush), not
+  // written from an external closure (which doesn't flush in Hono streamSSE).
+  queue: QueuedEvent[];
+  notify: () => void; // wakes the stream loop when a new event is queued
   pending: Map<string, PendingRequest>;
   connectedAt: Date;
+  closed: boolean;
 };
 
 /** Active local agent sessions, keyed by userId. One session per user. */
@@ -79,49 +85,73 @@ localAgentRoute.get("/events", async (c) => {
     return c.json({ error: "invalid or missing token (use hms_* agents token)" }, 401);
   }
 
-  // Close any existing session for this user
+  // Close any existing session for this user — reject its pending requests
+  // so they don't hang, then drop it. The new connection takes over.
   const existing = sessions.get(userId);
   if (existing) {
+    existing.closed = true;
+    for (const req of existing.pending.values()) {
+      clearTimeout(req.timer);
+      req.resolve({ ok: false, error: "superseded by new connection" });
+    }
+    existing.notify();
     sessions.delete(userId);
   }
 
   return streamSSE(c, async (stream) => {
     const pending = new Map<string, PendingRequest>();
-
-    const sendEvent = (id: string, tool: string, args: Record<string, unknown>, cwd?: string | null) => {
-      void stream.writeSSE({
-        event: "tool_execute",
-        data: JSON.stringify({ requestId: id, tool, args, cwd: cwd ?? null }),
-        id,
-      });
+    let wake: (() => void) | null = null;
+    const session: AgentSession = {
+      userId,
+      queue: [],
+      notify: () => { wake?.(); },
+      pending,
+      connectedAt: new Date(),
+      closed: false,
     };
+    sessions.set(userId, session);
 
-    sessions.set(userId, { userId, sendEvent, pending, connectedAt: new Date() });
+    // Clean up the moment the client disconnects (Hono fires onAbort).
+    stream.onAbort(() => {
+      session.closed = true;
+      for (const req of pending.values()) {
+        clearTimeout(req.timer);
+        req.resolve({ ok: false, error: "local agent disconnected" });
+      }
+      if (sessions.get(userId) === session) sessions.delete(userId);
+      wake?.();
+    });
 
-    // Send connected confirmation
     await stream.writeSSE({
       event: "connected",
       data: JSON.stringify({ userId, message: "companion-local connected" }),
     });
 
-    // Keep-alive pings
-    let alive = true;
-    const ping = setInterval(() => {
-      if (!alive) return;
-      void stream.writeSSE({ event: "ping", data: Date.now().toString() });
-    }, 15_000);
-
-    // Wait until client disconnects
-    await stream.sleep(4 * 60 * 60 * 1000); // max 4h session
-
-    alive = false;
-    clearInterval(ping);
-    // Reject all pending requests
-    for (const req of pending.values()) {
-      clearTimeout(req.timer);
-      req.resolve({ ok: false, error: "local agent disconnected" });
+    let lastPing = Date.now();
+    // Drain loop — all writes happen HERE, inside the stream callback, so
+    // they flush reliably. Wakes on new queued events or every ~2s for pings.
+    while (!session.closed) {
+      // Flush queued tool-execute events
+      while (session.queue.length > 0) {
+        const ev = session.queue.shift()!;
+        await stream.writeSSE({
+          event: "tool_execute",
+          data: JSON.stringify({ requestId: ev.id, tool: ev.tool, args: ev.args, cwd: ev.cwd }),
+          id: ev.id,
+        });
+      }
+      // Keep-alive ping every 15s
+      if (Date.now() - lastPing >= 15_000) {
+        await stream.writeSSE({ event: "ping", data: Date.now().toString() });
+        lastPing = Date.now();
+      }
+      // Sleep until notified or 2s elapse (ping cadence / abort check)
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+        setTimeout(resolve, 2000);
+      });
+      wake = null;
     }
-    sessions.delete(userId);
   });
 });
 
@@ -232,7 +262,8 @@ export async function localAgentExecute(
     }, TOOL_TIMEOUT_MS);
 
     session.pending.set(id, { id, tool, args, resolve, timer });
-    session.sendEvent(id, tool, args, cwd);
+    session.queue.push({ id, tool, args, cwd: cwd ?? null });
+    session.notify();
   });
 }
 
