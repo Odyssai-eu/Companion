@@ -98,6 +98,12 @@ localAgentRoute.get("/events", async (c) => {
     sessions.delete(userId);
   }
 
+  // Disable proxy buffering so events flush in real time through reverse
+  // proxies / tunnels (Cloudflare, nginx). Without this, a tunnel can buffer
+  // the SSE body and tool_execute events never reach the agent until close.
+  c.header("X-Accel-Buffering", "no");
+  c.header("Cache-Control", "no-cache, no-transform");
+
   return streamSSE(c, async (stream) => {
     const pending = new Map<string, PendingRequest>();
     let wake: (() => void) | null = null;
