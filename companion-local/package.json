@@ -1,0 +1,8 @@
+{
+  "name": "companion-local",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "systray": "^1.0.5"
+  }
+}
