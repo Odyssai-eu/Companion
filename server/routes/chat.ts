@@ -851,6 +851,12 @@ chatRoute.post("/completions", async (c) => {
     // surface a helpful message in that case so the user sees what
     // happened instead of "..." silently disappearing.
     let exitedNaturally = false;
+    // Most recent real answer text the model produced across the loop. Used to
+    // suppress the loop-guard message when the model DID write a reply but the
+    // turn still closed on a tool_calls finish_reason (content + trailing
+    // tool_call, or a model that ignores tool_choice:"none"). "Il a tout fini
+    // mais erreur à la fin" — don't claim "no answer" when there is one.
+    let lastAssistantContent = "";
     try {
       for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
         const useNonStream = shouldUseNonStream();
@@ -952,6 +958,10 @@ chatRoute.post("/completions", async (c) => {
           sawUpstreamUsage = true;
           totalPromptTokens += usage.promptTokens;
           totalCompletionTokens += usage.completionTokens;
+        }
+        // Retain the last non-empty reply (don't reset to "" on pure tool turns).
+        if (assistantContent && assistantContent.trim()) {
+          lastAssistantContent = assistantContent;
         }
 
         if (
@@ -1070,7 +1080,9 @@ chatRoute.post("/completions", async (c) => {
       // mlx-vlm when the second iteration's prompt grows large (tool
       // results stuffed in). Without this fallback the user sees only
       // the model's intro line ("I'll search...") then silence.
-      if (!exitedNaturally && body.conversationId) {
+      // Suppress when the model DID write a real reply this turn — the message
+      // would otherwise contradict an answer the user can plainly see.
+      if (!exitedNaturally && !lastAssistantContent.trim() && body.conversationId) {
         const note =
           "\n\nError - The model kept asking to call tools without writing a final answer";
         for (let i = 0; i < note.length; i += 32) {
