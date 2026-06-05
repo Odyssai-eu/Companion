@@ -767,15 +767,15 @@ chatRoute.post("/completions", async (c) => {
 
   void (async () => {
     let conversation: ChatTurn[] = withSystem as ChatTurn[];
-    // Was 3 originally. Bumped to 8 after 2026-05-29 Tavily-via-Coder-Next
-    // case where the model legitimately needed 4 tool roundtrips
-    // (initial call → rate-limit retry → success → synthesis). At 3, the
-    // synthesis step fell off the cliff and the user saw the misleading
-    // loop-guard "Try Haiku" message even though the tools were behaving
-    // correctly. 8 still catches genuinely runaway agents (Qwen3.6 on
-    // mlx-vlm without tool fine-tuning, original failure mode that
-    // motivated the cap) without strangling normal multi-step workflows.
-    const MAX_TOOL_ITERATIONS = 8;
+    // Max upstream calls in the tool loop. History: 3 → 8 (2026-05-29) → 20.
+    // In agent mode the model legitimately needs many rounds — with N distinct
+    // tools (Hy3 case: 8 different tools) a real workflow can chain well past 8,
+    // and capping at 8 cut the model off mid-task with the misleading loop-guard
+    // message even though it was working correctly. This is just a cost/latency
+    // ceiling now, NOT the loop's safety: the final iteration forces a closing
+    // answer (tool_choice:"none" below), so hitting the cap always yields a
+    // real synthesis instead of an error.
+    const MAX_TOOL_ITERATIONS = 20;
     // Aggregate usage across tool-loop iterations — guests are billed for
     // every upstream call, not just the final one.
     let totalPromptTokens = 0;
@@ -854,11 +854,21 @@ chatRoute.post("/completions", async (c) => {
     try {
       for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
         const useNonStream = shouldUseNonStream();
+        // On the final allowed iteration, forbid further tool calls
+        // (tool_choice:"none") so the model MUST write a closing answer from the
+        // accumulated results instead of being cut off mid-loop with an error.
+        // We keep the `tools` field present (some strict OpenAI-compat backends
+        // reject a history containing tool messages when `tools` is absent) and
+        // only flip the choice. In agent mode the model can legitimately need
+        // many rounds — this guarantees the turn always ends with a real reply.
+        const isFinalIteration = iter === MAX_TOOL_ITERATIONS - 1;
         const requestBody = {
           ...baseBody,
           stream: !useNonStream,
           messages: conversation,
-          ...(toolsEnabled ? { tools, tool_choice: "auto" } : {}),
+          ...(toolsEnabled
+            ? { tools, tool_choice: isFinalIteration ? "none" : "auto" }
+            : {}),
         };
 
         // Debug: hash both the conversation prefix AND the actual body
