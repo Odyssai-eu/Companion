@@ -8,13 +8,13 @@ Common questions with direct answers. If your question isn't here, check *Troubl
 No. Companion runs in your browser at your Companion host. Pin it as a PWA if you want a desktop-like app icon.
 
 **Does Companion ship its own model?**
-No. Companion is a **client**. You bring the engine (local cluster Odysseus, or cloud keys for OpenRouter / Anthropic / OpenAI). One client, every backend.
+No. Companion is a **client**. You bring the engine (local cluster OdyssAI-X, or cloud keys for OpenRouter / Anthropic / OpenAI). One client, every backend.
 
 **Can I use Companion offline?**
-No. Companion is a hosted web app; it needs network to reach the engine and the Postgres backend. If you're on a fully air-gapped LAN with Companion + Odysseus deployed locally, "online" just means on that LAN.
+No. Companion is a hosted web app; it needs network to reach the engine and the Postgres backend. If you're on a fully air-gapped LAN with Companion + OdyssAI-X deployed locally, "online" just means on that LAN.
 
 **Is it open source?**
-Companion is private (today). Odysseus development is in the open under the `odyssai.eu` banner. Status may evolve.
+Companion is private (today). OdyssAI-X development is in the open under the `odyssai.eu` banner. Status may evolve.
 
 ## Account
 
@@ -129,7 +129,7 @@ Yes. Say in chat "create a skill named X that …" and the agent calls `skill_cr
 ## Privacy
 
 **What stays on my LAN?**
-With Odysseus on your LAN + gateway mode + local models only: everything. Conversations, memory, compute, all your data sovereignty.
+With OdyssAI-X on your LAN + gateway mode + local models only: everything. Conversations, memory, compute, all your data sovereignty.
 
 **What if I use a cloud model?**
 That conversation's content goes to the cloud provider (OpenRouter / Anthropic / OpenAI). Their privacy policy applies. Companion doesn't add identifying headers.
@@ -155,7 +155,7 @@ Fixes: fork into a new conversation when one drags on (your memory wiki carries 
 Next turn after warm-up should be back to normal.
 
 **Cluster gives errno 16 / 96 / 2 after several sessions**
-JACCL queue pair degradation, known upstream MLX/JACCL bug. Reboot the affected cluster nodes (Reboot all button in Odysseus dashboard). Documented behaviour in current MLX versions.
+JACCL queue pair degradation, known upstream MLX/JACCL bug. Reboot the affected cluster nodes (Reboot all button in OdyssAI-X dashboard). Documented behaviour in current MLX versions.
 
 ## Other
 

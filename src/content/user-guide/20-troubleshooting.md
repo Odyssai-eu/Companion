@@ -5,7 +5,7 @@ Grouped by surface. If you're not sure where to look, hit ⌘F and search this p
 ## Inference
 
 **"No instance found for model X" / 404 on send**
-The selected model isn't loaded on its server. For Odysseus / exo / MLX, load it from the engine's interface; for cloud APIs, double-check the model id and that your bearer token has access to it.
+The selected model isn't loaded on its server. For OdyssAI-X / exo / MLX, load it from the engine's interface; for cloud APIs, double-check the model id and that your bearer token has access to it.
 
 **OpenRouter shows 0 cloud models**
 Make sure the server URL is just `openrouter.ai` (no path) and the bearer is your OpenRouter API key. Companion hits `/api/v1/models` for OpenRouter specifically.
@@ -119,7 +119,7 @@ A browser extension may be intercepting it (1Password, Raindrop, …). Disable o
 Polling race — refresh. If persistent, report with the conversation id.
 
 **Model picker is empty after engine pairing**
-The pairing succeeded but `/v1/models` returned []. Either the engine has no models loaded (typical with an idle Odysseus) or the response shape is wrong. Hit the engine directly: `curl http://<engine>:8000/v1/models`.
+The pairing succeeded but `/v1/models` returned []. Either the engine has no models loaded (typical with an idle OdyssAI-X) or the response shape is wrong. Hit the engine directly: `curl http://<engine>:8000/v1/models`.
 
 ## Performance
 

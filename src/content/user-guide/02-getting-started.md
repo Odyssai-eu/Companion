@@ -12,11 +12,11 @@ If you don't have an account yet, ask the workspace admin to mint you one. Compa
 
 Open **Settings → Infrastructure → Engine**. You need at least one server reachable from Companion. Three shapes:
 
-- **Local Odysseus** (recommended) — open-source distributed MLX engine. Host + port + bearer token. Companion runs a discovery probe over LAN and a manual entry as fallback.
+- **Local OdyssAI-X** (recommended) — open-source distributed MLX engine. Host + port + bearer token. Companion runs a discovery probe over LAN and a manual entry as fallback.
 - **Other local engine** (Ollama, LM Studio, vLLM, MLX bare) — same shape, manual entry. As long as it speaks OpenAI / Anthropic, it pairs.
 - **Cloud** (OpenRouter, Anthropic, OpenAI) — base URL + bearer key.
 
-Hit **Test endpoint**. The handshake probes `/.well-known/inference-engine.json` (for Odysseus-compatible engines) and `/v1/models`. The chip turns green when both succeed.
+Hit **Test endpoint**. The handshake probes `/.well-known/inference-engine.json` (for OdyssAI-X-compatible engines) and `/v1/models`. The chip turns green when both succeed.
 
 Three engine modes derived from the probe:
 
@@ -36,7 +36,7 @@ The model picker is the leftmost element in the chat top bar. Click to open a pa
 
 Three picker layouts depending on your *Inference mode* setting:
 
-- **Easy** — no picker. Odysseus auto-routes each request to the best model (via the Auto Router add-on), falling back to a model you set when the router isn't configured.
+- **Easy** — no picker. OdyssAI-X auto-routes each request to the best model (via the Auto Router add-on), falling back to a model you set when the router isn't configured.
 - **Advanced** — 4 named slots (conversation / analyse / engineer / expert). Pick a slot.
 - **Expert** — full catalog with eye toggles for hide/show. Default for power users.
 

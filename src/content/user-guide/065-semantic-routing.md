@@ -25,8 +25,8 @@ The default field is empty — set it to whatever you host. Small models are fin
 
 > **Don't have an embedding service yet?** You need one running locally for the Auto Router to work — Companion never pings a default cloud one. Two pragmatic paths:
 >
-> - **Pair Odysseus** and load any small open-weights embedding model (a 0.5–1B model is plenty). Odysseus exposes the standard `/v1/embeddings` endpoint so it slots straight into this field.
-> - **Hand the install to a coding agent.** Drop the [Odysseus README](https://github.com/Odyssai-eu/Odysseus) (or your engine's docs) into Claude Code, Codex, Cursor, Aider, etc., and ask it to "set up an OpenAI-compatible embeddings server on this machine with `<model-of-your-choice>` and tell me the URL". It will do the venv / Docker / config work and hand back a URL you paste here.
+> - **Pair OdyssAI-X** and load any small open-weights embedding model (a 0.5–1B model is plenty). OdyssAI-X exposes the standard `/v1/embeddings` endpoint so it slots straight into this field.
+> - **Hand the install to a coding agent.** Drop the [OdyssAI-X README](https://github.com/Odyssai-eu/Odysseus) (or your engine's docs) into Claude Code, Codex, Cursor, Aider, etc., and ask it to "set up an OpenAI-compatible embeddings server on this machine with `<model-of-your-choice>` and tell me the URL". It will do the venv / Docker / config work and hand back a URL you paste here.
 >
 > Either way, the Auto Router only needs the URL — pick whatever embedding model your hardware can spare a few hundred MB for.
 

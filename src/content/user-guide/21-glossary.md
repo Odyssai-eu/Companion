@@ -46,7 +46,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## E
 
-**Engine** — The inference server Companion routes through. Can be Odysseus, Ollama, LM Studio, vLLM, MLX bare, or cloud-only (no engine paired = legacy mode).
+**Engine** — The inference server Companion routes through. Can be OdyssAI-X, Ollama, LM Studio, vLLM, MLX bare, or cloud-only (no engine paired = legacy mode).
 
 **Engine mode** — One of `gateway` / `hybrid` / `legacy`. Auto-derived at pair time. See *Engine pairing* (16).
 
@@ -80,13 +80,13 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## J
 
-**JACCL** — RDMA backend used by Odysseus for inter-node MLX tensor exchange over TB5. Known queue-pair degradation bug after multiple sessions; reboot resolves.
+**JACCL** — RDMA backend used by OdyssAI-X for inter-node MLX tensor exchange over TB5. Known queue-pair degradation bug after multiple sessions; reboot resolves.
 
 ## K
 
 **Karpathy wiki** — The global per-user memory wiki pattern (named for the precedent set by [karpathy.bearblog.dev](https://karpathy.bearblog.dev)). Implemented as LLM-compiled diffs into Postgres. See *Memory* (10).
 
-**KV cache** — Key-Value cache from transformer attention layers. Reused across turns when prefix matches. Driven by `session_id` in Odysseus.
+**KV cache** — Key-Value cache from transformer attention layers. Reused across turns when prefix matches. Driven by `session_id` in OdyssAI-X.
 
 **`kind`** — Conversation type column. `chat` / `talk` / (legacy) `hermes`.
 
@@ -94,7 +94,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Legacy mode** — Engine mode with no engine paired, LiteLLM only. See *Engine pairing* (16).
 
-**LiteLLM** — Generic LLM proxy. Sometimes deployed alongside Odysseus as a fallback rail for clients that haven't migrated to gateway mode. See *Engine pairing* (16).
+**LiteLLM** — Generic LLM proxy. Sometimes deployed alongside OdyssAI-X as a fallback rail for clients that haven't migrated to gateway mode. See *Engine pairing* (16).
 
 ## M
 
@@ -120,15 +120,15 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **OAuth 2.1 + PKCE** — Auth flow used by Notion / Linear / GitHub MCP integrations.
 
-**Odyssai** — Brand umbrella for the open-source ecosystem: Odysseus (engine) + Companion (client).
+**Odyssai** — Brand umbrella for the open-source ecosystem: OdyssAI-X (engine) + Companion (client).
 
-**Odysseus** — Open-source distributed MLX inference engine. OpenAI / Anthropic compatible. The default engine target for Companion.
+**OdyssAI-X** — Open-source distributed MLX inference engine. OpenAI / Anthropic compatible. The default engine target for Companion.
 
 **OpenRouter** — Cloud LLM aggregator. Aliased as `or:*` in the picker.
 
 ## P
 
-**Prefix cache** — Same as KV prefix cache. Odysseus reuses it across turns of the same conversation via `session_id`.
+**Prefix cache** — Same as KV prefix cache. OdyssAI-X reuses it across turns of the same conversation via `session_id`.
 
 **Probe** — Sub-second autocomplete model (Qwen2.5-Coder-1.5B). Aliased as `probe`. Used for cheap pings.
 
@@ -152,13 +152,13 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Reasoner** — A model that supports `enable_thinking` (Hy3-preview, Qwen3-thinking, Claude with extended thinking). Longer turns, deeper output.
 
-**Reasoning effort** — OpenAI o-series convention adopted by some local models. Values: `none` / `minimal` / `low` / `medium` / `high` / `xhigh`. Controls how much the model reasons before answering. Independent of the thinking toggle — relevant especially for always-think models (Step-3.7-Flash, MiniMax) that can't be told to stop thinking but can be told to think less. The engine (Odysseus) applies a per-model default when nothing is sent (`minimal` for Step-3.7). See *Inference settings* (14).
+**Reasoning effort** — OpenAI o-series convention adopted by some local models. Values: `none` / `minimal` / `low` / `medium` / `high` / `xhigh`. Controls how much the model reasons before answering. Independent of the thinking toggle — relevant especially for always-think models (Step-3.7-Flash, MiniMax) that can't be told to stop thinking but can be told to think less. The engine (OdyssAI-X) applies a per-model default when nothing is sent (`minimal` for Step-3.7). See *Inference settings* (14).
 
 **Remember now** — Action in the chat header memory menu to refresh the conversation's wiki snapshot from the current wiki state.
 
 ## S
 
-**Session ID** — = the conversation UUID. Passed to Odysseus as `session_id` for KV-cache reuse.
+**Session ID** — = the conversation UUID. Passed to OdyssAI-X as `session_id` for KV-cache reuse.
 
 **Show metrics** — Per-user toggle (Settings → Inference) for the per-message stats row. Off by default.
 
@@ -172,9 +172,9 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Talk mode** — Full-screen voice surface. `kind='talk'` conversation. On the roadmap; see *Voice & talk* (08).
 
-**TB5** — Thunderbolt 5. The mesh fabric between Apple Silicon nodes when JACCL/RDMA is used inside an Odysseus cluster.
+**TB5** — Thunderbolt 5. The mesh fabric between Apple Silicon nodes when JACCL/RDMA is used inside an OdyssAI-X cluster.
 
-**Telemak** — Single-node Swift runtime (`mlx-swift-lm` fork) running on Apple Silicon. Orchestrated by Odysseus. Appears in the Companion picker with a `Telemak` pool badge. Fast for models that fit on one node; no multi-node sharding. Requires v0.6.33+ for mixed-quantization models (6-bit body + 8-bit MoE gate). See *Engine pairing* (16).
+**Telemak** — Single-node Swift runtime (`mlx-swift-lm` fork) running on Apple Silicon. Orchestrated by OdyssAI-X. Appears in the Companion picker with a `Telemak` pool badge. Fast for models that fit on one node; no multi-node sharding. Requires v0.6.33+ for mixed-quantization models (6-bit body + 8-bit MoE gate). See *Engine pairing* (16).
 
 **TTFT** — Time To First Token. Latency from request to first SSE event.
 
@@ -194,7 +194,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Vault** — Obsidian-formatted markdown directory holding your wiki. Synced via the Obsidian plugin's bearer-token bridge.
 
-**VLM** — Vision-Language Model. Also a common Odysseus pool name (`vlm` alias) when mlx-vlm is deployed on a dedicated host.
+**VLM** — Vision-Language Model. Also a common OdyssAI-X pool name (`vlm` alias) when mlx-vlm is deployed on a dedicated host.
 
 ## W
 
@@ -202,7 +202,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## X
 
-**`x_odyssai`** — Capability block per model in Odysseus's `/v1/models` response. Drives the picker chips.
+**`x_odyssai`** — Capability block per model in OdyssAI-X's `/v1/models` response. Drives the picker chips.
 
 ## Related
 

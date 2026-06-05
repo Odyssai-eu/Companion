@@ -4,7 +4,7 @@ What stays local, what travels, what's encrypted, what's deleted on delete.
 
 ## The short version
 
-- **Local-first compute** when paired with Odysseus on your own LAN. No cloud touches your conversations.
+- **Local-first compute** when paired with OdyssAI-X on your own LAN. No cloud touches your conversations.
 - **Cloud-routed compute** when you pick a cloud model (Anthropic, OpenAI, OpenRouter). That conversation's content goes to that provider.
 - **Tokens, API keys, MCP credentials** — encrypted at rest in your account's Postgres rows.
 - **Memory wiki** — your account, your wiki, your sovereignty. Not training data.
@@ -40,7 +40,7 @@ For every chat turn, the request body sent to the inference engine includes:
 
 ## What the engine sees vs what cloud providers see
 
-### Local engine (Odysseus on your LAN, gateway mode)
+### Local engine (OdyssAI-X on your LAN, gateway mode)
 
 The request goes to your engine. Stays on your LAN. The model runs on your Mac Studios. Nothing touches the internet.
 
@@ -50,14 +50,14 @@ The engine's logs may capture the request body if `debug_verbose` is on. By defa
 
 When you pick a cloud alias (`or:claude-haiku`, `or:hy3-preview`, etc.) in gateway mode:
 
-1. Companion sends to Odysseus.
-2. Odysseus identifies the alias as cloud, forwards to OpenRouter / Anthropic / OpenAI.
+1. Companion sends to OdyssAI-X.
+2. OdyssAI-X identifies the alias as cloud, forwards to OpenRouter / Anthropic / OpenAI.
 3. The cloud provider sees: your prompt + history + attachments.
 4. Their privacy policy applies. Companion doesn't add headers identifying you.
 
 ### LiteLLM (hybrid/legacy)
 
-Same as cloud passthrough but via LiteLLM as intermediary. LiteLLM logs to wherever its operator hosts it. If you don't trust the LiteLLM operator: don't use hybrid/legacy with cloud aliases — use gateway mode (Odysseus direct) or pure local.
+Same as cloud passthrough but via LiteLLM as intermediary. LiteLLM logs to wherever its operator hosts it. If you don't trust the LiteLLM operator: don't use hybrid/legacy with cloud aliases — use gateway mode (OdyssAI-X direct) or pure local.
 
 ## What the memory compiler sees
 

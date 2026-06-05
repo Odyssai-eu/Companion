@@ -85,14 +85,14 @@ conversation prompt > project prompt > engine default
 
 ## Session id & KV cache
 
-When you chat through Odysseus, Companion passes `session_id = <conversationId>` in the request body. Odysseus uses it to reuse the KV prefix cache across turns — when prompts share a prefix (which is always the case across turns of one conversation), only the delta is prefilled.
+When you chat through OdyssAI-X, Companion passes `session_id = <conversationId>` in the request body. OdyssAI-X uses it to reuse the KV prefix cache across turns — when prompts share a prefix (which is always the case across turns of one conversation), only the delta is prefilled.
 
 You don't have to do anything. This is just *why* a follow-up turn is faster than the first.
 
-- **Gateway mode** — `session_id` is forwarded, Odysseus uses it, cache hits are visible in the stats row as "Cached: N tok (X%)".
+- **Gateway mode** — `session_id` is forwarded, OdyssAI-X uses it, cache hits are visible in the stats row as "Cached: N tok (X%)".
 - **Hybrid / Legacy** — LiteLLM ignores the field. The flag still travels but does nothing upstream.
 
-When you switch models mid-conversation, the cache doesn't migrate. The new model cold-prefills. Switching back to the original model still has a cache hit because Odysseus keeps multiple sessions (per `session_id` × model id).
+When you switch models mid-conversation, the cache doesn't migrate. The new model cold-prefills. Switching back to the original model still has a cache hit because OdyssAI-X keeps multiple sessions (per `session_id` × model id).
 
 ## Model picker capabilities
 
@@ -102,7 +102,7 @@ In the bottom of the inference panel (and in the chat header model picker), capa
 - **⚒** — tools / function-calling (required for agent mode + skill / MCP / workspace tools).
 - **🧠** — supports `enable_thinking` natively.
 - **⚡** — sub-second TTFT class (autocomplete, probe).
-- **🟢** — currently loaded (Odysseus only).
+- **🟢** — currently loaded (OdyssAI-X only).
 
 The picker pulls capabilities from the Odyssai `x_odyssai` contract when present (`supports_tools`, `supports_vision`, `pool`, `backend`, `alias_for`). Falls back to a denylist heuristic on model id strings for cloud aliases.
 

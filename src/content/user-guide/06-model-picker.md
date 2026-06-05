@@ -44,7 +44,7 @@ Next to every model in the picker:
 - **⚡** sub-second TTFT — autocomplete or probe-class models on local LAN. Heuristic.
 - **🧠** reasoner — supports `enable_thinking` natively. From `caps.supports_thinking`.
 - **🌐** cloud — routed via OpenRouter / Anthropic / OpenAI. Counts against your bill.
-- **🟢** loaded — the model is currently in cluster RAM (Odysseus only). Hot, no cold-start.
+- **🟢** loaded — the model is currently in cluster RAM (OdyssAI-X only). Hot, no cold-start.
 
 Chips come from the Odyssai `x_odyssai` contract when paired in gateway mode. In hybrid / legacy, they fall back to a denylist heuristic on model id strings.
 
@@ -67,7 +67,7 @@ Use cases:
 
 Click the model picker in the chat header → pick another model → next turn fires through it. The conversation keeps the new model as its "active" model going forward. Past replies stay attached to their original model (visible in the per-message stats row when Show metrics is on).
 
-This means **one conversation can span multiple models**. The session_id stays the same (= the conversation UUID), so Odysseus keeps the KV prefix cache between turns — but the cache hit depends on the new model loading the same prefix bytes. Mixing two different model families in one conv = expect cold prefill on every model change.
+This means **one conversation can span multiple models**. The session_id stays the same (= the conversation UUID), so OdyssAI-X keeps the KV prefix cache between turns — but the cache hit depends on the new model loading the same prefix bytes. Mixing two different model families in one conv = expect cold prefill on every model change.
 
 ## Model names vs cluster aliases
 
@@ -81,7 +81,7 @@ The stats row shows both the alias and the concrete path:
 Model: <alias> — <concrete-model>
 ```
 
-If the picker shows just an alias with no model name, the engine didn't return `x_odyssai.alias_for` for that entry — pre-Odysseus engine or cloud passthrough without a concrete mapping.
+If the picker shows just an alias with no model name, the engine didn't return `x_odyssai.alias_for` for that entry — pre-OdyssAI-X engine or cloud passthrough without a concrete mapping.
 
 ## Alias prefix conventions
 
@@ -96,7 +96,7 @@ These are conventions, not enforced. Whatever your engine publishes is what show
 
 ## Model that's not loaded
 
-For Odysseus cluster pools, the model is loaded **on demand**. The picker shows it; you select it; the engine triggers a load on the first request (you'll see a "Loading model…" banner with a progress bar in the chat).
+For OdyssAI-X cluster pools, the model is loaded **on demand**. The picker shows it; you select it; the engine triggers a load on the first request (you'll see a "Loading model…" banner with a progress bar in the chat).
 
 A typical MLX MoE load takes 15-50 seconds depending on size and node count. Subsequent turns reuse the loaded weights.
 

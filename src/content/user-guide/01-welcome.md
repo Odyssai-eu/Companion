@@ -1,6 +1,6 @@
 # Welcome
 
-Companion is a universal client for AI inference. You bring the engine — local cluster (Odysseus, Ollama, LM Studio, vLLM, MLX) or a cloud key (OpenRouter, Anthropic, OpenAI) — and Companion gives you a consistent client across desktop and mobile.
+Companion is a universal client for AI inference. You bring the engine — local cluster (OdyssAI-X, Ollama, LM Studio, vLLM, MLX) or a cloud key (OpenRouter, Anthropic, OpenAI) — and Companion gives you a consistent client across desktop and mobile.
 
 This guide is the canonical reference. Pick the topic that matches what you're trying to do; the topics are independent. Everything you read here is also valid for the public docs at [companion.odyssai.eu/docs](https://companion.odyssai.eu) — the source is the same Markdown.
 
@@ -15,18 +15,18 @@ This guide is the canonical reference. Pick the topic that matches what you're t
 - **Extend** the agent with **Skills** ([agentskills.io](https://agentskills.io)-spec packages), **MCP servers** (Notion, Linear, Tavily, GitHub, your own), and **Agents tokens** that turn Companion into an MCP brain for external coding agents (Cline, Continue.dev, Claude Desktop, Cowork).
 - **Remember** with a per-user wiki (Karpathy-style memory, Némo) and per-project memory. Curate by hand or let the agent append via `companion_remember`.
 - **Voice** in and out — push-to-talk on Space, full Talk mode for hands-free use.
-- **Speak many engines** — gateway mode (Odysseus direct), hybrid (caps from engine, inference via LiteLLM), or legacy (LiteLLM only). One client, every backend.
+- **Speak many engines** — gateway mode (OdyssAI-X direct), hybrid (caps from engine, inference via LiteLLM), or legacy (LiteLLM only). One client, every backend.
 
 ## Two minds, one stack
 
 - **Companion** — the client you're reading this in. React + Hono + Postgres, packaged as a Docker image you deploy where you want.
-- **Odysseus** — Open-source distributed MLX inference engine. OpenAI / Anthropic compatible. Companion is happiest paired with it, but speaks plain OpenAI / Anthropic / OpenRouter just as well via the legacy rail.
+- **OdyssAI-X** — Open-source distributed MLX inference engine. OpenAI / Anthropic compatible. Companion is happiest paired with it, but speaks plain OpenAI / Anthropic / OpenRouter just as well via the legacy rail.
 
 Companion does **not** ship its own model. It's a client. You decide what's behind the chat window.
 
 ## What's NOT in here
 
-- How to build Odysseus, run a Mac Studio cluster, or deploy your own Companion. Those are in the developer docs.
+- How to build OdyssAI-X, run a Mac Studio cluster, or deploy your own Companion. Those are in the developer docs.
 - API reference for `companion_*` tools — see *Agents tokens* for the catalog; full schema is at `/api/mcp` via `tools/list`.
 - Pricing / licensing — admin contacts you directly.
 

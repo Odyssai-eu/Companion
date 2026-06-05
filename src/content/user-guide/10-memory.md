@@ -41,7 +41,7 @@ After turn 1 (expensive prefill of the full memory context), subsequent turns on
 
 Every conversation **freezes** memory at creation time. Look at the chat header → memory toggle: when ON, the conversation has a snapshot.
 
-- **Why frozen** — the system prompt prefix must be byte-stable across turns for the upstream KV prefix cache (Odysseus) to actually hit. If the wiki recompiles in the background between two turns, the prompt changes mid-stream, cache busts.
+- **Why frozen** — the system prompt prefix must be byte-stable across turns for the upstream KV prefix cache (OdyssAI-X) to actually hit. If the wiki recompiles in the background between two turns, the prompt changes mid-stream, cache busts.
 - **How frozen** — `conversations.memory_snapshot` (text, up to ~50 KB) + `memory_snapshot_at` (timestamp).
 - **What's frozen** — the global wiki AND the project corpus (when applicable), concatenated under the canonical `buildSystemPrompt` order: user system prompt + project memory + global memory.
 

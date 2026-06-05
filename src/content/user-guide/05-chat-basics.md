@@ -18,7 +18,7 @@ Each chat is a **conversation** — a list of messages bound to:
 - A **model** (changeable mid-conversation; see Model picker).
 - An optional **project** (inherits its system prompt + memory toggles).
 - A frozen **memory snapshot** (taken at creation; refreshable via "Remember now").
-- A **session_id** (= the conversation UUID), passed to Odysseus for KV-cache reuse.
+- A **session_id** (= the conversation UUID), passed to OdyssAI-X for KV-cache reuse.
 
 ### New chat
 
@@ -94,7 +94,7 @@ TTFT 1.2s · Duration 14s · Prompt 8.4k tok · Completion 1.1k tok · Speed 78 
 ```
 
 - **TTFT** = time-to-first-token (latency to first SSE event).
-- **Cached** = tokens reused from the KV prefix cache (Odysseus only; cloud providers ignore the field).
+- **Cached** = tokens reused from the KV prefix cache (OdyssAI-X only; cloud providers ignore the field).
 - **Speed** = tokens / second sustained over the streaming portion.
 - **Model** = alias served — concrete (resolved via `x_odyssai.alias_for` when present).
 

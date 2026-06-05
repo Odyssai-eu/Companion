@@ -8,9 +8,9 @@ Companion supports three engine modes, auto-derived at pair time:
 
 ### Gateway mode
 
-- **Best with**: Odysseus and any engine that publishes `/.well-known/inference-engine.json` with `features.cloud-passthrough`.
+- **Best with**: OdyssAI-X and any engine that publishes `/.well-known/inference-engine.json` with `features.cloud-passthrough`.
 - **What happens**: 100% of `/v1/chat/completions` calls go to the engine. LiteLLM is bypassed entirely (`litellm_disabled = true`). The engine exposes both local pools and cloud passthroughs as a unified `/v1/models` catalog.
-- **Why preferred**: cleanest routing. The engine is the single point of truth. KV-cache hits work (Odysseus reuses prefixes via `session_id`). Capability contract (`x_odyssai`) preserved end-to-end — vision / tools chips reflect what the model actually does.
+- **Why preferred**: cleanest routing. The engine is the single point of truth. KV-cache hits work (OdyssAI-X reuses prefixes via `session_id`). Capability contract (`x_odyssai`) preserved end-to-end — vision / tools chips reflect what the model actually does.
 
 ### Hybrid mode
 
@@ -22,7 +22,7 @@ Companion supports three engine modes, auto-derived at pair time:
 
 - **When**: no engine paired (only `litellm_url` set).
 - **What happens**: everything through LiteLLM. Capabilities heuristic-only (no `x_odyssai` contract). No KV-cache hints.
-- **Use case**: pre-Odysseus setups, Ollama-only on a LAN with a LiteLLM front, or transitional period before pairing Odysseus.
+- **Use case**: pre-OdyssAI-X setups, Ollama-only on a LAN with a LiteLLM front, or transitional period before pairing OdyssAI-X.
 
 The mode is **auto-set** during the pairing handshake. You can override it manually in *Settings → Inference* but the default is usually right.
 
@@ -30,7 +30,7 @@ The mode is **auto-set** during the pairing handshake. You can override it manua
 
 *Settings → Infrastructure → Engine* → **Pair** button. The flow:
 
-1. **Discovery probe** — Companion does an LAN scan for OD discovery (Odysseus's discovery beacon). If found, the engine URL is pre-filled.
+1. **Discovery probe** — Companion does an LAN scan for OD discovery (OdyssAI-X's discovery beacon). If found, the engine URL is pre-filled.
 2. **Manual entry** — you can paste the engine URL directly (e.g. `http://<engine-host>:8000`). Used when the engine isn't on the same LAN as the browser.
 3. **Auth** — optional bearer token. Required if the engine has admin auth enabled.
 4. **Test endpoint** — Companion hits two URLs:
@@ -50,12 +50,12 @@ LiteLLM (typically deployed at `<litellm-host>:4000`) remains supported as a **f
 When to keep LiteLLM enabled:
 
 - You have agents (Continue.dev, custom scripts) pointed at LiteLLM directly that you haven't migrated.
-- You need the Anthropic protocol bridge (LiteLLM does this; Odysseus does too via `/v1/messages` — both paths exist).
+- You need the Anthropic protocol bridge (LiteLLM does this; OdyssAI-X does too via `/v1/messages` — both paths exist).
 - Transitional setups.
 
 When to disable LiteLLM (`litellm_disabled = true`):
 
-- You're 100% on gateway mode with Odysseus.
+- You're 100% on gateway mode with OdyssAI-X.
 - You don't want any path that bypasses the engine's session_id / capability contract.
 
 The toggle is in *Settings → Inference → LiteLLM disabled*. Disabling forces all routing through the engine; if the engine fails, no fallback.
@@ -124,16 +124,16 @@ If the new engine doesn't publish a given alias, future turns of those conversat
 
 ## Telemak nodes
 
-Odysseus can orchestrate **Telemak** nodes — single-node Swift runtime (`mlx-swift-lm`) running on Apple Silicon. From Companion's perspective they're transparent: Odysseus proxies them and publishes their loaded models in the catalog alongside distributed pools.
+OdyssAI-X can orchestrate **Telemak** nodes — single-node Swift runtime (`mlx-swift-lm`) running on Apple Silicon. From Companion's perspective they're transparent: OdyssAI-X proxies them and publishes their loaded models in the catalog alongside distributed pools.
 
 In the picker, Telemak-served models show the `Telemak` pool badge (instead of `Argo` or the cluster label). The model name, load state, and capability chips work the same way.
 
 What's different under the hood:
 - Telemak is a single-node runtime — no JACCL/RDMA, no multi-node sharding. Throughput is determined by that one node's memory bandwidth.
-- Load/unload is controlled from the Odysseus admin dashboard (Start / Stop / Restart / Quit per cluster).
+- Load/unload is controlled from the OdyssAI-X admin dashboard (Start / Stop / Restart / Quit per cluster).
 - Models with mixed quantization (e.g. 6-bit body + 8-bit MoE gate) require Telemak 0.6.33+. Earlier versions load but generate corrupted output.
 
-Telemak nodes are configured in Odysseus (not in Companion). Once configured and loaded, they appear in the picker automatically.
+Telemak nodes are configured in OdyssAI-X (not in Companion). Once configured and loaded, they appear in the picker automatically.
 
 ## Related
 
