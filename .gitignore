@@ -19,3 +19,5 @@ session*.md
 pnpm-lock.yaml
 bun.lock
 yarn.lock
+
+graphify-out/
