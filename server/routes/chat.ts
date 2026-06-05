@@ -1062,10 +1062,7 @@ chatRoute.post("/completions", async (c) => {
       // the model's intro line ("I'll search...") then silence.
       if (!exitedNaturally && body.conversationId) {
         const note =
-          "\n\n_(The model kept asking to call tools without writing a final " +
-          "answer — likely the result context is too large for it to " +
-          "summarize. Try a hosted tool-trained model like `or:claude-haiku`, " +
-          "or disable some MCP servers to shrink the context.)_";
+          "\n\nError - The model kept asking to call tools without writing a final answer";
         for (let i = 0; i < note.length; i += 32) {
           const piece = note.slice(i, i + 32);
           await safeWrite(
