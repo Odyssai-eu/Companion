@@ -74,10 +74,18 @@ export default function ChatLayout() {
   const isMobile = useIsMobile();
   const [voiceLiveOpen, setVoiceLiveOpen] = useState(false);
   const [voiceLiveAvailable, setVoiceLiveAvailable] = useState(false);
+  // #26 — the chat voice toggle branches on the selected provider: gemini opens
+  // the full-duplex overlay, local/mistral do TTS auto-speak (via /api/tts).
+  const [voiceProvider, setVoiceProvider] = useState<
+    "local" | "gemini" | "mistral"
+  >("local");
   useEffect(() => {
     api
       .voiceLiveInfo()
-      .then((info) => setVoiceLiveAvailable(info.enabled && info.hasApiKey))
+      .then((info) => {
+        setVoiceProvider(info.provider);
+        setVoiceLiveAvailable(info.enabled && info.hasApiKey);
+      })
       .catch(() => setVoiceLiveAvailable(false));
   }, []);
 
@@ -145,7 +153,14 @@ export default function ChatLayout() {
     onStop: () => {
       if (chat.sending) chat.cancel();
     },
-    onToggleVoiceMode: () => voiceMode.toggle(),
+    onToggleVoiceMode: () => {
+      // #26 — gemini = full-duplex overlay; local/mistral = TTS auto-speak.
+      if (voiceProvider === "gemini") {
+        if (voiceLiveAvailable) setVoiceLiveOpen(true);
+        return;
+      }
+      voiceMode.toggle();
+    },
     onOpenSettings: () => navigate("/settings/inference"),
     onPushToTalkChange: (active) => {
       if (active) {

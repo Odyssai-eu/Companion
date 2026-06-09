@@ -1067,6 +1067,12 @@ function VoiceLivePanel() {
   const [saved, setSaved] = useState(false);
 
   // Local edits
+  const [provider, setProvider] = useState<"local" | "gemini" | "mistral">(
+    "local",
+  );
+  const [ttsEndpoint, setTtsEndpoint] = useState("");
+  const [asrEndpoint, setAsrEndpoint] = useState("");
+  const [ttsModel, setTtsModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
   const [voice, setVoice] = useState("");
@@ -1077,6 +1083,10 @@ function VoiceLivePanel() {
     try {
       const r = await api.voiceLiveInfo();
       setInfo(r);
+      setProvider(r.provider);
+      setTtsEndpoint(r.ttsEndpoint);
+      setAsrEndpoint(r.asrEndpoint);
+      setTtsModel(r.ttsModel);
       setModel(r.model);
       setVoice(r.voice);
       setSystemInstruction(r.systemInstruction);
@@ -1095,6 +1105,10 @@ function VoiceLivePanel() {
     setErr(null);
     try {
       await api.voiceLiveUpdateConfig({
+        provider,
+        ttsEndpoint: ttsEndpoint.trim() || undefined,
+        asrEndpoint: asrEndpoint.trim() || undefined,
+        ttsModel: ttsModel.trim() || undefined,
         model: model.trim() || undefined,
         voice: voice.trim() || undefined,
         systemInstruction,
@@ -1130,87 +1144,167 @@ function VoiceLivePanel() {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 text-[12px] text-gray-600">
-        <span className="flex items-center gap-1.5">
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${info.hasApiKey ? "bg-emerald-500" : "bg-rose-500"}`}
-          />
-          <span className="font-mono text-ink">
-            {info.hasApiKey ? "key set" : "missing key"}
+        <span>
+          <span className="text-gray-400">Provider</span>{" "}
+          <code className="font-mono text-ink">{info.provider}</code>
+        </span>
+        {info.provider !== "gemini" && (
+          <span>
+            <span className="text-gray-400">TTS</span>{" "}
+            <code className="font-mono text-ink">{info.ttsEndpoint || "—"}</code>
           </span>
-        </span>
-        <span>
-          <span className="text-gray-400">Model</span>{" "}
-          <code className="font-mono text-ink">{info.model}</code>
-        </span>
-        <span>
-          <span className="text-gray-400">Voice</span>{" "}
-          <code className="font-mono text-ink">{info.voice}</code>
-        </span>
+        )}
+        {info.provider !== "local" && (
+          <span className="flex items-center gap-1.5">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${info.hasApiKey ? "bg-emerald-500" : "bg-rose-500"}`}
+            />
+            <span className="font-mono text-ink">
+              {info.hasApiKey ? "key set" : "no key"}
+            </span>
+          </span>
+        )}
       </div>
 
       <Field
-        label="API key"
-        hint="Gemini API key (https://aistudio.google.com/apikey). Stored server-side; minted into a session payload at voice-mode start."
+        label="Provider"
+        hint="Where chat voice (TTS out + ASR in) is handled. local/mistral forward to an OpenAI-compatible /v1/audio endpoint; gemini is full-duplex Live over WebSocket."
       >
-        <div className="flex items-center gap-2">
-          <input
-            type={showKey ? "text" : "password"}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={info.hasApiKey ? "•••• (set — paste a new one to replace)" : "AIza…"}
-            className="flex-1 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-          />
-          <button
-            type="button"
-            onClick={() => setShowKey((v) => !v)}
-            className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-600 hover:text-ink"
+        <select
+          value={provider}
+          onChange={(e) => setProvider(e.target.value as typeof provider)}
+          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-ink outline-none focus:border-cyan"
+        >
+          <option value="local">Local (OpenAI-compatible audio)</option>
+          <option value="mistral">Mistral (Voxtral)</option>
+          <option value="gemini">Gemini Live (full-duplex)</option>
+        </select>
+      </Field>
+
+      {provider !== "gemini" && (
+        <>
+          <Field
+            label="TTS endpoint"
+            hint="Base URL of an OpenAI-compatible TTS server (calls /v1/audio/speech). For Voxtral, your Mistral-compatible base URL."
           >
-            {showKey ? "Hide" : "Show"}
-          </button>
-          {info.hasApiKey && (
+            <input
+              type="text"
+              value={ttsEndpoint}
+              onChange={(e) => setTtsEndpoint(e.target.value)}
+              placeholder="http://192.168.86.49:8003"
+              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
+          </Field>
+          <Field
+            label="ASR endpoint"
+            hint="Base URL for /v1/audio/transcriptions. Leave blank to reuse the TTS endpoint."
+          >
+            <input
+              type="text"
+              value={asrEndpoint}
+              onChange={(e) => setAsrEndpoint(e.target.value)}
+              placeholder="(same as TTS endpoint)"
+              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
+          </Field>
+          <Field label="TTS model" hint="Model id the TTS server should use.">
+            <input
+              type="text"
+              value={ttsModel}
+              onChange={(e) => setTtsModel(e.target.value)}
+              placeholder="mlx-community/VibeVoice-Realtime-0.5B-8bit"
+              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
+          </Field>
+          <Field
+            label="Voice"
+            hint="Voice id your TTS server understands (e.g. en-Emma_woman, fr-Spk1_woman for VibeVoice)."
+          >
+            <input
+              type="text"
+              value={voice}
+              onChange={(e) => setVoice(e.target.value)}
+              placeholder="en-Emma_woman"
+              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
+          </Field>
+        </>
+      )}
+
+      {provider !== "local" && (
+        <Field
+          label="API key"
+          hint={
+            provider === "gemini"
+              ? "Gemini API key (https://aistudio.google.com/apikey). Stored server-side; minted into a session payload at voice start."
+              : "Bearer key for the Voxtral / Mistral endpoint. Stored server-side."
+          }
+        >
+          <div className="flex items-center gap-2">
+            <input
+              type={showKey ? "text" : "password"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={
+                info.hasApiKey
+                  ? "•••• (set — paste a new one to replace)"
+                  : provider === "gemini"
+                    ? "AIza…"
+                    : "key…"
+              }
+              className="flex-1 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
             <button
               type="button"
-              onClick={clearKey}
-              disabled={busy}
+              onClick={() => setShowKey((v) => !v)}
               className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-600 hover:text-ink"
             >
-              Revoke
+              {showKey ? "Hide" : "Show"}
             </button>
-          )}
-        </div>
-      </Field>
+            {info.hasApiKey && (
+              <button
+                type="button"
+                onClick={clearKey}
+                disabled={busy}
+                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-600 hover:text-ink"
+              >
+                Revoke
+              </button>
+            )}
+          </div>
+        </Field>
+      )}
 
-      <Field
-        label="Model"
-        hint="Gemini Live model id. Default: models/gemini-3.1-flash-live-preview (newest, best multilingual ASR)."
-      >
-        <input
-          type="text"
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder="models/gemini-3.1-flash-live-preview"
-          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-        />
-      </Field>
-
-      <Field
-        label="Voice"
-        hint="Pick a quick preset or browse the full list."
-      >
-        <VoicePicker value={voice} onChange={setVoice} />
-      </Field>
-
-      <Field
-        label="System instruction"
-        hint="Optional — shapes the assistant's persona for voice sessions."
-      >
-        <textarea
-          value={systemInstruction}
-          onChange={(e) => setSystemInstruction(e.target.value)}
-          rows={3}
-          className="w-full resize-y rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-        />
-      </Field>
+      {provider === "gemini" && (
+        <>
+          <Field
+            label="Model"
+            hint="Gemini Live model id. Default: models/gemini-3.1-flash-live-preview (newest, best multilingual ASR)."
+          >
+            <input
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="models/gemini-3.1-flash-live-preview"
+              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
+          </Field>
+          <Field label="Voice" hint="Pick a quick preset or browse the full list.">
+            <VoicePicker value={voice} onChange={setVoice} />
+          </Field>
+          <Field
+            label="System instruction"
+            hint="Optional — shapes the assistant's persona for voice sessions."
+          >
+            <textarea
+              value={systemInstruction}
+              onChange={(e) => setSystemInstruction(e.target.value)}
+              rows={3}
+              className="w-full resize-y rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
+          </Field>
+        </>
+      )}
 
       <div className="flex items-center gap-3">
         <button
@@ -1225,18 +1319,14 @@ function VoiceLivePanel() {
 
       <details className="rounded-md border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-600">
         <summary className="cursor-pointer font-medium text-ink">
-          How Voice (Gemini Live) works
+          How Voice works
         </summary>
         <p className="mt-3 leading-relaxed">
-          When enabled with an API key, the chat's voice mode opens a WebSocket
-          to Google's Gemini Live API directly from the browser. Audio is PCM
-          16-bit 16 kHz LE in / 24 kHz out, streamed bidirectionally. The
-          server only mints session credentials — it never proxies audio.
-        </p>
-        <p className="mt-3">
-          Voxtral / Kokoro local TTS / VibeVoice ASR are paused while the
-          Gemini path is the primary voice provider. They'll come back once
-          the local stack matures.
+          One voice function for the chat — TTS out + ASR in.{" "}
+          <b>local</b> and <b>mistral</b> forward to an OpenAI-compatible
+          /v1/audio endpoint (the chat speaks replies and transcribes your mic).{" "}
+          <b>gemini</b> opens a full-duplex Live WebSocket from the browser (PCM
+          16 kHz in / 24 kHz out); the server only mints session credentials.
         </p>
       </details>
 

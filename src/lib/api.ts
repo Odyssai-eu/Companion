@@ -1417,18 +1417,26 @@ export const api = {
       body: JSON.stringify({ input }),
     }),
 
-  // Voice (Gemini Live) add-on
+  // Voice add-on (unified: local / gemini / mistral)
   voiceLiveInfo: () =>
     request<{
       addonId: string;
       enabled: boolean;
+      provider: "local" | "gemini" | "mistral";
+      ttsEndpoint: string;
+      asrEndpoint: string;
+      ttsModel: string;
+      voice: string;
       hasApiKey: boolean;
       model: string;
-      voice: string;
       systemInstruction: string;
     }>("/api/addons/voice-live/info"),
   voiceLiveUpdateConfig: (
     body: Partial<{
+      provider: "local" | "gemini" | "mistral";
+      ttsEndpoint: string;
+      asrEndpoint: string;
+      ttsModel: string;
       apiKey: string | null;
       model: string;
       voice: string;
