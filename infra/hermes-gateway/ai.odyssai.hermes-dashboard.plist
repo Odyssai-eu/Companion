@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.odyssai.hermes-dashboard</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/admin/.local/bin/hermes</string>
+    <string>dashboard</string>
+    <string>--host</string><string>0.0.0.0</string>
+    <string>--insecure</string>
+    <string>--no-open</string>
+    <string>--port</string><string>9119</string>
+    <string>--skip-build</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/Users/admin/.hermes/node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HERMES_ACCEPT_HOOKS</key><string>1</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/admin/hermes-acp-gateway/dashboard.log</string>
+  <key>StandardErrorPath</key><string>/Users/admin/hermes-acp-gateway/dashboard.err</string>
+</dict>
+</plist>
