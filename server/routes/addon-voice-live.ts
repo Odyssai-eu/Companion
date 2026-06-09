@@ -23,12 +23,27 @@ import { getMemoryContext } from "../lib/memory";
 type Env = { Variables: { userId: string } };
 const voiceLiveRoute = new Hono<Env>();
 
-const ADDON_NAME = "Voice (Gemini Live)";
+const ADDON_NAME = "Voice";
+const LEGACY_ADDON_NAME = "Voice (Gemini Live)";
+const ADDON_DESCRIPTION =
+  "Unified voice in/out for chat (TTS + ASR). Pick a provider — local " +
+  "OpenAI-compatible audio, Gemini Live full-duplex, or Mistral/Voxtral — " +
+  "and set its endpoint.";
+
+export type VoiceProvider = "local" | "gemini" | "mistral";
 
 type Config = {
+  /** Which voice backend the chat uses. Default 'local'. */
+  provider?: VoiceProvider;
+  // local + mistral: OpenAI-compatible /v1/audio/* endpoints. Mistral exposes
+  // Voxtral the same way (speech + transcriptions), so both just need a base URL.
+  ttsEndpoint?: string;
+  asrEndpoint?: string;
+  ttsModel?: string;
+  voice?: string;
+  // gemini full-duplex (Live API over WebSocket)
   apiKey?: string;
   model?: string;
-  voice?: string;
   systemInstruction?: string;
 };
 
@@ -39,25 +54,48 @@ async function findOrInit(userId: string) {
     .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
     .limit(1);
   if (existing) return existing;
+  // Migrate the legacy Gemini-only row in place so a saved API key / model /
+  // voice survives the rename to the unified "Voice" addon (#26).
+  const [legacy] = await db
+    .select()
+    .from(addons)
+    .where(and(eq(addons.userId, userId), eq(addons.name, LEGACY_ADDON_NAME)))
+    .limit(1);
+  if (legacy) {
+    const [renamed] = await db
+      .update(addons)
+      .set({
+        name: ADDON_NAME,
+        description: ADDON_DESCRIPTION,
+        updatedAt: new Date(),
+      })
+      .where(eq(addons.id, legacy.id))
+      .returning();
+    return renamed;
+  }
   const [created] = await db
     .insert(addons)
     .values({
       userId,
       name: ADDON_NAME,
       kind: "plugin",
-      description:
-        "Real-time bidirectional voice via Gemini Live API. PCM streaming over WebSocket. Replaces local TTS/ASR pipelines while Voxtral/Kokoro mature.",
-      version: "0.1.0",
+      description: ADDON_DESCRIPTION,
+      version: "0.2.0",
       enabled: false,
     })
     .returning();
   return created;
 }
 
-// Gemini 3.1 Flash Live (preview) — newest Live model as of 2026-05.
-// Native speech↔speech, claims 70+ languages, lower latency, and
-// drastically better non-English transcription than the 2.5 native-audio
-// dialog model that mis-transcribes FR speech as EN-phonetic words.
+// Defaults. TTS/ASR fall back to the env-configured local endpoint so a fresh
+// install speaks without any UI config (bootstrap). Gemini Live model/voice
+// keep their previous defaults.
+const DEFAULT_PROVIDER: VoiceProvider = "local";
+const DEFAULT_TTS_ENDPOINT = process.env.TTS_BASE_URL ?? "";
+const DEFAULT_TTS_MODEL =
+  process.env.TTS_DEFAULT_MODEL ?? "mlx-community/VibeVoice-Realtime-0.5B-8bit";
+const DEFAULT_TTS_VOICE = process.env.TTS_DEFAULT_VOICE ?? "en-Emma_woman";
+// Gemini 3.1 Flash Live (preview) — native speech↔speech, 70+ languages.
 const DEFAULT_MODEL = "models/gemini-3.1-flash-live-preview";
 const DEFAULT_VOICE = "Aoede";
 
@@ -65,17 +103,29 @@ voiceLiveRoute.get("/info", async (c) => {
   const userId = c.get("userId");
   const addon = await findOrInit(userId);
   const cfg = (addon.config ?? {}) as Config;
+  const provider = cfg.provider ?? DEFAULT_PROVIDER;
+  // `voice` is one field shared across providers; its sensible default depends
+  // on which provider is active (Gemini voice namespace vs VibeVoice/Voxtral).
+  const voiceDefault = provider === "gemini" ? DEFAULT_VOICE : DEFAULT_TTS_VOICE;
   return c.json({
     addonId: addon.id,
     enabled: addon.enabled,
+    provider,
+    ttsEndpoint: cfg.ttsEndpoint ?? DEFAULT_TTS_ENDPOINT,
+    asrEndpoint: cfg.asrEndpoint ?? cfg.ttsEndpoint ?? DEFAULT_TTS_ENDPOINT,
+    ttsModel: cfg.ttsModel ?? DEFAULT_TTS_MODEL,
+    voice: cfg.voice ?? voiceDefault,
     hasApiKey: Boolean(cfg.apiKey),
     model: cfg.model ?? DEFAULT_MODEL,
-    voice: cfg.voice ?? DEFAULT_VOICE,
     systemInstruction: cfg.systemInstruction ?? "",
   });
 });
 
 const configSchema = z.object({
+  provider: z.enum(["local", "gemini", "mistral"]).optional(),
+  ttsEndpoint: z.string().max(500).optional(),
+  asrEndpoint: z.string().max(500).optional(),
+  ttsModel: z.string().max(200).optional(),
   apiKey: z.string().min(1).max(256).nullish(),
   model: z.string().max(200).optional(),
   voice: z.string().max(80).optional(),
@@ -87,6 +137,10 @@ voiceLiveRoute.patch("/config", zValidator("json", configSchema), async (c) => {
   const addon = await findOrInit(userId);
   const cfg = (addon.config ?? {}) as Config;
   const data = c.req.valid("json");
+  if (data.provider !== undefined) cfg.provider = data.provider;
+  if (data.ttsEndpoint !== undefined) cfg.ttsEndpoint = data.ttsEndpoint;
+  if (data.asrEndpoint !== undefined) cfg.asrEndpoint = data.asrEndpoint;
+  if (data.ttsModel !== undefined) cfg.ttsModel = data.ttsModel;
   if (data.apiKey !== undefined) cfg.apiKey = data.apiKey ?? undefined;
   if (data.model !== undefined) cfg.model = data.model;
   if (data.voice !== undefined) cfg.voice = data.voice;
@@ -181,5 +235,26 @@ voiceLiveRoute.post(
     });
   },
 );
+
+/**
+ * Resolve the user's effective voice config (provider + endpoints + model +
+ * voice) with env bootstrap defaults. Consumed by the TTS/ASR proxy so the
+ * endpoint is user-configurable instead of frozen on TTS_BASE_URL (#26).
+ */
+export async function resolveVoiceConfig(userId: string) {
+  const addon = await findOrInit(userId);
+  const cfg = (addon.config ?? {}) as Config;
+  return {
+    enabled: addon.enabled,
+    provider: cfg.provider ?? DEFAULT_PROVIDER,
+    ttsEndpoint: cfg.ttsEndpoint || DEFAULT_TTS_ENDPOINT,
+    asrEndpoint: cfg.asrEndpoint || cfg.ttsEndpoint || DEFAULT_TTS_ENDPOINT,
+    ttsModel: cfg.ttsModel || DEFAULT_TTS_MODEL,
+    voice: cfg.voice || DEFAULT_TTS_VOICE,
+    // mistral/Voxtral (and any hosted OpenAI-compat endpoint) needs a Bearer
+    // key; local mlx-audio doesn't. Server-side only — never sent to the client.
+    apiKey: cfg.apiKey,
+  };
+}
 
 export default voiceLiveRoute;

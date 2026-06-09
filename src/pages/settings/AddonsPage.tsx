@@ -188,6 +188,7 @@ function AddonCard({
     !isMobile &&
     (addon.name === "Obsidian" ||
       addon.name === "Web Search" ||
+      addon.name === "Voice" ||
       addon.name === "Voice (Gemini Live)" ||
       addon.name === "Auto Router" ||
       addon.name === "Hermes Agent" ||
@@ -224,7 +225,9 @@ function AddonCard({
         <div className="border-t border-gray-200 bg-gray-50/60 px-6 py-5">
           {addon.name === "Obsidian" && <ObsidianPanel />}
           {addon.name === "Web Search" && <TavilyPanel />}
-          {addon.name === "Voice (Gemini Live)" && <VoiceLivePanel />}
+          {(addon.name === "Voice" || addon.name === "Voice (Gemini Live)") && (
+            <VoiceLivePanel />
+          )}
           {addon.name === "Auto Router" && <RouterPanel />}
           {addon.name === "Hermes Agent" && <HermesAddonPanel />}
           {addon.name === "Pi Agent" && <PiAddonPanel />}
