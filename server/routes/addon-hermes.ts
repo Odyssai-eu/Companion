@@ -73,11 +73,15 @@ hermesRoute.get("/info", async (c) => {
   const userId = c.get("userId");
   const addon = await findOrInitHermesAddon(userId);
   const cfg = (addon.config ?? {}) as HermesAddonConfig;
+  // #25 — enterprise default: when the operator sets HERMES_DASHBOARD_URL the
+  // shared Hermes dashboard (e.g. http://<host>:9119) is used out of the box,
+  // so a user only needs to flip the add-on on. A per-user bridgeUrl overrides.
+  const bridgeUrl = cfg.bridgeUrl || process.env.HERMES_DASHBOARD_URL || "";
   return c.json({
     addonId: addon.id,
     enabled: addon.enabled,
-    configured: Boolean(cfg.bridgeUrl),
-    bridgeUrl: cfg.bridgeUrl ?? "",
+    configured: Boolean(bridgeUrl),
+    bridgeUrl,
     hasToken: Boolean(cfg.bridgeToken),
   });
 });

@@ -187,6 +187,10 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   // process running `tmux attach -t pi` on the Pi host). Fetched once
   // from the Pi Agent add-on config.
   const [piBridgeUrl, setPiBridgeUrl] = useState<string>("");
+  // #25 — Hermes runs as a shared enterprise TUI embedded via iframe (the
+  // Hermes web dashboard), same as Pi. URL from the Hermes Agent add-on config.
+  // When set, `/hermes` opens the iframe instead of the (retired) ACP bubble.
+  const [hermesBridgeUrl, setHermesBridgeUrl] = useState<string>("");
   const [inferenceMode, setInferenceMode] = useState<
     "easy" | "advanced" | "expert"
   >("expert");
@@ -320,6 +324,18 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       })
       .catch(() => {
         /* not configured — leave piBridgeUrl empty */
+      });
+    // #25 — same for Hermes (enterprise dashboard iframe).
+    api
+      .hermesAddonInfo()
+      .then((info) => {
+        if (cancelled) return;
+        if (info.enabled && info.bridgeUrl) {
+          setHermesBridgeUrl(info.bridgeUrl);
+        }
+      })
+      .catch(() => {
+        /* not configured — leave hermesBridgeUrl empty (falls back to bubble) */
       });
     return () => {
       cancelled = true;
@@ -1058,7 +1074,10 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           // prompt now. Pi runs in a TUI iframe — the composer doesn't
           // route there, the user types directly in the terminal. So
           // we just enter mode and ignore any `rest` for /pi.
-          if (kind === "hermes" && rest) {
+          // When a Hermes iframe is configured, the dashboard handles the
+          // interaction directly — only fall back to the (retired) ACP bubble
+          // invoke when there's no iframe URL (#25).
+          if (kind === "hermes" && rest && !hermesBridgeUrl) {
             await hermesInvoke(convId, rest);
           }
           return;
@@ -1072,14 +1091,22 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       // types directly in the terminal). We silently no-op for Pi so
       // accidentally-typed composer text doesn't hit normal chat with
       // the wrong context.
-      if (currentAgent === "hermes") {
+      if (currentAgent === "hermes" && !hermesBridgeUrl) {
+        // Legacy ACP-bubble path — only when no Hermes iframe is configured.
         const convId = conversationId ?? conversation?.id;
         if (convId) {
           await hermesInvoke(convId, trimmed);
           return;
         }
-      } else if (currentAgent === "pi") {
-        setError("Type directly in the Pi terminal above. Use /exit to return.");
+      } else if (
+        currentAgent === "pi" ||
+        (currentAgent === "hermes" && hermesBridgeUrl)
+      ) {
+        // iframe TUI (Pi terminal or the enterprise Hermes dashboard) — the
+        // user types directly in the window above; composer text doesn't route
+        // here. Silently no-op so stray text doesn't hit normal chat (#25).
+        const label = currentAgent === "pi" ? "Pi terminal" : "Hermes window";
+        setError(`Type directly in the ${label} above. Use /exit to return.`);
         return;
       }
 
@@ -1392,6 +1419,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     piInvoke,
     piReset,
     piBridgeUrl,
+    hermesBridgeUrl,
     /** Persistent agent mode for this conv ('hermes' | null). When set,
      *  every plain message in the composer routes to that agent's
      *  bridge instead of the LLM chat path. `/exit` clears it. */

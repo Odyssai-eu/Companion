@@ -4,6 +4,7 @@ import InferencePanel from "~/components/chat/InferencePanel";
 import Input from "~/components/chat/Input";
 import Messages from "~/components/chat/Messages";
 import { AgentBubble } from "~/components/chat/AgentBubble";
+import { HermesPanel } from "~/components/chat/HermesPanel";
 import { PiPanel } from "~/components/chat/PiPanel";
 // RepoBindingBar (Hermes-only) retired 2026-05-19.
 import Sidebar from "~/components/chat/Sidebar";
@@ -260,6 +261,11 @@ export default function ChatLayout() {
          *  in place of the AgentBubble. */}
         {chat.activeAgent === "pi" && chat.piBridgeUrl ? (
           <PiPanel url={chat.piBridgeUrl} />
+        ) : chat.activeAgent === "hermes" && chat.hermesBridgeUrl ? (
+          /* #25 — enterprise Hermes runs as a shared TUI in the dashboard
+           *  iframe, same as Pi. Falls back to the ACP bubble below only when
+           *  no Hermes iframe URL is configured. */
+          <HermesPanel url={chat.hermesBridgeUrl} />
         ) : (
           <AgentBubble
             messages={chat.agentMessages}
