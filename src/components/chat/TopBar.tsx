@@ -3,7 +3,6 @@ import { useA11yPrefs } from "~/hooks/useA11yPrefs";
 import { useIsMobile } from "~/hooks/useIsMobile";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
 import { api, type ApiInferenceStatus } from "~/lib/api";
-import ToolsMenu from "./ToolsMenu";
 
 export type ChatStyle = "Creative" | "Normal" | "Code" | "Custom";
 
@@ -66,7 +65,6 @@ export default function TopBar({
               <AgentModeToggleButton
                 enabled={agentMode}
                 onToggle={onToggleAgentMode}
-                disabled={!conversationId}
                 compact
               />
               <MemoryToggleButton
@@ -129,13 +127,11 @@ export default function TopBar({
           </button>
         </div>
         <div className="flex items-center gap-3">
-          <ToolsMenu />
           {!hideMemoryControls && (
             <>
               <AgentModeToggleButton
                 enabled={agentMode}
                 onToggle={onToggleAgentMode}
-                disabled={!conversationId}
               />
               <MemoryToggleButton
                 enabled={memoryEnabled}
@@ -268,7 +264,7 @@ function MemoryToggleButton({
 }) {
   const size = compact ? "h-11 w-11" : "h-8 w-8";
   const ringColor = enabled
-    ? "border-cyan bg-white text-cyan hover:bg-cyan/5"
+    ? "border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600"
     : "border-gray-200 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-600";
   const title = !disabled
     ? enabled

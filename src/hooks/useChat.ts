@@ -210,6 +210,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   const [pendingMemoryEnabled, setPendingMemoryEnabled] = useState<
     boolean | null
   >(null);
+  // #28 — same pre-conversation pattern as memory, for agent mode (tools).
+  // Lets the user flip tools ON/OFF on a blank chat before the first message;
+  // persisted at conversation creation, then reset.
+  const [pendingAgentMode, setPendingAgentMode] = useState<boolean | null>(
+    null,
+  );
   const [conversation, setConversation] = useState<ApiConversation | null>(
     null,
   );
@@ -390,6 +396,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       // returns to the "new chat" entry, so the next conv starts from
       // its project default (or true) instead of a stale pending flip.
       setPendingMemoryEnabled(null);
+      setPendingAgentMode(null);
       loadedIdRef.current = null;
       return;
     }
@@ -1103,6 +1110,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
             ...(pendingMemoryEnabled !== null
               ? { memoryEnabled: pendingMemoryEnabled }
               : {}),
+            // #28 — same for the agent-mode (tools) toggle flipped on the
+            // blank chat before the first message.
+            ...(pendingAgentMode !== null
+              ? { agentMode: pendingAgentMode }
+              : {}),
           });
           convId = created.conversation.id;
           setConversation(created.conversation);
@@ -1112,6 +1124,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           conversationIdForModelRef.current = convId;
           // Reset pending state — it's now persisted on the conversation.
           setPendingMemoryEnabled(null);
+          setPendingAgentMode(null);
         } catch (e) {
           setError((e as Error).message);
           return;
@@ -1205,6 +1218,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       project,
       sending,
       pendingMemoryEnabled,
+      pendingAgentMode,
     ],
   );
 
@@ -1290,7 +1304,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   }, [conversation]);
 
   const toggleAgentMode = useCallback(async () => {
-    if (!conversation) return;
+    // Pre-conversation: no row to PATCH yet — flip the pending flag (agent
+    // mode defaults to false). Persisted at conv creation in sendMessage. (#28)
+    if (!conversation) {
+      setPendingAgentMode((prev) => !(prev ?? false));
+      return;
+    }
     const next = !(conversation.agentMode ?? false);
     setConversation({ ...conversation, agentMode: next });
     try {
@@ -1381,6 +1400,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
      *  exists, else the pre-conversation pending override, else true. */
     memoryEnabled:
       conversation?.memoryEnabled ?? pendingMemoryEnabled ?? true,
+    /** Effective agent-mode (tools) toggle: persisted conv value when the
+     *  conv exists, else the pre-conversation pending override, else false.
+     *  Lets the TopBar tools button reflect a pre-first-message flip. (#28) */
+    agentMode:
+      conversation?.agentMode ?? pendingAgentMode ?? false,
   };
 }
 

@@ -35,6 +35,10 @@ const createSchema = z.object({
    *  defaults to true. UI uses this so the user can pre-toggle memory
    *  OFF before sending the first message on a new top-level chat. */
   memoryEnabled: z.boolean().optional(),
+  /** Explicit agent-mode (tools) override, mirroring memoryEnabled — lets the
+   *  UI persist a tools ON/OFF flip made on a blank chat before the first
+   *  message. Without it the new conversation defaults to agentMode=false. */
+  agentMode: z.boolean().optional(),
 });
 
 const appendMessageSchema = z.object({
@@ -144,6 +148,8 @@ conversationsRoute.post(
         kind,
         repoPath: null,
         memoryEnabled,
+        // #28 — honour a pre-first-message agent-mode (tools) flip.
+        agentMode: data.agentMode ?? false,
         memorySnapshot: memorySnapshot || null,
         memorySnapshotAt: memorySnapshot ? new Date() : null,
       })

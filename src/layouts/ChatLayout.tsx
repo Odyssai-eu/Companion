@@ -193,7 +193,7 @@ export default function ChatLayout() {
           conversationId={id ?? null}
           memoryEnabled={chat.memoryEnabled}
           onToggleMemory={chat.toggleMemoryEnabled}
-          agentMode={chat.conversation?.agentMode ?? false}
+          agentMode={chat.agentMode}
           onToggleAgentMode={chat.toggleAgentMode}
         />
         {panelOpen && !isMobile && (

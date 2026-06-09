@@ -759,6 +759,7 @@ export const api = {
     kind?: "chat" | "talk";
     repoPath?: string;
     memoryEnabled?: boolean;
+    agentMode?: boolean;
   }) =>
     request<{ conversation: ApiConversation }>("/api/conversations", {
       method: "POST",
