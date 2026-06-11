@@ -1279,6 +1279,36 @@ export const api = {
 
   // Hermes Agent add-on retired 2026-05-19. Reinstated 2026-05-21 with a
   // new architecture: ACP bridge on the user's machine.
+  ragAddonInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      configured: boolean;
+      url: string;
+      topK: number;
+      timeoutMs: number;
+      envFallback: boolean;
+    }>("/api/addons/rag/info"),
+  ragAddonSetConfig: (body: {
+    enabled?: boolean;
+    url?: string;
+    topK?: number;
+    timeoutMs?: number;
+  }) =>
+    request<{
+      ok: true;
+      enabled: boolean;
+      configured: boolean;
+      url: string;
+      topK: number;
+      timeoutMs: number;
+    }>("/api/addons/rag/config", { method: "PUT", body: JSON.stringify(body) }),
+  ragAddonProbe: () =>
+    request<{ ok: boolean; health?: unknown; status?: number; error?: string }>(
+      "/api/addons/rag/probe",
+      { method: "POST" },
+    ),
+
   hermesAddonInfo: () =>
     request<{
       addonId: string;

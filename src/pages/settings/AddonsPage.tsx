@@ -49,6 +49,7 @@ export default function AddonsPage() {
           api.voiceLiveInfo().catch(() => undefined),
           api.hermesAddonInfo().catch(() => undefined),
           api.piAddonInfo().catch(() => undefined),
+          api.ragAddonInfo().catch(() => undefined),
         ]);
       } catch {
         /* ignore — best-effort */
@@ -192,7 +193,8 @@ function AddonCard({
       addon.name === "Voice (Gemini Live)" ||
       addon.name === "Auto Router" ||
       addon.name === "Hermes Agent" ||
-      addon.name === "Pi Agent");
+      addon.name === "Pi Agent" ||
+      addon.name === "RAG");
 
   return (
     <div className="flex flex-col gap-0 rounded-xl border border-gray-200 bg-white">
@@ -231,6 +233,7 @@ function AddonCard({
           {addon.name === "Auto Router" && <RouterPanel />}
           {addon.name === "Hermes Agent" && <HermesAddonPanel />}
           {addon.name === "Pi Agent" && <PiAddonPanel />}
+          {addon.name === "RAG" && <RagPanel />}
         </div>
       )}
     </div>
@@ -674,6 +677,146 @@ type ProbeResult = {
   error?: string;
   status?: number;
 };
+
+function RagPanel() {
+  type Info = Awaited<ReturnType<typeof api.ragAddonInfo>>;
+  const [info, setInfo] = useState<Info | null>(null);
+  const [url, setUrl] = useState("");
+  const [topK, setTopK] = useState(5);
+  const [timeoutMs, setTimeoutMs] = useState(3000);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [probe, setProbe] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      const i = await api.ragAddonInfo();
+      setInfo(i);
+      setUrl(i.url || "");
+      setTopK(i.topK);
+      setTimeoutMs(i.timeoutMs);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function save() {
+    setBusy("save");
+    setErr(null);
+    try {
+      await api.ragAddonSetConfig({
+        url: url.trim() || undefined,
+        topK,
+        timeoutMs,
+      });
+      setSaved(true);
+      await refresh();
+      setTimeout(() => setSaved(false), 1800);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function test() {
+    setBusy("probe");
+    setProbe(null);
+    setErr(null);
+    try {
+      const r = await api.ragAddonProbe();
+      setProbe(r.ok ? "✓ reachable" : `✗ ${r.error ?? r.status ?? "unreachable"}`);
+    } catch (e) {
+      setProbe(`✗ ${(e as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (!info) {
+    return <span className="font-mono text-[11px] text-gray-400">Loading…</span>;
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 text-[12px] text-gray-600">
+        <span>
+          <span className="text-gray-400">Status</span>{" "}
+          <span className="font-mono text-ink">
+            {info.configured ? "✓ configured" : "✗ no URL"}
+          </span>
+        </span>
+        {info.envFallback && !url && (
+          <span className="text-gray-400">
+            using env fallback (NEMO_MEMORY_URL)
+          </span>
+        )}
+      </div>
+
+      <Field label="LightRAG / nemo-memory URL">
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="http://host.docker.internal:8765"
+          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+        />
+      </Field>
+
+      <div className="flex gap-4">
+        <Field label="top_k">
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={topK}
+            onChange={(e) => setTopK(Number(e.target.value))}
+            className="w-24 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+        </Field>
+        <Field label="timeout (ms)">
+          <input
+            type="number"
+            min={200}
+            max={60000}
+            value={timeoutMs}
+            onChange={(e) => setTimeoutMs(Number(e.target.value))}
+            className="w-32 rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+        </Field>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy !== null}
+          className="rounded-md bg-navy px-4 py-2 font-mono text-[12px] text-white disabled:opacity-50"
+        >
+          {busy === "save" ? "Saving…" : saved ? "Saved ✓" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void test()}
+          disabled={busy !== null}
+          className="rounded-md border border-gray-200 px-4 py-2 font-mono text-[12px] text-gray-600 hover:border-cyan hover:text-navy disabled:opacity-50"
+        >
+          {busy === "probe" ? "Testing…" : "Test connection"}
+        </button>
+        {probe && (
+          <span className="font-mono text-[12px] text-gray-600">{probe}</span>
+        )}
+      </div>
+
+      {err && <span className="font-mono text-[12px] text-red-600">{err}</span>}
+    </div>
+  );
+}
 
 function BridgeAddonPanel({
   urlPlaceholder,

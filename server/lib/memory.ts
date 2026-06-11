@@ -18,6 +18,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/index";
 import { users } from "../db/schema";
+import { resolveRagConfig } from "../routes/addon-rag";
 import { getMemoryBackend } from "./global-settings";
 import { getUserMemoryContext } from "./user-memory";
 
@@ -191,9 +192,10 @@ const RAG_COLLECTION = process.env.RAG_COLLECTION ?? "obsidian-context";
 // per-turn semantic query: embed the user's message, retrieve top-K relevant
 // chunks (~2-4k tokens) instead of the raw wiki (~12k tokens).
 // Falls back to the legacy full-wiki path when the service is unavailable.
+// Global fallback URL (the pre-add-on default). isNemoAvailable() reports
+// whether ANY LightRAG is reachable at all; per-user URL/top_k/timeout now
+// resolve through the RAG add-on (resolveRagConfig), env as fallback.
 const NEMO_MEMORY_URL = (process.env.NEMO_MEMORY_URL || "").replace(/\/$/, "");
-const NEMO_TOP_K = Number(process.env.NEMO_TOP_K ?? "5");
-const NEMO_TIMEOUT_MS = Number(process.env.NEMO_TIMEOUT_MS ?? "3000");
 
 export function isNemoAvailable(): boolean {
   return Boolean(NEMO_MEMORY_URL);
@@ -203,28 +205,29 @@ export function isNemoAvailable(): boolean {
  *  deployed (NEMO_MEMORY_URL set) AND selected as the active backend in
  *  the global settings. When the admin flips the backend to 'wiki', this
  *  returns false even though the service is up, so chat reads the wiki. */
-export async function nemoActive(): Promise<boolean> {
-  if (!isNemoAvailable()) return false;
-  return (await getMemoryBackend()) === "lightrag";
+export async function nemoActive(userId: string): Promise<boolean> {
+  if ((await getMemoryBackend()) !== "lightrag") return false;
+  return (await resolveRagConfig(userId)) !== null;
 }
 
 /** Single-collection nemo query (internal helper). */
 async function _nemoQueryOne(
+  rag: { url: string; topK: number; timeoutMs: number },
   collectionId: string,
   question: string,
   projectId?: string | null,
 ): Promise<string> {
   try {
-    const res = await fetch(`${NEMO_MEMORY_URL}/query/context`, {
+    const res = await fetch(`${rag.url}/query/context`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         user_id: collectionId,
         text: question,
-        top_k: NEMO_TOP_K,
+        top_k: rag.topK,
         project_id: projectId ?? null,
       }),
-      signal: AbortSignal.timeout(NEMO_TIMEOUT_MS),
+      signal: AbortSignal.timeout(rag.timeoutMs),
     });
     if (!res.ok) return "";
     const data = (await res.json()) as { context?: string };
@@ -250,11 +253,13 @@ export async function nemoQuery(
   teamId?: string | null,
   companyId?: string | null,
 ): Promise<string> {
-  if (!NEMO_MEMORY_URL || !question.trim()) return "";
+  if (!question.trim()) return "";
+  const rag = await resolveRagConfig(userId);
+  if (!rag) return "";
 
-  const queries: Promise<string>[] = [_nemoQueryOne(userId, question, projectId)];
-  if (teamId) queries.push(_nemoQueryOne(teamId, question, projectId));
-  if (companyId) queries.push(_nemoQueryOne(companyId, question, projectId));
+  const queries: Promise<string>[] = [_nemoQueryOne(rag, userId, question, projectId)];
+  if (teamId) queries.push(_nemoQueryOne(rag, teamId, question, projectId));
+  if (companyId) queries.push(_nemoQueryOne(rag, companyId, question, projectId));
 
   const results = await Promise.all(queries);
   const blocks = results.filter((r) => r.trim());
@@ -279,20 +284,26 @@ export function nemoIngest(
   source: string = "wiki",
   projectId?: string | null,
 ): void {
-  if (!NEMO_MEMORY_URL || !text.trim()) return;
-  fetch(`${NEMO_MEMORY_URL}/ingest`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      user_id: userId,
-      article_id: articleId,
-      text,
-      source,
-      project_id: projectId ?? null,
-    }),
-  }).catch((err: Error) => {
-    console.warn("[memory] nemoIngest failed:", err.message);
-  });
+  if (!text.trim()) return;
+  void (async () => {
+    const rag = await resolveRagConfig(userId);
+    if (!rag) return;
+    try {
+      await fetch(`${rag.url}/ingest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          article_id: articleId,
+          text,
+          source,
+          project_id: projectId ?? null,
+        }),
+      });
+    } catch (err) {
+      console.warn("[memory] nemoIngest failed:", (err as Error).message);
+    }
+  })();
 }
 
 export type RagHit = {

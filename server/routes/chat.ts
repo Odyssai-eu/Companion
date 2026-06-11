@@ -407,7 +407,7 @@ chatRoute.post("/completions", async (c) => {
         // changes when the compiler runs, not when the user asks something.
         let globalBlock = "";
         if (convMemoryEnabled) {
-          if (await nemoActive()) {
+          if (await nemoActive(userId)) {
             // Phase 2 — semantic retrieval: embed the user's latest message,
             // return only the relevant chunks (~2-4k tokens) instead of the
             // full wiki (~12k tokens). Falls back to the raw wiki if nemo
