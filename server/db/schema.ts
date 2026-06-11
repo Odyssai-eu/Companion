@@ -1060,3 +1060,20 @@ export const hermesTokens = pgTable(
 
 export type HermesToken = typeof hermesTokens.$inferSelect;
 export type NewHermesToken = typeof hermesTokens.$inferInsert;
+
+// Deployment-wide settings (singleton: always id=1). Unlike the per-user
+// toggles on `users`, these are admin-scoped and read at request time.
+//   memoryBackend: which memory system feeds chat — mutually exclusive.
+//     'lightrag' → semantic retrieval via nemo (requires NEMO_MEMORY_URL).
+//     'wiki'     → the Karpathy LLM-compiled wiki (MEMORY_SERVICE_URL).
+//   When 'lightrag', the wiki compile scheduler stays idle (no point
+//   compiling a wiki nobody reads); when 'wiki', nemo is not queried.
+export const globalSettings = pgTable("global_settings", {
+  id: integer("id").primaryKey().default(1),
+  memoryBackend: text("memory_backend").notNull().default("lightrag"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .default(sql`now()`),
+});
+
+export type GlobalSettings = typeof globalSettings.$inferSelect;

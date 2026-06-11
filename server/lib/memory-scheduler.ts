@@ -30,11 +30,19 @@
 import { desc, gte, inArray } from "drizzle-orm";
 import { db } from "../db/index";
 import { conversations, users } from "../db/schema";
+import { getMemoryBackend } from "./global-settings";
 import { triggerCompile } from "./memory";
 import {
   compileProject,
   listEligibleProjects,
 } from "./project-compile";
+
+/** The wiki-compile work only matters when the wiki is the active backend.
+ *  Under LightRAG, every compile path early-returns so the scheduler does
+ *  no DB scans and logs nothing misleading. */
+async function wikiCompileActive(): Promise<boolean> {
+  return (await getMemoryBackend()) === "wiki";
+}
 
 const SCHEDULE_TZ = process.env.MEMORY_SCHEDULER_TZ ?? "Europe/Brussels";
 /** Local-clock targets. Order doesn't matter — we check all on every
@@ -120,6 +128,7 @@ function nowInTz(): {
 }
 
 async function runGlobalSlot(slotLabel: string): Promise<void> {
+  if (!(await wikiCompileActive())) return; // LightRAG backend: nothing to compile
   const since = new Date(Date.now() - ACTIVE_WINDOW_MS);
   const activeUsers = await db
     .select({ id: users.id })
@@ -155,6 +164,7 @@ async function runGlobalSlot(slotLabel: string): Promise<void> {
 }
 
 async function runProjectSlot(slotLabel: string): Promise<void> {
+  if (!(await wikiCompileActive())) return; // LightRAG backend: nothing to compile
   const eligible = await listEligibleProjects(ACTIVE_WINDOW_MS);
   if (eligible.length === 0) {
     console.log(
@@ -192,17 +202,21 @@ function tick(): void {
       );
     });
   }
-  inactivityTick();
+  void inactivityTick().catch((err) => {
+    console.error("[memory-scheduler] inactivityTick failed:", err);
+  });
 }
 
 /** Scan pendingInactivity and fire `triggerCompile` for convs idle
  *  beyond INACTIVITY_COMPILE_MS. Each conv fires exactly once per idle
  *  period — re-registers (next assistant turn) reset the clock. */
-function inactivityTick(): void {
+async function inactivityTick(): Promise<void> {
   const now = Date.now();
+  const wikiActive = await wikiCompileActive();
   for (const [convId, entry] of pendingInactivity) {
     if (now - entry.lastActivityAt < INACTIVITY_COMPILE_MS) continue;
     pendingInactivity.delete(convId);
+    if (!wikiActive) continue; // LightRAG backend: drain the queue, don't compile
     try {
       triggerCompile(entry.userId, convId);
       const idleS = Math.round((now - entry.lastActivityAt) / 1000);

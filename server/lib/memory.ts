@@ -18,6 +18,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/index";
 import { users } from "../db/schema";
+import { getMemoryBackend } from "./global-settings";
 import { getUserMemoryContext } from "./user-memory";
 
 // `??` only catches null/undefined — `MEMORY_SERVICE_URL=""` (the compose
@@ -196,6 +197,15 @@ const NEMO_TIMEOUT_MS = Number(process.env.NEMO_TIMEOUT_MS ?? "3000");
 
 export function isNemoAvailable(): boolean {
   return Boolean(NEMO_MEMORY_URL);
+}
+
+/** Whether LightRAG should actually serve this turn: it must be both
+ *  deployed (NEMO_MEMORY_URL set) AND selected as the active backend in
+ *  the global settings. When the admin flips the backend to 'wiki', this
+ *  returns false even though the service is up, so chat reads the wiki. */
+export async function nemoActive(): Promise<boolean> {
+  if (!isNemoAvailable()) return false;
+  return (await getMemoryBackend()) === "lightrag";
 }
 
 /** Single-collection nemo query (internal helper). */
@@ -436,18 +446,25 @@ export function triggerCompile(
   conversationId: string,
 ): void {
   if (!MEMORY_BASE_URL) return;
-  const url = new URL(`/compile/async`, MEMORY_BASE_URL);
-  // No await — we want this off the hot path.
-  fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      user_id: userId,
-      conversation_id: conversationId,
-    }),
-  }).catch((err: Error) => {
-    console.warn("[memory] triggerCompile failed:", err.message);
-  });
+  // Fire-and-forget off the hot path. Skip entirely when LightRAG is the
+  // active backend — there is no wiki to keep fresh, so a compile would be
+  // wasted work (the "fire into the void" the scheduler used to log).
+  void (async () => {
+    if ((await getMemoryBackend()) !== "wiki") return;
+    const url = new URL(`/compile/async`, MEMORY_BASE_URL);
+    try {
+      await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          conversation_id: conversationId,
+        }),
+      });
+    } catch (err) {
+      console.warn("[memory] triggerCompile failed:", (err as Error).message);
+    }
+  })();
 }
 
 /** Synchronous compile — waits for the LLM pass to finish. Used by

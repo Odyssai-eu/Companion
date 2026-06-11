@@ -1527,6 +1527,16 @@ export const api = {
 
   listAdminUsers: () =>
     request<{ users: ApiAdminUser[] }>("/api/admin/users"),
+
+  getAdminSettings: () =>
+    request<{ memoryBackend: "lightrag" | "wiki"; lightragDeployed: boolean }>(
+      "/api/admin/settings",
+    ),
+  updateAdminSettings: (body: { memoryBackend: "lightrag" | "wiki" }) =>
+    request<{ ok: boolean; memoryBackend: "lightrag" | "wiki" }>(
+      "/api/admin/settings",
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
   createAdminUser: (body: {
     email: string;
     name?: string;

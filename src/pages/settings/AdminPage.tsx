@@ -69,6 +69,7 @@ export default function AdminPage() {
       <UsersSection selfId={auth.user.id} />
       <TeamsSection />
       <GuestsSection />
+      {role === "admin" && <MemoryBackendSection />}
       <AuditLogSection />
     </div>
   );
@@ -938,6 +939,85 @@ function XIcon() {
 }
 
 // ── Audit log section ─────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────
+// Memory backend (global, admin-only)
+// ─────────────────────────────────────────────────────────────────────────
+
+function MemoryBackendSection() {
+  const [backend, setBackend] = useState<"lightrag" | "wiki" | null>(null);
+  const [deployed, setDeployed] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getAdminSettings()
+      .then((r) => {
+        setBackend(r.memoryBackend);
+        setDeployed(r.lightragDeployed);
+      })
+      .catch((e) => setError((e as Error).message));
+  }, []);
+
+  const choose = async (b: "lightrag" | "wiki") => {
+    if (b === backend || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.updateAdminSettings({ memoryBackend: b });
+      setBackend(r.memoryBackend);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-4">
+      <h2 className="font-display text-[28px] font-light text-navy">
+        Memory backend
+      </h2>
+      <p className="max-w-[640px] text-[13px] text-gray-500">
+        Which memory system feeds chat — the two are mutually exclusive.
+        <strong className="font-medium text-navy"> LightRAG</strong> retrieves
+        the relevant chunks semantically each turn;{" "}
+        <strong className="font-medium text-navy">Wiki LLM</strong> injects the
+        LLM-compiled wiki and runs the periodic compile scheduler. Switching to
+        Wiki LLM re-enables that scheduler; switching to LightRAG idles it.
+      </p>
+
+      <div className="inline-flex w-fit rounded-lg border border-gray-200 p-1">
+        {(["lightrag", "wiki"] as const).map((b) => (
+          <button
+            key={b}
+            type="button"
+            disabled={busy || backend === null}
+            onClick={() => void choose(b)}
+            className={
+              "rounded-md px-4 py-1.5 font-mono text-[12px] transition-colors disabled:opacity-50 " +
+              (backend === b
+                ? "bg-navy text-white"
+                : "text-gray-600 hover:text-navy")
+            }
+          >
+            {b === "lightrag" ? "LightRAG" : "Wiki LLM"}
+          </button>
+        ))}
+      </div>
+
+      {backend === "lightrag" && !deployed && (
+        <p className="max-w-[640px] text-[12px] text-amber-600">
+          LightRAG is selected but <code>NEMO_MEMORY_URL</code> is not set on
+          this deployment — chat falls back to the wiki until the service is
+          reachable.
+        </p>
+      )}
+      {error && <p className="text-[12px] text-red-600">{error}</p>}
+    </section>
+  );
+}
 
 function AuditLogSection() {
   const [entries, setEntries] = useState<ApiAuditEntry[]>([]);
