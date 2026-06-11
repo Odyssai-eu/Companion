@@ -14,10 +14,15 @@
  * When NEMO_MEMORY_URL is not set, returns 503 — no-op, won't crash.
  */
 
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db/index";
-import { conversations, userMemoryFiles } from "../db/schema";
+import {
+  conversations,
+  projectMemoryFiles,
+  projects,
+  userMemoryFiles,
+} from "../db/schema";
 import { requireRole } from "../middleware/auth";
 import { isNemoAvailable, nemoIngest } from "../lib/memory";
 
@@ -30,6 +35,57 @@ nemoSyncRoute.post("/", async (c) => {
   }
 
   const userId = c.get("userId");
+  const scope = c.req.query("scope") ?? "user";
+
+  // ── scope=team : ingest the team's shared corpus into the team collection ──
+  // The "team memory" level is the vaults of the projects that belong to the
+  // team (projects.teamId). Collection = teamId; the service URL resolves from
+  // the acting admin's RAG config. The query side already reads this collection
+  // (chat.ts passes projectTeamId to nemoQuery) — this fills it.
+  if (scope === "team") {
+    const teamId = c.req.query("teamId");
+    if (!teamId) return c.json({ error: "teamId_required" }, 400);
+    const teamProjects = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.teamId, teamId));
+    const projectIds = teamProjects.map((p) => p.id);
+    const files = projectIds.length
+      ? await db
+          .select({
+            projectId: projectMemoryFiles.projectId,
+            path: projectMemoryFiles.path,
+            content: projectMemoryFiles.content,
+          })
+          .from(projectMemoryFiles)
+          .where(inArray(projectMemoryFiles.projectId, projectIds))
+      : [];
+    const runTeamSync = () => {
+      let n = 0;
+      for (const f of files) {
+        if (!f.content?.trim()) continue;
+        nemoIngest(
+          teamId,
+          `team-project:${f.projectId}:${f.path}`,
+          f.content,
+          "team",
+          null,
+          userId, // URL resolver = the acting admin
+        );
+        n++;
+      }
+      return n;
+    };
+    const wantWait = c.req.query("wait") === "true";
+    const ingested = wantWait ? runTeamSync() : (runTeamSync(), undefined);
+    return c.json({
+      ok: true,
+      scope: "team",
+      projects: projectIds.length,
+      files: files.length,
+      ...(wantWait ? { ingested } : { queued: true }),
+    });
+  }
 
   // 1. Vault files (user_memory_files)
   const vaultFiles = await db

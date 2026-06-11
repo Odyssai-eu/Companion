@@ -1133,17 +1133,40 @@ function TeamsSection() {
   const [teams, setTeams] = useState<ApiTeam[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [members, setMembers] = useState<ApiTeamMember[]>([]);
+  const [allUsers, setAllUsers] = useState<ApiAdminUser[]>([]);
+  const [addUserId, setAddUserId] = useState("");
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     api.listTeams().then((r) => setTeams(r.teams)).catch(() => {});
+    // The full user list feeds the "add member" picker — a global admin can
+    // add anyone, not just existing team members.
+    api.listAdminUsers().then((r) => setAllUsers(r.users)).catch(() => {});
   }, []);
+
+  async function reloadMembers(id: string) {
+    const r = await api.getTeam(id).catch(() => null);
+    if (r) setMembers(r.members);
+  }
 
   async function selectTeam(id: string) {
     setSelected(id);
-    const r = await api.getTeam(id).catch(() => null);
-    if (r) setMembers(r.members);
+    setAddUserId("");
+    await reloadMembers(id);
+  }
+
+  async function addMember() {
+    if (!selected || !addUserId) return;
+    await api.addTeamMember(selected, { userId: addUserId }).catch(() => {});
+    setAddUserId("");
+    await reloadMembers(selected);
+  }
+
+  async function removeMember(uid: string) {
+    if (!selected) return;
+    await api.removeTeamMember(selected, uid).catch(() => {});
+    await reloadMembers(selected);
   }
 
   async function createTeam(e: React.FormEvent) {
@@ -1225,12 +1248,45 @@ function TeamsSection() {
               {members.map((m) => (
                 <div key={m.userId} className="flex items-center justify-between text-[12px]">
                   <span className="text-gray-600">{m.email}</span>
-                  <span className="font-mono text-[10px] text-gray-400">{m.role}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] text-gray-400">{m.role}</span>
+                    <button
+                      type="button"
+                      onClick={() => void removeMember(m.userId)}
+                      title="Remove from team"
+                      className="text-gray-300 hover:text-red-400 text-[12px]"
+                    >×</button>
+                  </div>
                 </div>
               ))}
               {members.length === 0 && (
                 <p className="text-[12px] text-gray-400">No members yet.</p>
               )}
+            </div>
+
+            {/* Add member — a global admin can add ANY user to ANY team. */}
+            <div className="flex items-center gap-2 border-t border-gray-100 pt-3">
+              <select
+                value={addUserId}
+                onChange={(e) => setAddUserId(e.target.value)}
+                className="flex-1 rounded border border-gray-200 px-2 py-1 text-[12px] text-ink focus:border-cyan focus:outline-none"
+              >
+                <option value="">Add a user…</option>
+                {allUsers
+                  .filter((u) => !members.some((m) => m.userId === u.id))
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.email}
+                      {u.name ? ` — ${u.name}` : ""}
+                    </option>
+                  ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => void addMember()}
+                disabled={!addUserId}
+                className="rounded border border-gray-200 px-3 py-1 text-[11px] text-gray-600 hover:border-cyan disabled:opacity-50"
+              >Add</button>
             </div>
           </div>
         )}

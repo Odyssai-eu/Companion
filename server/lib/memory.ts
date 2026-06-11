@@ -278,22 +278,26 @@ export async function nemoQuery(
 /** Ingest a memory article into nemo-memory (fire-and-forget).
  *  Called after Karpathy compiles a new wiki snapshot. */
 export function nemoIngest(
-  userId: string,
+  collectionId: string,
   articleId: string,
   text: string,
   source: string = "wiki",
   projectId?: string | null,
+  // Whose RAG config supplies the service URL. Defaults to the collection
+  // owner (a user ingesting their own memory); for team/company collections
+  // pass the acting admin's id so the URL resolves from THEIR add-on/env.
+  resolverUserId?: string,
 ): void {
   if (!text.trim()) return;
   void (async () => {
-    const rag = await resolveRagConfig(userId);
+    const rag = await resolveRagConfig(resolverUserId ?? collectionId);
     if (!rag) return;
     try {
       await fetch(`${rag.url}/ingest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: userId,
+          user_id: collectionId,
           article_id: articleId,
           text,
           source,

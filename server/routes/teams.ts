@@ -27,6 +27,16 @@ async function assertTeamAccess(
   userId: string,
   adminOnly = false,
 ): Promise<boolean> {
+  // A global admin manages every team — create, edit, and add/remove ANY
+  // user — even teams they don't belong to. (Sophie: "un admin doit pouvoir
+  // mettre n'importe qui dans une team".)
+  const [u] = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (u?.role === "admin") return true;
+
   const [m] = await db
     .select({ role: teamMembers.role })
     .from(teamMembers)
