@@ -69,7 +69,7 @@ export default function AdminPage() {
       <UsersSection selfId={auth.user.id} />
       <TeamsSection />
       <GuestsSection />
-      {role === "admin" && <MemoryBackendSection />}
+      {role === "admin" && <CompanyMemorySection />}
       <AuditLogSection />
     </div>
   );
@@ -944,10 +944,9 @@ function XIcon() {
 // Memory backend (global, admin-only)
 // ─────────────────────────────────────────────────────────────────────────
 
-function MemoryBackendSection() {
-  const [backend, setBackend] = useState<"lightrag" | "wiki" | null>(null);
-  const [deployed, setDeployed] = useState(true);
+function CompanyMemorySection() {
   const [companyUrl, setCompanyUrl] = useState("");
+  const [nemoDeployed, setNemoDeployed] = useState(true);
   const [companySaved, setCompanySaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -956,9 +955,8 @@ function MemoryBackendSection() {
     api
       .getAdminSettings()
       .then((r) => {
-        setBackend(r.memoryBackend);
-        setDeployed(r.lightragDeployed);
         setCompanyUrl(r.companyRagUrl);
+        setNemoDeployed(r.nemoDeployed);
       })
       .catch((e) => setError((e as Error).message));
   }, []);
@@ -978,90 +976,49 @@ function MemoryBackendSection() {
     }
   };
 
-  const choose = async (b: "lightrag" | "wiki") => {
-    if (b === backend || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await api.updateAdminSettings({ memoryBackend: b });
-      setBackend(r.memoryBackend);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <section className="flex flex-col gap-4">
       <h2 className="font-display text-[28px] font-light text-navy">
-        Memory backend
+        Company memory
       </h2>
       <p className="max-w-[640px] text-[13px] text-gray-500">
-        Which memory system feeds chat — the two are mutually exclusive.
-        <strong className="font-medium text-navy"> LightRAG</strong> retrieves
-        the relevant chunks semantically each turn;{" "}
-        <strong className="font-medium text-navy">Wiki LLM</strong> injects the
-        LLM-compiled wiki and runs the periodic compile scheduler. Switching to
-        Wiki LLM re-enables that scheduler; switching to LightRAG idles it.
+        Chat memory is semantic retrieval (RAG) over three tiers: personal and
+        team graphs (the bundled service), plus an org-wide{" "}
+        <strong className="font-medium text-navy">company</strong> graph served
+        by a dedicated LightRAG that every user reads. Set its URL here — empty
+        disables the company tier.
       </p>
 
-      <div className="inline-flex w-fit rounded-lg border border-gray-200 p-1">
-        {(["lightrag", "wiki"] as const).map((b) => (
-          <button
-            key={b}
-            type="button"
-            disabled={busy || backend === null}
-            onClick={() => void choose(b)}
-            className={
-              "rounded-md px-4 py-1.5 font-mono text-[12px] transition-colors disabled:opacity-50 " +
-              (backend === b
-                ? "bg-navy text-white"
-                : "text-gray-600 hover:text-navy")
-            }
-          >
-            {b === "lightrag" ? "LightRAG" : "Wiki LLM"}
-          </button>
-        ))}
-      </div>
-
-      {backend === "lightrag" && !deployed && (
+      {!nemoDeployed && (
         <p className="max-w-[640px] text-[12px] text-amber-600">
-          LightRAG is selected but <code>NEMO_MEMORY_URL</code> is not set on
-          this deployment — chat falls back to the wiki until the service is
-          reachable.
+          The bundled memory service (<code>NEMO_MEMORY_URL</code>) isn&apos;t
+          set on this deployment — personal/team memory is unavailable until
+          it&apos;s reachable.
         </p>
       )}
 
-      {backend === "lightrag" && (
-        <div className="flex flex-col gap-2 border-t border-gray-100 pt-4">
-          <span className="text-[12px] font-medium text-navy">
-            Company memory — shared LightRAG URL
-          </span>
-          <p className="max-w-[640px] text-[12px] text-gray-500">
-            A dedicated LightRAG holding one org-wide <code>company</code> graph
-            that every user&apos;s chat reads, on top of personal and team
-            memory. Empty disables the company tier.
-          </p>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={companyUrl}
-              onChange={(e) => setCompanyUrl(e.target.value)}
-              placeholder="http://host.docker.internal:8766"
-              className="flex-1 max-w-[420px] rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-            />
-            <button
-              type="button"
-              onClick={() => void saveCompany()}
-              disabled={busy}
-              className="rounded-md border border-gray-200 px-4 py-2 font-mono text-[12px] text-gray-600 hover:border-cyan hover:text-navy disabled:opacity-50"
-            >
-              {companySaved ? "Saved ✓" : "Save"}
-            </button>
-          </div>
+      <div className="flex flex-col gap-2">
+        <span className="text-[12px] font-medium text-navy">
+          Shared LightRAG URL
+        </span>
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={companyUrl}
+            onChange={(e) => setCompanyUrl(e.target.value)}
+            placeholder="http://host.docker.internal:8766"
+            className="flex-1 max-w-[420px] rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+          <button
+            type="button"
+            onClick={() => void saveCompany()}
+            disabled={busy}
+            className="rounded-md border border-gray-200 px-4 py-2 font-mono text-[12px] text-gray-600 hover:border-cyan hover:text-navy disabled:opacity-50"
+          >
+            {companySaved ? "Saved ✓" : "Save"}
+          </button>
         </div>
-      )}
+      </div>
       {error && <p className="text-[12px] text-red-600">{error}</p>}
     </section>
   );

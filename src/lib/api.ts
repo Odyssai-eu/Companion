@@ -1279,36 +1279,6 @@ export const api = {
 
   // Hermes Agent add-on retired 2026-05-19. Reinstated 2026-05-21 with a
   // new architecture: ACP bridge on the user's machine.
-  ragAddonInfo: () =>
-    request<{
-      addonId: string;
-      enabled: boolean;
-      configured: boolean;
-      url: string;
-      topK: number;
-      timeoutMs: number;
-      envFallback: boolean;
-    }>("/api/addons/rag/info"),
-  ragAddonSetConfig: (body: {
-    enabled?: boolean;
-    url?: string;
-    topK?: number;
-    timeoutMs?: number;
-  }) =>
-    request<{
-      ok: true;
-      enabled: boolean;
-      configured: boolean;
-      url: string;
-      topK: number;
-      timeoutMs: number;
-    }>("/api/addons/rag/config", { method: "PUT", body: JSON.stringify(body) }),
-  ragAddonProbe: () =>
-    request<{ ok: boolean; health?: unknown; status?: number; error?: string }>(
-      "/api/addons/rag/probe",
-      { method: "POST" },
-    ),
-
   hermesAddonInfo: () =>
     request<{
       addonId: string;
@@ -1559,20 +1529,14 @@ export const api = {
     request<{ users: ApiAdminUser[] }>("/api/admin/users"),
 
   getAdminSettings: () =>
-    request<{
-      memoryBackend: "lightrag" | "wiki";
-      companyRagUrl: string;
-      lightragDeployed: boolean;
-    }>("/api/admin/settings"),
-  updateAdminSettings: (body: {
-    memoryBackend?: "lightrag" | "wiki";
-    companyRagUrl?: string;
-  }) =>
-    request<{
-      ok: boolean;
-      memoryBackend: "lightrag" | "wiki";
-      companyRagUrl: string;
-    }>("/api/admin/settings", { method: "PATCH", body: JSON.stringify(body) }),
+    request<{ companyRagUrl: string; nemoDeployed: boolean }>(
+      "/api/admin/settings",
+    ),
+  updateAdminSettings: (body: { companyRagUrl?: string }) =>
+    request<{ ok: boolean; companyRagUrl: string }>("/api/admin/settings", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   createAdminUser: (body: {
     email: string;
     name?: string;

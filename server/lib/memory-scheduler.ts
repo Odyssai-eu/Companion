@@ -30,19 +30,17 @@
 import { desc, gte, inArray } from "drizzle-orm";
 import { db } from "../db/index";
 import { conversations, users } from "../db/schema";
-import { getMemoryBackend } from "./global-settings";
-import { triggerCompile } from "./memory";
+import { compileNow } from "./memory";
 import {
   compileProject,
   listEligibleProjects,
 } from "./project-compile";
 
-/** The wiki-compile work only matters when the wiki is the active backend.
- *  Under LightRAG, every compile path early-returns so the scheduler does
- *  no DB scans and logs nothing misleading. */
-async function wikiCompileActive(): Promise<boolean> {
-  return (await getMemoryBackend()) === "wiki";
-}
+// Memory is always RAG now: the compiler (Karpathy) turns conversations into
+// structured memory that is then INGESTED into nemo (compileNow does both —
+// compile + nemoSyncWiki). So every slot compiles; there is no wiki-backend
+// gate any more. Compiles run sequentially per user — this is a background
+// cron, latency is irrelevant, and serial keeps load off the extraction LLM.
 
 const SCHEDULE_TZ = process.env.MEMORY_SCHEDULER_TZ ?? "Europe/Brussels";
 /** Local-clock targets. Order doesn't matter — we check all on every
@@ -128,7 +126,6 @@ function nowInTz(): {
 }
 
 async function runGlobalSlot(slotLabel: string): Promise<void> {
-  if (!(await wikiCompileActive())) return; // LightRAG backend: nothing to compile
   const since = new Date(Date.now() - ACTIVE_WINDOW_MS);
   const activeUsers = await db
     .select({ id: users.id })
@@ -155,16 +152,15 @@ async function runGlobalSlot(slotLabel: string): Promise<void> {
 
   let triggered = 0;
   for (const conv of latest) {
-    triggerCompile(conv.userId, conv.id);
+    await compileNow(conv.userId, conv.id); // compiles + ingests into nemo RAG
     triggered++;
   }
   console.log(
-    `[memory-scheduler] slot=${slotLabel} (global) fired triggerCompile for ${triggered} users`,
+    `[memory-scheduler] slot=${slotLabel} (global) compiled ${triggered} users into RAG`,
   );
 }
 
 async function runProjectSlot(slotLabel: string): Promise<void> {
-  if (!(await wikiCompileActive())) return; // LightRAG backend: nothing to compile
   const eligible = await listEligibleProjects(ACTIVE_WINDOW_MS);
   if (eligible.length === 0) {
     console.log(
@@ -212,16 +208,14 @@ function tick(): void {
  *  period — re-registers (next assistant turn) reset the clock. */
 async function inactivityTick(): Promise<void> {
   const now = Date.now();
-  const wikiActive = await wikiCompileActive();
   for (const [convId, entry] of pendingInactivity) {
     if (now - entry.lastActivityAt < INACTIVITY_COMPILE_MS) continue;
     pendingInactivity.delete(convId);
-    if (!wikiActive) continue; // LightRAG backend: drain the queue, don't compile
     try {
-      triggerCompile(entry.userId, convId);
+      await compileNow(entry.userId, convId); // compiles + ingests into nemo RAG
       const idleS = Math.round((now - entry.lastActivityAt) / 1000);
       console.log(
-        `[memory-scheduler] inactivity compile fired conv=${convId} idle=${idleS}s`,
+        `[memory-scheduler] inactivity compiled conv=${convId} idle=${idleS}s into RAG`,
       );
     } catch (err) {
       console.error(

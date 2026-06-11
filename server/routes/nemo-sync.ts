@@ -69,8 +69,6 @@ nemoSyncRoute.post("/", async (c) => {
           `team-project:${f.projectId}:${f.path}`,
           f.content,
           "team",
-          null,
-          userId, // URL resolver = the acting admin
         );
         n++;
       }

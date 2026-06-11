@@ -18,8 +18,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/index";
 import { users } from "../db/schema";
-import { resolveRagConfig } from "../routes/addon-rag";
-import { getCompanyRagUrl, getMemoryBackend } from "./global-settings";
+import { getCompanyRagUrl } from "./global-settings";
 import { getUserMemoryContext } from "./user-memory";
 
 // `??` only catches null/undefined — `MEMORY_SERVICE_URL=""` (the compose
@@ -188,32 +187,20 @@ const RAG_EMBED_URL = process.env.RAG_EMBED_URL ?? "";
 const RAG_COLLECTION = process.env.RAG_COLLECTION ?? "obsidian-context";
 
 // ── nemo-memory service (Phase 2 — smart RAG injection) ──────────────────
-// When NEMO_MEMORY_URL is set, we replace the full-wiki injection with a
-// per-turn semantic query: embed the user's message, retrieve top-K relevant
-// chunks (~2-4k tokens) instead of the raw wiki (~12k tokens).
-// Falls back to the legacy full-wiki path when the service is unavailable.
-// Global fallback URL (the pre-add-on default). isNemoAvailable() reports
-// whether ANY LightRAG is reachable at all; per-user URL/top_k/timeout now
-// resolve through the RAG add-on (resolveRagConfig), env as fallback.
+// User/team memory is the bundled custom nemo service (MLX embeddings, per-user
+// graphs) — a single internal endpoint for the whole instance, NOT a per-user
+// editable link. Its URL/top_k/timeout come from env. (Company memory is the
+// separate, editable HKUDS LightRAG — see getCompanyRagUrl.)
 const NEMO_MEMORY_URL = (process.env.NEMO_MEMORY_URL || "").replace(/\/$/, "");
+const NEMO_TOP_K = Number(process.env.NEMO_TOP_K ?? "5");
+const NEMO_TIMEOUT_MS = Number(process.env.NEMO_TIMEOUT_MS ?? "3000");
+const NEMO_RAG: { url: string; topK: number; timeoutMs: number } | null =
+  NEMO_MEMORY_URL
+    ? { url: NEMO_MEMORY_URL, topK: NEMO_TOP_K, timeoutMs: NEMO_TIMEOUT_MS }
+    : null;
 
 export function isNemoAvailable(): boolean {
   return Boolean(NEMO_MEMORY_URL);
-}
-
-/** Whether LightRAG should actually serve this turn: it must be both
- *  deployed (NEMO_MEMORY_URL set) AND selected as the active backend in
- *  the global settings. When the admin flips the backend to 'wiki', this
- *  returns false even though the service is up, so chat reads the wiki. */
-export async function nemoActive(userId: string): Promise<boolean> {
-  if ((await getMemoryBackend()) !== "lightrag") return false;
-  // Active if EITHER the per-user RAG is configured OR the org-wide company
-  // tier is — so company memory works even for a user with no personal graph.
-  const [rag, companyUrl] = await Promise.all([
-    resolveRagConfig(userId),
-    getCompanyRagUrl(),
-  ]);
-  return rag !== null || companyUrl !== "";
 }
 
 // Company tier: a dedicated standard-API LightRAG (:8766) serving ONE shared
@@ -288,12 +275,10 @@ export async function nemoQuery(
 ): Promise<string> {
   if (!question.trim()) return "";
 
-  const [rag, companyUrl] = await Promise.all([
-    resolveRagConfig(userId),
-    getCompanyRagUrl(),
-  ]);
+  const companyUrl = await getCompanyRagUrl();
+  const rag = NEMO_RAG;
 
-  // All tiers in parallel, each labelled. Personal/team hit the per-user nemo
+  // All tiers in parallel, each labelled. Personal/team hit the bundled nemo
   // (:8765, collection = userId/teamId); company hits the dedicated shared-
   // graph LightRAG (:8766) that everyone reads.
   const tasks: Promise<{ label: string; text: string }>[] = [];
@@ -338,17 +323,11 @@ export function nemoIngest(
   text: string,
   source: string = "wiki",
   projectId?: string | null,
-  // Whose RAG config supplies the service URL. Defaults to the collection
-  // owner (a user ingesting their own memory); for team/company collections
-  // pass the acting admin's id so the URL resolves from THEIR add-on/env.
-  resolverUserId?: string,
 ): void {
-  if (!text.trim()) return;
+  if (!text.trim() || !NEMO_RAG) return;
   void (async () => {
-    const rag = await resolveRagConfig(resolverUserId ?? collectionId);
-    if (!rag) return;
     try {
-      await fetch(`${rag.url}/ingest`, {
+      await fetch(`${NEMO_RAG.url}/ingest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -509,33 +488,9 @@ export function formatRagBlock(hits: RagHit[]): string {
   ].join("\n");
 }
 
-/** Fire-and-forget compile trigger. Resolves immediately; the LLM call
- *  happens in the Python service. */
-export function triggerCompile(
-  userId: string,
-  conversationId: string,
-): void {
-  if (!MEMORY_BASE_URL) return;
-  // Fire-and-forget off the hot path. Skip entirely when LightRAG is the
-  // active backend — there is no wiki to keep fresh, so a compile would be
-  // wasted work (the "fire into the void" the scheduler used to log).
-  void (async () => {
-    if ((await getMemoryBackend()) !== "wiki") return;
-    const url = new URL(`/compile/async`, MEMORY_BASE_URL);
-    try {
-      await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          conversation_id: conversationId,
-        }),
-      });
-    } catch (err) {
-      console.warn("[memory] triggerCompile failed:", (err as Error).message);
-    }
-  })();
-}
+// triggerCompile (async fire-and-forget) was retired with the wiki backend.
+// The scheduler now calls compileNow, which compiles AND ingests into the RAG
+// (see memory-scheduler.ts). Karpathy is purely the RAG ingestion pipeline.
 
 /** Synchronous compile — waits for the LLM pass to finish. Used by
  *  "Remember now" so the UI can immediately show the refreshed snapshot. */
