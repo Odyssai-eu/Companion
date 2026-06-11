@@ -128,6 +128,9 @@ services:
       # (any OpenAI-compatible endpoint works). anthropic/* needs the API key.
       COMPILER_MODEL: ${COMPILER_MODEL:-openai/default}
       OPENAI_API_BASE: ${OPENAI_API_BASE:-http://host.docker.internal:8000/v1}
+      # litellm refuses to call openai/* without a key even on a custom base;
+      # the orchestrator accepts any non-empty value.
+      OPENAI_API_KEY: ${COMPILER_API_KEY:-odysseus-open}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       COMPILE_DEBOUNCE_SECONDS: ${COMPILE_DEBOUNCE_SECONDS:-120}
       LOG_LEVEL: ${LOG_LEVEL:-info}
