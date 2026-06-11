@@ -29,6 +29,7 @@ import { promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
 import { and, asc, eq, gte } from "drizzle-orm";
 import { db } from "../db/index";
+import { nemoIngest } from "./memory";
 import {
   conversations,
   messages,
@@ -152,6 +153,15 @@ export async function compileProject(p: EligibleProject): Promise<string> {
     }
     const note = summary.slice(0, MAX_NOTE_BYTES);
     const dest = await writeResult(p, note);
+    // Project memory is a RAG tier: every compiled note also lands in the
+    // project's own nemo collection (keyed by projectId, like team), so
+    // chat retrieves it semantically instead of injecting the raw vault.
+    nemoIngest(
+      p.id,
+      `project-auto:${p.id}:${new Date().toISOString().slice(0, 10)}`,
+      note,
+      "project",
+    );
     return `wrote ${dest}`;
   } catch (err) {
     console.warn(

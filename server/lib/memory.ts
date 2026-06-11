@@ -272,15 +272,19 @@ export async function nemoQuery(
   question: string,
   projectId?: string | null,
   teamId?: string | null,
+  // When the project has dedicated memory, its compiled notes live in a nemo
+  // collection keyed by projectId (same pattern as team) — pass it here to
+  // add the "## Project memory" tier.
+  dedicatedProjectId?: string | null,
 ): Promise<string> {
   if (!question.trim()) return "";
 
   const companyUrl = await getCompanyRagUrl();
   const rag = NEMO_RAG;
 
-  // All tiers in parallel, each labelled. Personal/team hit the bundled nemo
-  // (:8765, collection = userId/teamId); company hits the dedicated shared-
-  // graph LightRAG (:8766) that everyone reads.
+  // All tiers in parallel, each labelled. Personal/team/project hit the
+  // bundled nemo (:8765, collection = userId/teamId/projectId); company hits
+  // the dedicated shared-graph LightRAG (:8766) that everyone reads.
   const tasks: Promise<{ label: string; text: string }>[] = [];
   if (rag) {
     tasks.push(
@@ -293,6 +297,14 @@ export async function nemoQuery(
       tasks.push(
         _nemoQueryOne(rag, teamId, question, projectId).then((text) => ({
           label: "## Team memory",
+          text,
+        })),
+      );
+    }
+    if (dedicatedProjectId) {
+      tasks.push(
+        _nemoQueryOne(rag, dedicatedProjectId, question, null).then((text) => ({
+          label: "## Project memory",
           text,
         })),
       );

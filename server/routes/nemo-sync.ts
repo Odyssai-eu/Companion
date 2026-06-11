@@ -85,6 +85,25 @@ nemoSyncRoute.post("/", async (c) => {
     });
   }
 
+  // ── scope=project : backfill a project's vault into its RAG collection ──
+  // The project tier reads collection projectId (fed per-compile by
+  // project-compile.ts); this seeds it from the existing vault files.
+  if (scope === "project") {
+    const projectId = c.req.query("projectId");
+    if (!projectId) return c.json({ error: "projectId_required" }, 400);
+    const files = await db
+      .select({ path: projectMemoryFiles.path, content: projectMemoryFiles.content })
+      .from(projectMemoryFiles)
+      .where(eq(projectMemoryFiles.projectId, projectId));
+    let n = 0;
+    for (const f of files) {
+      if (!f.content?.trim()) continue;
+      nemoIngest(projectId, `project:${projectId}:${f.path}`, f.content, "project");
+      n++;
+    }
+    return c.json({ ok: true, scope: "project", files: files.length, queued: n });
+  }
+
   // 1. Vault files (user_memory_files)
   const vaultFiles = await db
     .select({ path: userMemoryFiles.path, content: userMemoryFiles.content })

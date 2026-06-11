@@ -384,13 +384,11 @@ chatRoute.post("/completions", async (c) => {
           }
         }
 
-        // Project corpus — live every turn. Recompute on change so newly
-        // imported / edited files surface immediately. Prefix stability
-        // (KV cache) holds as long as no files changed.
-        const projectMemory =
-          projectId && dedicated
-            ? await getProjectMemoryContext(projectId)
-            : "";
+        // Project memory is a RAG tier now (collection = projectId in nemo,
+        // fed by the project compiler). The raw vault dump below survives
+        // only as the cold-start fallback while the collection is empty —
+        // see the "## Project memory" marker check after the RAG query.
+        let projectMemory = "";
 
         // Global wiki (Karpathy-style compiled articles from PG, served by
         // companion-memory at :8001/context/{userId}). This is the "what
@@ -416,12 +414,21 @@ chatRoute.post("/completions", async (c) => {
             .at(-1);
           const query =
             typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-          // Pass teamId when the conversation belongs to a team project →
-          // nemoQuery fires user + team + company in parallel.
-          globalBlock = await nemoQuery(userId, query, projectId, projectTeamId);
+          // Tiers fan out in parallel: user + team (team project) + project
+          // (dedicated memory) + company.
+          globalBlock = await nemoQuery(
+            userId, query, projectId, projectTeamId,
+            dedicated && projectId ? projectId : null,
+          );
           if (!globalBlock) {
             globalBlock = await getMemoryContext(userId, projectId);
           }
+        }
+        // Cold-start fallback for the project tier (independent of the
+        // conv-level memory toggle, like the old vault injection): until
+        // the project's RAG collection has content, inject the raw vault.
+        if (projectId && dedicated && !globalBlock.includes("## Project memory")) {
+          projectMemory = await getProjectMemoryContext(projectId);
         }
         memoryBlock = [projectMemory, globalBlock]
           .filter((s) => s.trim().length > 0)

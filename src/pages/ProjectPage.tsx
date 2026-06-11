@@ -554,15 +554,17 @@ function categoryIcon(
 }
 
 /**
- * Two-toggle memory controls (UX brief, May 2026).
+ * Two-toggle memory controls (RAG model, June 2026).
  *
- *   [ Global wiki ]   ( Read only )      [ Project wiki ]
+ *   [ Memory ]   ( Read only )      [ Project memory ]
  *
- * Read-only is a sub-toggle of Global, only meaningful when Global is on.
+ * Memory = semantic retrieval over the personal/team/company graphs.
+ * Read-only is a sub-toggle of Memory: inject context but don't LEARN from
+ * this project's conversations (no compile → no RAG ingestion).
+ * Project memory = the project's own RAG collection (compiled notes +
+ * vault), retrieved alongside the other tiers.
  * The three flags map straight to the DB columns (memoryEnabled,
  * globalMemoryReadOnly, dedicatedMemoryEnabled) — no encoding step.
- * The description below the row describes whichever combination is
- * currently active.
  */
 function MemoryControls({
   globalEnabled,
@@ -584,7 +586,7 @@ function MemoryControls({
       <div className="flex flex-wrap items-center justify-between gap-6">
         <div className="flex flex-col gap-2">
           <ToggleRow
-            label="Global wiki"
+            label="Memory"
             value={globalEnabled}
             onChange={onGlobalChange}
           />
@@ -597,7 +599,7 @@ function MemoryControls({
           />
         </div>
         <ToggleRow
-          label="Project wiki"
+          label="Project memory"
           value={projectEnabled}
           onChange={onProjectChange}
         />
@@ -615,20 +617,20 @@ function memoryComboDescription(
   project: boolean,
 ): string {
   if (!global && !project) {
-    return "Memory disabled — nothing is injected.";
+    return "Memory disabled — nothing is retrieved.";
   }
   if (global && !project) {
     return readOnly
-      ? "Global wiki injected for context, but this project never writes back to it."
-      : "Default — global wiki injected and updated by this project's chats.";
+      ? "Personal/team/company memory retrieved for context, but this project's conversations are never learned."
+      : "Default — memory retrieved each turn, and this project's conversations feed it.";
   }
   if (!global && project) {
-    return "Project vault only — fully isolated from your global wiki.";
+    return "Project memory only — fully isolated from your personal memory.";
   }
   // both
   return readOnly
-    ? "Combine the project vault with the wiki for context, but never write back to the wiki."
-    : "Project vault injected. Global wiki injected and also updated by this project's chats.";
+    ? "Project memory + personal/team/company context, but nothing is learned from this project."
+    : "Project memory retrieved alongside personal/team/company memory; conversations feed both.";
 }
 
 function ToggleRow({
