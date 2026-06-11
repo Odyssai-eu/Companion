@@ -23,10 +23,11 @@ services:
       # (seed on first boot, or future admin UI). Set ALLOW_SIGNUP=1 if you
       # actually want self-serve sign-up for your install.
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-0}
-      # Optional Karpathy memory compiler service (separate repo). If left
-      # unset / unreachable, Companion runs fine — the memory wiki just
-      # doesn't auto-compile from conversation history.
-      MEMORY_SERVICE_URL: ${MEMORY_SERVICE_URL:-}
+      # Karpathy memory compiler (the `memory` service below). It is the RAG
+      # ingestion pipeline: compiles conversations into structured memory and
+      # the app then ingests it into nemo. If unreachable, Companion still
+      # runs — memory just stops auto-learning from conversations.
+      MEMORY_SERVICE_URL: ${MEMORY_SERVICE_URL:-http://memory:8001}
       # LAN subnets to scan for Odysseus engines when the user clicks
       # "Discover". The container sits on the Docker bridge (172.x), so
       # it can't auto-detect the host's LAN — we inject it. Comma-
@@ -41,8 +42,10 @@ services:
       # Unset: defaults to ON in production (current behaviour), OFF
       # otherwise.
       COOKIE_SECURE: ${COOKIE_SECURE:-}
-      # nemo-memory RAG service (native on host, LightRAG + Qwen3-Embedding)
-      NEMO_MEMORY_URL: ${NEMO_MEMORY_URL:-}
+      # nemo-memory RAG service — user/team graphs + embeddings. Runs as a
+      # NATIVE HOST process (MLX needs Metal; Docker on macOS has no GPU),
+      # provisioned by the OdyssAI Configurator, NOT a compose service.
+      NEMO_MEMORY_URL: ${NEMO_MEMORY_URL:-http://host.docker.internal:8765}
     ports:
       # By default we bind to 127.0.0.1 only — Companion is reachable
       # from the same host (browser, IDE, MCP clients), but NOT from
@@ -99,30 +102,76 @@ services:
           # deploys don't lose their wiki.
           - thecompai-db
 
-  nemo-memory:
+  # ── Memory stack ──────────────────────────────────────────────────────────
+  # Three tiers, two services + one host process:
+  #   user/team  → nemo-memory, a NATIVE HOST process on :8765 (MLX embeddings
+  #                need Metal — Docker on macOS has no GPU). Provisioned by the
+  #                OdyssAI Configurator; deliberately NOT a compose service
+  #                (a containerized one collides on :8765 and can't embed).
+  #   company    → the `lightrag` service below (standard HKUDS LightRAG),
+  #                ONE shared org-wide graph everyone reads.
+  #   compiler   → the `memory` service (Karpathy): conversations → structured
+  #                memory → ingested into nemo by the app after each compile.
+
+  memory:
     build:
-      context: ./nemo-memory
+      # DMG installs vendor the source at ./memory-src; on dev/prod hosts
+      # point MEMORY_BUILD_CONTEXT at a checkout of thecompai/memory.
+      context: ${MEMORY_BUILD_CONTEXT:-./memory-src}
       dockerfile: Dockerfile
-    image: nemo-memory:local
-    container_name: nemo-memory
+    image: thecompai-memory:local
+    container_name: thecompai-memory
     restart: unless-stopped
     environment:
-      ODYSSEUS_URL: ${ODYSSEUS_URL:-http://host.docker.internal:8000}
-      ODYSSEUS_MODEL: ${ODYSSEUS_MODEL:-default}
-      EMBED_MODEL: ${NEMO_EMBED_MODEL:-nomic-ai/nomic-embed-text-v1.5}
-      EMBED_DIM: ${EMBED_DIM:-768}
-      TOP_K: ${TOP_K:-5}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgres://${POSTGRES_USER:-companion}:${POSTGRES_PASSWORD:-companion}@db:5432/${POSTGRES_DB:-companion}
+      # LiteLLM model id. openai/<model> + OPENAI_API_BASE → the orchestrator
+      # (any OpenAI-compatible endpoint works). anthropic/* needs the API key.
+      COMPILER_MODEL: ${COMPILER_MODEL:-openai/default}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-http://host.docker.internal:8000/v1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      COMPILE_DEBOUNCE_SECONDS: ${COMPILE_DEBOUNCE_SECONDS:-120}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    # No published port — the app reaches it via service DNS (memory:8001).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  lightrag:
+    image: ghcr.io/hkuds/lightrag:latest
+    container_name: companion-lightrag
+    restart: unless-stopped
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "9621"
+      WORKING_DIR: /app/data/rag_storage
+      INPUT_DIR: /app/data/inputs
+      # Entity extraction + query LLM → the orchestrator.
+      LLM_BINDING: openai
+      LLM_BINDING_HOST: ${COMPANY_RAG_LLM_HOST:-http://host.docker.internal:8000/v1}
+      LLM_BINDING_API_KEY: ${COMPANY_RAG_LLM_KEY:-none}
+      LLM_MODEL: ${COMPANY_RAG_LLM:-default}
+      # Embeddings via the host nemo service (nemo-embed, dim 1024) so the
+      # whole memory stack is self-contained — and consistent with graphs
+      # built by nemo (an existing company graph stays readable).
+      EMBEDDING_BINDING: openai
+      EMBEDDING_BINDING_HOST: ${COMPANY_RAG_EMBED_HOST:-http://host.docker.internal:8765/v1}
+      EMBEDDING_BINDING_API_KEY: none
+      EMBEDDING_MODEL: ${COMPANY_RAG_EMBED_MODEL:-nemo-embed}
+      EMBEDDING_DIM: ${COMPANY_RAG_EMBED_DIM:-1024}
     ports:
-      - "0.0.0.0:8765:8765"
+      # Published on 8766 — matches global_settings.company_rag_url default
+      # (http://host.docker.internal:8766).
+      - "${COMPANY_RAG_BIND:-0.0.0.0}:${COMPANY_RAG_PORT:-8766}:9621"
     volumes:
-      - nemo_models:/app/models
-      - nemo_data:/app/data
+      - lightrag_data:/app/data/rag_storage
+      - lightrag_inputs:/app/data/inputs
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
 volumes:
-  nemo_models:
-  nemo_data:
+  lightrag_data:
+  lightrag_inputs:
   db_data:
   app_data:
