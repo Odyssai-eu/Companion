@@ -19,7 +19,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index";
 import { users } from "../db/schema";
 import { resolveRagConfig } from "../routes/addon-rag";
-import { getMemoryBackend } from "./global-settings";
+import { getCompanyRagUrl, getMemoryBackend } from "./global-settings";
 import { getUserMemoryContext } from "./user-memory";
 
 // `??` only catches null/undefined — `MEMORY_SERVICE_URL=""` (the compose
@@ -207,7 +207,41 @@ export function isNemoAvailable(): boolean {
  *  returns false even though the service is up, so chat reads the wiki. */
 export async function nemoActive(userId: string): Promise<boolean> {
   if ((await getMemoryBackend()) !== "lightrag") return false;
-  return (await resolveRagConfig(userId)) !== null;
+  // Active if EITHER the per-user RAG is configured OR the org-wide company
+  // tier is — so company memory works even for a user with no personal graph.
+  const [rag, companyUrl] = await Promise.all([
+    resolveRagConfig(userId),
+    getCompanyRagUrl(),
+  ]);
+  return rag !== null || companyUrl !== "";
+}
+
+// Company tier: a dedicated standard-API LightRAG (:8766) serving ONE shared
+// "company" graph. Different wire protocol from nemo (:8765) — POST /query
+// with only_need_context returns the retrieved context in `.response`.
+const COMPANY_TIMEOUT_MS = Number(process.env.COMPANY_RAG_TIMEOUT_MS ?? "4000");
+
+async function _companyQueryOne(
+  companyUrl: string,
+  question: string,
+): Promise<string> {
+  try {
+    const res = await fetch(`${companyUrl}/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: question,
+        mode: "hybrid",
+        only_need_context: true,
+      }),
+      signal: AbortSignal.timeout(COMPANY_TIMEOUT_MS),
+    });
+    if (!res.ok) return "";
+    const data = (await res.json()) as { response?: string };
+    return (data.response ?? "").trim();
+  } catch {
+    return "";
+  }
 }
 
 /** Single-collection nemo query (internal helper). */
@@ -251,26 +285,47 @@ export async function nemoQuery(
   question: string,
   projectId?: string | null,
   teamId?: string | null,
-  companyId?: string | null,
 ): Promise<string> {
   if (!question.trim()) return "";
-  const rag = await resolveRagConfig(userId);
-  if (!rag) return "";
 
-  const queries: Promise<string>[] = [_nemoQueryOne(rag, userId, question, projectId)];
-  if (teamId) queries.push(_nemoQueryOne(rag, teamId, question, projectId));
-  if (companyId) queries.push(_nemoQueryOne(rag, companyId, question, projectId));
+  const [rag, companyUrl] = await Promise.all([
+    resolveRagConfig(userId),
+    getCompanyRagUrl(),
+  ]);
 
-  const results = await Promise.all(queries);
-  const blocks = results.filter((r) => r.trim());
+  // All tiers in parallel, each labelled. Personal/team hit the per-user nemo
+  // (:8765, collection = userId/teamId); company hits the dedicated shared-
+  // graph LightRAG (:8766) that everyone reads.
+  const tasks: Promise<{ label: string; text: string }>[] = [];
+  if (rag) {
+    tasks.push(
+      _nemoQueryOne(rag, userId, question, projectId).then((text) => ({
+        label: "## Personal memory",
+        text,
+      })),
+    );
+    if (teamId) {
+      tasks.push(
+        _nemoQueryOne(rag, teamId, question, projectId).then((text) => ({
+          label: "## Team memory",
+          text,
+        })),
+      );
+    }
+  }
+  if (companyUrl) {
+    tasks.push(
+      _companyQueryOne(companyUrl, question).then((text) => ({
+        label: "## Company memory",
+        text,
+      })),
+    );
+  }
 
+  const blocks = (await Promise.all(tasks)).filter((b) => b.text.trim());
   if (blocks.length === 0) return "";
-  if (blocks.length === 1) return blocks[0];
-
-  // Merge with section labels when multiple collections respond
-  const labels = ["## Personal memory", "## Team memory", "## Company memory"];
   const merged = blocks
-    .map((b, i) => `${labels[i] ?? "## Context"}\n\n${b.replace(/^# Relevant memory\n\n/, "")}`)
+    .map((b) => `${b.label}\n\n${b.text.replace(/^# Relevant memory\n\n/, "")}`)
     .join("\n\n---\n\n");
   return `# Relevant memory\n\n${merged}`;
 }

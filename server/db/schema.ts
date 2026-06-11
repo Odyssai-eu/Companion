@@ -1071,6 +1071,11 @@ export type NewHermesToken = typeof hermesTokens.$inferInsert;
 export const globalSettings = pgTable("global_settings", {
   id: integer("id").primaryKey().default(1),
   memoryBackend: text("memory_backend").notNull().default("lightrag"),
+  // Company memory tier: a dedicated, standard-API LightRAG holding ONE
+  // shared "company" graph everyone reads (distinct from the per-user nemo
+  // service). Org-wide, hence here rather than the per-user RAG add-on.
+  // Editable in Admin → Memory backend; empty disables the tier.
+  companyRagUrl: text("company_rag_url").notNull().default(""),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .default(sql`now()`),

@@ -947,6 +947,8 @@ function XIcon() {
 function MemoryBackendSection() {
   const [backend, setBackend] = useState<"lightrag" | "wiki" | null>(null);
   const [deployed, setDeployed] = useState(true);
+  const [companyUrl, setCompanyUrl] = useState("");
+  const [companySaved, setCompanySaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -956,9 +958,25 @@ function MemoryBackendSection() {
       .then((r) => {
         setBackend(r.memoryBackend);
         setDeployed(r.lightragDeployed);
+        setCompanyUrl(r.companyRagUrl);
       })
       .catch((e) => setError((e as Error).message));
   }, []);
+
+  const saveCompany = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.updateAdminSettings({ companyRagUrl: companyUrl.trim() });
+      setCompanyUrl(r.companyRagUrl);
+      setCompanySaved(true);
+      setTimeout(() => setCompanySaved(false), 1800);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const choose = async (b: "lightrag" | "wiki") => {
     if (b === backend || busy) return;
@@ -1013,6 +1031,36 @@ function MemoryBackendSection() {
           this deployment — chat falls back to the wiki until the service is
           reachable.
         </p>
+      )}
+
+      {backend === "lightrag" && (
+        <div className="flex flex-col gap-2 border-t border-gray-100 pt-4">
+          <span className="text-[12px] font-medium text-navy">
+            Company memory — shared LightRAG URL
+          </span>
+          <p className="max-w-[640px] text-[12px] text-gray-500">
+            A dedicated LightRAG holding one org-wide <code>company</code> graph
+            that every user&apos;s chat reads, on top of personal and team
+            memory. Empty disables the company tier.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={companyUrl}
+              onChange={(e) => setCompanyUrl(e.target.value)}
+              placeholder="http://host.docker.internal:8766"
+              className="flex-1 max-w-[420px] rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
+            <button
+              type="button"
+              onClick={() => void saveCompany()}
+              disabled={busy}
+              className="rounded-md border border-gray-200 px-4 py-2 font-mono text-[12px] text-gray-600 hover:border-cyan hover:text-navy disabled:opacity-50"
+            >
+              {companySaved ? "Saved ✓" : "Save"}
+            </button>
+          </div>
+        </div>
       )}
       {error && <p className="text-[12px] text-red-600">{error}</p>}
     </section>

@@ -12,7 +12,9 @@
 import { Hono } from "hono";
 
 import {
+  getCompanyRagUrl,
   getMemoryBackend,
+  setCompanyRagUrl,
   setMemoryBackend,
   type MemoryBackend,
 } from "../lib/global-settings";
@@ -25,6 +27,8 @@ adminSettingsRoute.use("*", requireRole("admin"));
 adminSettingsRoute.get("/", async (c) => {
   return c.json({
     memoryBackend: await getMemoryBackend(),
+    // Org-wide company LightRAG (:8766 by default). "" = company tier off.
+    companyRagUrl: await getCompanyRagUrl(),
     // Surfaced so the UI can warn if 'lightrag' is selected but the service
     // isn't deployed (NEMO_MEMORY_URL unset) — chat would silently fall back.
     lightragDeployed: isNemoAvailable(),
@@ -33,15 +37,28 @@ adminSettingsRoute.get("/", async (c) => {
 
 adminSettingsRoute.patch("/", async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const backend = body?.memoryBackend as MemoryBackend | undefined;
-  if (backend !== "lightrag" && backend !== "wiki") {
-    return c.json(
-      { error: "memoryBackend must be 'lightrag' or 'wiki'" },
-      400,
-    );
+
+  if (body?.memoryBackend !== undefined) {
+    const backend = body.memoryBackend as MemoryBackend;
+    if (backend !== "lightrag" && backend !== "wiki") {
+      return c.json({ error: "memoryBackend must be 'lightrag' or 'wiki'" }, 400);
+    }
+    await setMemoryBackend(backend);
   }
-  await setMemoryBackend(backend);
-  return c.json({ ok: true, memoryBackend: backend });
+
+  if (body?.companyRagUrl !== undefined) {
+    const url = String(body.companyRagUrl).trim();
+    if (url && !/^https?:\/\//.test(url)) {
+      return c.json({ error: "companyRagUrl must be an http(s) URL or empty" }, 400);
+    }
+    await setCompanyRagUrl(url);
+  }
+
+  return c.json({
+    ok: true,
+    memoryBackend: await getMemoryBackend(),
+    companyRagUrl: await getCompanyRagUrl(),
+  });
 });
 
 export default adminSettingsRoute;
