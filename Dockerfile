@@ -2,7 +2,11 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci
+# Retry once: esbuild's postinstall execs the binary it just wrote, which
+# intermittently hits ETXTBSY on Docker Desktop (macOS) — especially when
+# compose bake builds images in parallel. The second attempt finds the
+# binary settled and validates fine.
+RUN npm ci --no-audit --no-fund || (sleep 2 && npm ci --no-audit --no-fund)
 
 COPY tsconfig.json vite.config.ts index.html ./
 COPY public ./public
@@ -21,7 +25,7 @@ ENV NODE_ENV=production
 RUN apk add --no-cache rsync openssh-client sshpass
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --no-audit --no-fund || (sleep 2 && npm ci --omit=dev --no-audit --no-fund)
 
 COPY --from=builder /app/dist ./dist
 COPY drizzle ./drizzle
