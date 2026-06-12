@@ -225,7 +225,14 @@ async function _companyQueryOne(
     });
     if (!res.ok) return "";
     const data = (await res.json()) as { response?: string };
-    return (data.response ?? "").trim();
+    const text = (data.response ?? "").trim();
+    // An EMPTY tier answers with an apology string tagged [no-context]
+    // (even with only_need_context) — that's "nothing", not context.
+    // Without this, every prompt would carry a "## Company memory" block
+    // containing "Sorry, I'm not able to…" (seen 2026-06-12 when the
+    // company tier was drained of its misplaced corpus).
+    if (!text || text.includes("[no-context]")) return "";
+    return text;
   } catch {
     return "";
   }
