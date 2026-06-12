@@ -27,7 +27,7 @@
  * that conversation as the source context for the compile pass.
  */
 
-import { desc, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { db } from "../db/index";
 import { conversations, users } from "../db/schema";
 import { compileNow } from "./memory";
@@ -139,15 +139,25 @@ async function runGlobalSlot(slotLabel: string): Promise<void> {
   }
   const userIds = activeUsers.map((u) => u.id);
 
-  // Latest conversation per active user in ONE round-trip via DISTINCT ON
-  // (was N+1: a separate query per active user, awaited serially) (#7).
+  // Latest ELIGIBLE conversation per active user in ONE round-trip via
+  // DISTINCT ON (was N+1: a separate query per active user) (#7).
+  // memoryEnabled/kind are filtered HERE too: the slot used to compile the
+  // latest conv regardless of its memory toggle, silently bypassing every
+  // registration-time guard — that's the hole through which a fiction
+  // benchmark session entered the biographical wiki (2026-06-12).
   const latest = await db
     .selectDistinctOn([conversations.userId], {
       userId: conversations.userId,
       id: conversations.id,
     })
     .from(conversations)
-    .where(inArray(conversations.userId, userIds))
+    .where(
+      and(
+        inArray(conversations.userId, userIds),
+        eq(conversations.memoryEnabled, true),
+        eq(conversations.kind, "chat"),
+      ),
+    )
     .orderBy(conversations.userId, desc(conversations.updatedAt));
 
   let triggered = 0;

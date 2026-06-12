@@ -1281,7 +1281,25 @@ chatRoute.post("/completions", async (c) => {
       //  - the project has globalMemoryReadOnly = true (explicit opt-out)
       //  - the project has dedicatedMemoryEnabled = true (writes belong
       //    to the project corpus, not the global wiki)
-      if (
+      //  - a custom system prompt is active (persona / fiction / writing
+      //    benchmark sessions). Compiling one into the biographical wiki
+      //    is exactly how "Le Bruit Blanc" became a lived memory
+      //    (2026-06-12) — so the conv is tainted DURABLY: memoryEnabled
+      //    flips off in DB (visible as the conv's memory toggle), which
+      //    also shields it from the scheduled global slots, not just
+      //    from this turn's registration.
+      if (body.system_prompt && body.conversationId && convMemoryEnabled) {
+        void db
+          .update(conversations)
+          .set({ memoryEnabled: false })
+          .where(eq(conversations.id, body.conversationId))
+          .then(() =>
+            console.log(
+              `[memory] conv ${body.conversationId} memoryEnabled→off (custom system prompt active)`,
+            ),
+          )
+          .catch(() => {});
+      } else if (
         body.conversationId &&
         convKind === "chat" &&
         convMemoryEnabled &&
