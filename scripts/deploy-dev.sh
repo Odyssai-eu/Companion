@@ -77,7 +77,17 @@ git push "$PUSH_REMOTE" "$BRANCH"
 
 # Pull from the host's local mirror of the bare repo, then rebuild ONLY the
 # app service (never the whole compose — see the header note on nemo-memory).
-ssh "$HOST" "cd $APP_DIR && git pull $PULL_REMOTE $BRANCH && $DOCKER compose up -d --build $SERVICE 2>&1 | tail -12 && $DOCKER ps --filter name=companion --format 'table {{.Names}}\t{{.Status}}'"
+#
+# Two non-interactive-ssh traps, both learned in prod:
+#   - Docker Desktop's credential helper (docker-credential-desktop) lives
+#     under the app bundle, NOT on the bare ssh PATH. ~/.docker/config.json
+#     declares it as credsStore, so any cold base-image resolve (e.g. first
+#     build after a reboot) dies with "error getting credentials".
+#   - `| tail` swallows the build's exit code, so a failed build still
+#     printed "deployed" while the container kept running the OLD image.
+#     pipefail on the remote shell + set -e here make the failure loud.
+REMOTE_PATH='/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin'
+ssh "$HOST" "set -o pipefail; export PATH=\"$REMOTE_PATH:\$PATH\"; cd $APP_DIR && git pull $PULL_REMOTE $BRANCH && $DOCKER compose up -d --build $SERVICE 2>&1 | tail -12 && $DOCKER ps --filter name=companion --format 'table {{.Names}}\t{{.Status}}'"
 
 echo ""
 echo "→ deployed to $VERIFY_URL"
