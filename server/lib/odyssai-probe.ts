@@ -76,7 +76,7 @@ export async function probeEngine(
 
   // /v1/models is the standard OpenAI-compat endpoint — every provider
   // we care about exposes it. Auth token goes in only when supplied;
-  // public routes on Odysseus ignore it anyway.
+  // public routes on OdyssAI-X ignore it anyway.
   const headers: Record<string, string> = {};
   if (capabilityToken) headers.authorization = `Bearer ${capabilityToken}`;
   let cloudAliasesCount = 0;

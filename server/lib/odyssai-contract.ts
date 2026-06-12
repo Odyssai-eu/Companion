@@ -60,13 +60,13 @@ export type OdyssaiModelCapabilities = {
    *  concrete model path that's currently loaded behind it. */
   alias_for?: string;
   /** Display name of the cluster this model belongs to (e.g. "Argo",
-   *  "TeleCoder"). Set by Odysseus >= 1.7.10 from the cluster def's
+   *  "TeleCoder"). Set by OdyssAI-X >= 1.7.10 from the cluster def's
    *  `name` field. Used by clients to render group headings without
    *  surfacing the cluster id ("main", "telemak-code-next"). */
   cluster_label?: string;
   /** Cluster kind ("mlx-distributed" | "telemak" | …). Lets clients
    *  bucket entries (Argo cluster vs Telemak grouping) without
-   *  pattern-matching the backend or pool fields. Set by Odysseus
+   *  pattern-matching the backend or pool fields. Set by OdyssAI-X
    *  >= 1.7.10. */
   kind?: string;
 };

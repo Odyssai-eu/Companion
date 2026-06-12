@@ -575,7 +575,7 @@ conversationsRoute.post(
     }
     // Cache-warmth heuristic: if the last assistant message landed in the
     // recent past, the upstream's internal prefix cache (Inferencer,
-    // mlx-vlm, Odysseus session) is still warm — re-prewarming would just
+    // mlx-vlm, OdyssAI-X session) is still warm — re-prewarming would just
     // queue another 50KB-prefill call behind the active chat / compile /
     // next-turn, slowing everything. Skip in that case.
     //
@@ -688,7 +688,7 @@ conversationsRoute.post(
     }));
 
     // Whether to append a synthetic dummy user message. LiteLLM (and most
-    // upstream engines) require messages to end with `user`. Odysseus'
+    // upstream engines) require messages to end with `user`. OdyssAI-X'
     // runner does NOT — it just renders via apply_chat_template with
     // add_generation_prompt=True, which works whether the last message is
     // user or assistant. We decide AFTER computing prewarmMode below.
@@ -735,13 +735,13 @@ conversationsRoute.post(
     }
     // History note: prewarm was previously disabled in gateway mode because
     // appending a synthetic dummy_user message with a fresh timestamp tag
-    // caused `fp16·divergent` on Odysseus (the dummy's tag never matched
+    // caused `fp16·divergent` on OdyssAI-X (the dummy's tag never matched
     // the real next user's tag, polluting the session slot). Re-enabled
     // 2026-05-16 along with two safeguards:
     //   1. The MEMORY_MAX_BYTES cap on the memory block — keeps prewarm +
     //      chat in sync as the wiki grows
     //   2. Don't append a dummy_user at all when targeting gateway —
-    //      Odysseus' runner accepts assistant-last messages (templates
+    //      OdyssAI-X' runner accepts assistant-last messages (templates
     //      with add_generation_prompt=True), so the prewarm tokens are
     //      a strict prefix of the real next chat's tokens.
     //
@@ -762,7 +762,7 @@ conversationsRoute.post(
             apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
           };
 
-    // In gateway mode we can send assistant-last (Odysseus templates with
+    // In gateway mode we can send assistant-last (OdyssAI-X templates with
     // add_generation_prompt=True). In hybrid/legacy we must end with user
     // (LiteLLM passthrough enforces it for most upstream engines).
     const finalMessages = (() => {
@@ -779,7 +779,7 @@ conversationsRoute.post(
       messages: finalMessages,
       // Pin the prefix-cache slot to this conversation id so the real
       // chat turn that follows reuses the KV cache populated here.
-      // Odysseus reads `session_id` from the body; LiteLLM ignores
+      // OdyssAI-X reads `session_id` from the body; LiteLLM ignores
       // unknown fields, so it's safe to send unconditionally.
       session_id: id,
     };

@@ -47,7 +47,7 @@ export function JoinOdyssaiModal({
         if (cancelled) return;
         if (!d.engines.length) {
           setErrorMsg(
-            "No Odysseus engines found on the network. Make sure the operator opened the gate (Odysseus → Settings → Crew → Open gate).",
+            "No OdyssAI-X engines found on the network. Make sure the operator opened the gate (OdyssAI-X → Settings → Crew → Open gate).",
           );
           setPhase("error");
           return;
@@ -86,7 +86,7 @@ export function JoinOdyssaiModal({
       const msg =
         e instanceof ApiError
           ? e.code === "gate_closed"
-            ? "The Odysseus discovery gate is closed. Ask the operator to open it (Settings → Crew → Open gate)."
+            ? "The OdyssAI-X discovery gate is closed. Ask the operator to open it (Settings → Crew → Open gate)."
             : e.message
           : (e as Error).message;
       setErrorMsg(msg);
@@ -127,7 +127,7 @@ export function JoinOdyssaiModal({
               Scanning local network…
             </div>
             <p>
-              Make sure the operator opened the gate in Odysseus → Settings →
+              Make sure the operator opened the gate in OdyssAI-X → Settings →
               Crew → "Open gate". The scan takes 5–10 seconds.
             </p>
           </div>
@@ -153,7 +153,7 @@ export function JoinOdyssaiModal({
                       }`}
                     >
                       <span className="font-medium text-ink">
-                        {e.meta?.name ?? "Odysseus"}
+                        {e.meta?.name ?? "OdyssAI-X"}
                       </span>
                       <span className="font-mono text-[11px] text-gray-500">
                         {e.host}:{e.port} · v{e.meta?.version ?? "?"}
@@ -167,7 +167,7 @@ export function JoinOdyssaiModal({
             {engines.length <= 1 && (
               <div className="flex flex-col gap-0.5 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
                 <span className="text-[13px] font-medium text-emerald-800">
-                  ✓ {chosen.meta?.name ?? "Odysseus"}
+                  ✓ {chosen.meta?.name ?? "OdyssAI-X"}
                 </span>
                 <span className="font-mono text-[11px] text-emerald-700">
                   at {chosen.host}:{chosen.port} · vendor{" "}
@@ -213,14 +213,14 @@ export function JoinOdyssaiModal({
 
         {phase === "pairing" && (
           <div className="font-mono text-[12px] text-gray-500">
-            Pairing with Odysseus…
+            Pairing with OdyssAI-X…
           </div>
         )}
 
         {phase === "done" && summary && (
           <div className="flex flex-col gap-2 text-[13px]">
             <div className="text-emerald-700">
-              ✓ Paired with Odysseus v{summary.version ?? "?"}
+              ✓ Paired with OdyssAI-X v{summary.version ?? "?"}
             </div>
             <div className="text-gray-600">
               {summary.modelsCount - summary.cloudAliasesCount} local +{" "}

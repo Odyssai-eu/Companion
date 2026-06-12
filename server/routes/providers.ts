@@ -7,7 +7,7 @@
  *   POST /api/providers/reload          → refetch /.well-known + /v1/models
  *
  * The pair flow is "discovery-gated": the operator opens the gate on
- * Odysseus, then Companion's POST /admin/pair returns a crew token
+ * OdyssAI-X, then Companion's POST /admin/pair returns a crew token
  * (chat-scope, not admin). We persist {engine_url, engine_token,
  * engine_meta, engine_mode} on the user row. engine_mode is auto-set
  * from features.cloud-passthrough.
@@ -24,7 +24,7 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { users } from "../db/schema";
-import { scanForOdysseusEngines } from "../lib/discovery/odyssai-scan";
+import { scanForEngines } from "../lib/discovery/odyssai-scan";
 import { assertFetchTargetAllowed } from "../lib/net-guard";
 import { invalidateEngineCache } from "../lib/odyssai-capabilities";
 import type { OdyssaiEngineMeta } from "../lib/odyssai-contract";
@@ -40,7 +40,7 @@ providersRoute.post("/search-odyssai", async (c) => {
     subnets?: string[];
     timeoutMs?: number;
   };
-  const engines = await scanForOdysseusEngines({
+  const engines = await scanForEngines({
     subnetsOverride: body?.subnets,
     timeoutPerIpMs: body?.timeoutMs,
   });
@@ -111,7 +111,7 @@ providersRoute.post(
           {
             error: "gate_closed",
             hint:
-              "The Odysseus discovery gate is closed. Ask the operator to open it (Settings → Crew → Open gate).",
+              "The OdyssAI-X discovery gate is closed. Ask the operator to open it (Settings → Crew → Open gate).",
           },
           403,
         );

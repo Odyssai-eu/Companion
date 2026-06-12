@@ -35,9 +35,9 @@ export const users = pgTable("users", {
   engineToken: text("engine_token"),
   engineMeta: jsonb("engine_meta").$type<Record<string, unknown>>(),
   // Provider mode — drives how Companion routes chat + lists models.
-  //   'gateway' → 100% via engine_url (Odysseus proxies cloud + local)
+  //   'gateway' → 100% via engine_url (OdyssAI-X proxies cloud + local)
   //   'hybrid'  → inference via litellm_url, caps via engine_url
-  //   'legacy'  → LiteLLM only (no Odysseus paired)
+  //   'legacy'  → LiteLLM only (no OdyssAI-X paired)
   // Auto-set by the pair flow based on engine features.cloud-passthrough.
   engineMode: text("engine_mode").notNull().default("legacy"),
   // Master switch to turn LiteLLM off entirely. When true, models listing

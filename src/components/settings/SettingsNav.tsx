@@ -7,7 +7,7 @@ type NavSection = { title: string; items: NavItem[] };
 // Settings nav — refactor 2026-05-19 per a UX refactor:
 //   - dropped: Security / Devices & sync / Learning Center
 //   - renamed: Inference → "Inference & gateway" (Provider section becomes
-//              "Odysseus Gateway", LiteLLM moves out to Add-ons)
+//              "OdyssAI-X Gateway", LiteLLM moves out to Add-ons)
 //   - renamed: External agents → "Agents tokens"
 //   - kept:    MCP servers (the hub for Notion/Obsidian/Tavily/…)
 // Guest tokens (previously surfaced under Devices) stay accessible via

@@ -116,7 +116,7 @@ export default function InferencePage() {
   async function disconnect() {
     if (
       !confirm(
-        "Disconnect from Odysseus? Local models stop being available until you re-pair.",
+        "Disconnect from OdyssAI-X? Local models stop being available until you re-pair.",
       )
     )
       return;
@@ -185,18 +185,18 @@ export default function InferencePage() {
           Inference.
         </h1>
         <p className="max-w-[640px] text-[15px] leading-[24px] text-gray-600">
-          Companion talks to your models through Odysseus — paired via
+          Companion talks to your models through OdyssAI-X — paired via
           "Join the Odyssai" below. Optional providers (LiteLLM, etc.)
           live in Settings → Add-ons.
         </p>
       </header>
 
-      {/* ── Odysseus Gateway ──────────────────────────────────────────
+      {/* ── OdyssAI-X Gateway ──────────────────────────────────────────
        *  Renamed from "Provider" 2026-05-19. The whole local-LLM stack
-       *  is Odysseus end-to-end (gateway + engine + dashboard); the
+       *  is OdyssAI-X end-to-end (gateway + engine + dashboard); the
        *  generic "Provider" word was a leftover from when LiteLLM was
        *  the canonical layer. */}
-      <Section title="Odysseus Gateway">
+      <Section title="OdyssAI-X Gateway">
         {paired ? (
           <PairedCard
             url={settings.engineUrl ?? ""}
@@ -255,8 +255,8 @@ export default function InferencePage() {
             [
               {
                 v: "easy" as const,
-                title: "Easy — Odysseus picks the best model",
-                desc: "No picker. Odysseus auto-routes each request to the best model (via the Auto Router add-on). Falls back to the model below when the router isn't configured.",
+                title: "Easy — OdyssAI-X picks the best model",
+                desc: "No picker. OdyssAI-X auto-routes each request to the best model (via the Auto Router add-on). Falls back to the model below when the router isn't configured.",
               },
               {
                 v: "advanced" as const,
@@ -483,7 +483,7 @@ function NotPaired({ onJoin }: { onJoin: () => void }) {
   return (
     <div className="flex flex-col items-start gap-3 rounded-lg border border-gray-200 bg-white p-5">
       <span className="text-[13px] text-gray-600">
-        No Odysseus engine paired. Click below — Companion scans your network
+        No OdyssAI-X engine paired. Click below — Companion scans your network
         for engines whose operator has opened the discovery gate.
       </span>
       <button
@@ -512,7 +512,7 @@ function PairedCard({
   onDisconnect: () => void;
   busy: boolean;
 }) {
-  const name = (meta.name as string) ?? "Odysseus";
+  const name = (meta.name as string) ?? "OdyssAI-X";
   const version = (meta.version as string) ?? "?";
   const vendor = (meta.vendor as string) ?? "?";
   let host: string;

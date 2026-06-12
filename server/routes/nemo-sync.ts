@@ -9,7 +9,7 @@
  * Admin-only. Fire-and-forget option (stream=false returns immediately with
  * a count; stream=true waits for all inserts to complete — use for the
  * initial full sync, can take minutes depending on corpus size and whether
- * Odysseus is up for entity extraction).
+ * OdyssAI-X is up for entity extraction).
  *
  * When NEMO_MEMORY_URL is not set, returns 503 — no-op, won't crash.
  */

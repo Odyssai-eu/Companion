@@ -35,8 +35,10 @@ from pydantic import BaseModel, Field
 
 # ── Config ────────────────────────────────────────────────────────────────
 
-ODYSSEUS_URL   = os.environ.get("ODYSSEUS_URL",   "http://localhost:8000")
-ODYSSEUS_MODEL = os.environ.get("ODYSSEUS_MODEL",  "default")
+ENGINE_URL   = (os.environ.get("ODYSSAI_X_URL") or os.environ.get("ENGINE_URL")
+                or "http://localhost:8000")
+ENGINE_MODEL = (os.environ.get("ODYSSAI_X_MODEL") or os.environ.get("ENGINE_MODEL")
+                or "default")
 EMBED_MODEL    = os.environ.get("EMBED_MODEL",
                      "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ")
 EMBED_DIM      = int(os.environ.get("EMBED_DIM",   "1024"))
@@ -89,8 +91,8 @@ async def llm_complete(
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.post(
-                f"{ODYSSEUS_URL}/v1/chat/completions",
-                json={"model": ODYSSEUS_MODEL, "messages": messages,
+                f"{ENGINE_URL}/v1/chat/completions",
+                json={"model": ENGINE_MODEL, "messages": messages,
                       "max_tokens": 2048, "temperature": 0.1,
                       "enable_thinking": False},
             )
@@ -141,7 +143,7 @@ async def lifespan(app: FastAPI):
 
     os.makedirs(WORKING_DIR, exist_ok=True)
     log.info("nemo-memory (LightRAG + mlx) ready — odysseus=%s embed=%s dim=%d",
-             ODYSSEUS_URL, EMBED_MODEL, EMBED_DIM)
+             ENGINE_URL, EMBED_MODEL, EMBED_DIM)
     yield
     log.info("nemo-memory shutting down")
 
@@ -155,7 +157,7 @@ app = FastAPI(title="nemo-memory", lifespan=lifespan)
 def health():
     return {"status": "ok", "mode": "lightrag-mlx",
             "embed_model": EMBED_MODEL, "embed_dim": EMBED_DIM,
-            "odysseus": ODYSSEUS_URL, "graphs_loaded": len(_rags)}
+            "odysseus": ENGINE_URL, "graphs_loaded": len(_rags)}
 
 
 # ── /v1/embeddings (OpenAI-compat) ───────────────────────────────────────

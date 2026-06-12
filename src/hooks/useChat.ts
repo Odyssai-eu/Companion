@@ -360,7 +360,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
         // Choose a default model that respects the active mode.
         if (settings.inferenceMode === "easy") {
-          // Easy = Odysseus picks the best model: auto-route when the Auto
+          // Easy = OdyssAI-X picks the best model: auto-route when the Auto
           // Router add-on is enabled AND configured, otherwise fall back to
           // the admin-set fallback model. Either way ignore local override.
           const routerReady = Boolean(router?.enabled && router?.configured);

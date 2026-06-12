@@ -462,7 +462,7 @@ function buildServer(opts: {
     "companion_send_message",
     {
       description:
-        "Submit a user message to a conversation. NON-BLOCKING: returns immediately with `{ status: 'started' }` as soon as the server accepts the request. Companion keeps generating server-side and persists the assistant message when done. To get the response: poll `companion_get_inference_status(conversationId)` until `done:true`, then call `companion_get_conversation(id)` to read the persisted assistant message and its id. `max_tokens` defaults to 32768 — Odysseus / EXO default to 512 when unset, which truncates almost every response. Tuning knobs useful for prose / long-form: `repetition_penalty` ~1.1-1.15 breaks syntactic recycling; `seed` makes a regenerate reproducible; `stop` halts on a marker (e.g. `['***','---']`) instead of letting the model decide.",
+        "Submit a user message to a conversation. NON-BLOCKING: returns immediately with `{ status: 'started' }` as soon as the server accepts the request. Companion keeps generating server-side and persists the assistant message when done. To get the response: poll `companion_get_inference_status(conversationId)` until `done:true`, then call `companion_get_conversation(id)` to read the persisted assistant message and its id. `max_tokens` defaults to 32768 — OdyssAI-X / EXO default to 512 when unset, which truncates almost every response. Tuning knobs useful for prose / long-form: `repetition_penalty` ~1.1-1.15 breaks syntactic recycling; `seed` makes a regenerate reproducible; `stop` halts on a marker (e.g. `['***','---']`) instead of letting the model decide.",
       inputSchema: {
         conversationId: z.string().uuid(),
         content: z.string().min(1),
@@ -488,7 +488,7 @@ function buildServer(opts: {
         userMessage: args.content,
         model: args.model,
         temperature: args.temperature,
-        // Default to 32k. Odysseus' OpenAI-compat layer defaults to 512
+        // Default to 32k. OdyssAI-X' OpenAI-compat layer defaults to 512
         // when unset (cf. MLX Distributed scripts/api.py), which cuts
         // virtually every useful response short. The chat route still
         // clamps for Anthropic (64k) / OpenAI (16k) hosted models, so
@@ -605,7 +605,7 @@ function buildServer(opts: {
     "companion_list_models",
     {
       description:
-        "List the models available to the authenticated user (via LiteLLM / Odysseus).",
+        "List the models available to the authenticated user (via LiteLLM / OdyssAI-X).",
       inputSchema: {},
     },
     async () => {

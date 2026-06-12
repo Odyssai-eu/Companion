@@ -1,5 +1,5 @@
 /**
- * Authenticated fetch against an Odysseus engine that detects crew-token
+ * Authenticated fetch against an OdyssAI-X engine that detects crew-token
  * revocation.
  *
  * Per the gateway contract, the engine can revoke a Companion's crew

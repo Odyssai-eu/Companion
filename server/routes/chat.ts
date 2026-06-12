@@ -83,7 +83,7 @@ const chatRoute = new Hono<Env>();
 // We disable bodyTimeout entirely (0 = no timeout). headersTimeout was
 // 60s but that's too tight for the tools+jaccl path: `shouldUseNonStream`
 // forces `stream: false` to avoid the XML tool-call leak on Qwen3/Hy3,
-// and Odysseus then doesn't send any HTTP headers until the entire
+// and OdyssAI-X then doesn't send any HTTP headers until the entire
 // response is generated. On slow models (GLM-5.1 on 4-node pipeline-AP
 // at ~7 tok/s with max_tokens 64k) that's >> 60s before first byte and
 // undici fails the fetch with HeadersTimeoutError before generation
@@ -128,7 +128,7 @@ type ChatBody = {
   reasoning_effort?: string;
   system_prompt?: string;
   /** Stop sequences — generation halts when any of these strings is
-   *  emitted. OpenAI-compatible engines (LiteLLM, vLLM, EXO, Odysseus)
+   *  emitted. OpenAI-compatible engines (LiteLLM, vLLM, EXO, OdyssAI-X)
    *  all accept either a single string or an array. */
   stop?: string | string[];
 };
@@ -581,7 +581,7 @@ chatRoute.post("/completions", async (c) => {
   if (body.reasoning_effort && body.reasoning_effort !== "none")
     baseBody.reasoning_effort = body.reasoning_effort;
 
-  // Prefix-cache key for Odysseus (gateway mode). Odysseus reads
+  // Prefix-cache key for OdyssAI-X (gateway mode). OdyssAI-X reads
   // `session_id` from the body (or X-Session-Id header) and reuses the
   // KV cache across turns when prompts share a prefix. Using the
   // conversation id is exactly right: every turn of a conv shares the
@@ -721,14 +721,14 @@ chatRoute.post("/completions", async (c) => {
   const agentToolsEnabled = agentTools.length > 0;
 
   // Probe routing — gateway mode only. If this request looks like a
-  // probe (small max_tokens, no tools), route it to Odysseus' `probe`
+  // probe (small max_tokens, no tools), route it to OdyssAI-X' `probe`
   // alias (Qwen2.5-Coder-1.5B on the autocomplete host) instead of letting it hit
   // Argo / Hades 3-node MLX which is wildly overprovisioned for 1-20
   // tokens of output. ~4× faster, frees the heavy cluster for real
   // responses. See BRIEF-companion-prefix-cache-and-probes.md.
   //
   // Skipped for hybrid/legacy modes (the `probe` alias is published
-  // by Odysseus only — LiteLLM won't know it). Probe routing tolerates
+  // by OdyssAI-X only — LiteLLM won't know it). Probe routing tolerates
   // the always-on skill tools in the request (the probe model just
   // ignores them); only real agent-mode tools disqualify probe routing.
   if (
@@ -1416,7 +1416,7 @@ async function pipeAndCollect(
             delta?: {
               content?: string | null;
               // Thinking models stream chain-of-thought on a separate channel
-              // (`reasoning_content` for mlx-lm/Odysseus + DeepSeek-style
+              // (`reasoning_content` for mlx-lm/OdyssAI-X + DeepSeek-style
               // servers, `reasoning` for some others). We must capture it:
               // a turn that emits ONLY reasoning and never a `content` delta
               // would otherwise leave the inference buffer empty → finishInference

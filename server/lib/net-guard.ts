@@ -2,7 +2,7 @@
  * SSRF guards for user-driven server-side fetches (#3).
  *
  * odyssai.eu is LAN-first (see AGENTS.md "Security posture"). Reaching the
- * Odysseus engine or an MCP server on a private 10/172.16/192.168 address — or
+ * OdyssAI-X engine or an MCP server on a private 10/172.16/192.168 address — or
  * loopback for a local sidecar — is the INTENDED, zero-config use, so we do NOT
  * block RFC1918 or loopback. Doing so would impose a network-security posture
  * on the operator (Bucket B), not fix exploitable code, and would break the

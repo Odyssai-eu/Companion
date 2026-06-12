@@ -1,5 +1,5 @@
 /**
- * LAN HTTP scanner for Odysseus engines.
+ * LAN HTTP scanner for OdyssAI-X engines.
  *
  * The brief explicitly chose HTTP scan over mDNS — mDNS from inside a
  * Docker bridge network on macOS is broken (Docker Desktop limitation),
@@ -15,7 +15,7 @@
  * Caveat for the SaaS deploy: in dev this code runs inside the Docker
  * container on the Companion host, so it scans the Companion server's LAN — which happens to
  * be the deployment's LAN. For multi-tenant cloud users on different
- * networks, the scan won't find their local Odysseus. That's a known
+ * networks, the scan won't find their local OdyssAI-X. That's a known
  * limitation — Tauri desktop will solve it natively. Manual URL entry
  * stays available as the fallback.
  */
@@ -136,7 +136,7 @@ export type ScanOptions = {
   ports?: number[];
 };
 
-export async function scanForOdysseusEngines(
+export async function scanForEngines(
   opts: ScanOptions = {},
 ): Promise<FoundEngine[]> {
   // In Docker bridge mode the container only sees 172.x — useless for

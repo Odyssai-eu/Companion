@@ -21,7 +21,7 @@ export type OdyssaiModelCapabilities = {
   admin_loadable: boolean;
   alias_for?: string;
   /** Display name of the cluster this model belongs to (e.g. "Argo",
-   *  "TeleCoder"). Set by Odysseus >= 1.7.10 from the cluster def's
+   *  "TeleCoder"). Set by OdyssAI-X >= 1.7.10 from the cluster def's
    *  `name` field. Used to render picker group headings without
    *  surfacing the cluster id ("main", "telemak-code-next"). */
   cluster_label?: string;
@@ -684,10 +684,10 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // ── Join the Odyssai (Odysseus gateway pairing) ───────────────────────
+  // ── Join the Odyssai (OdyssAI-X gateway pairing) ───────────────────────
   // Server-side LAN scan returns the engines reachable from the backend's
   // network. In a typical deployment this is the Companion server's LAN — same as the deployment's LAN —
-  // so it finds Odysseus on .141. Multi-tenant cloud users on other
+  // so it finds OdyssAI-X on .141. Multi-tenant cloud users on other
   // networks need the manual URL fallback (or the future Tauri desktop).
   searchOdyssai: (body?: { subnets?: string[]; timeoutMs?: number }) =>
     request<{

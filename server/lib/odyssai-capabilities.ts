@@ -3,7 +3,7 @@
  * keyed by lowercased model id, refreshed on a 60s TTL.
  *
  * Why a cache: the `/api/models` endpoint is hit on every model picker
- * render and on every conv load (in some flows). Hitting Odysseus on
+ * render and on every conv load (in some flows). Hitting OdyssAI-X on
  * each of those would multiply the load + add latency for no gain —
  * the capability set changes only when models load/unload.
  *
@@ -28,7 +28,7 @@ const FETCH_TIMEOUT_MS = 8_000;
  * Fetch capabilities from an engine URL, with 60s TTL cache. Returns
  * an empty Map on any failure — the caller falls back to heuristics.
  *
- * Lowercase normalisation handles the well-known LiteLLM vs Odysseus
+ * Lowercase normalisation handles the well-known LiteLLM vs OdyssAI-X
  * casing skew (`Argo` vs `argo`). Both alias id and `x_concrete` are
  * indexed so consumers can look up either name.
  */

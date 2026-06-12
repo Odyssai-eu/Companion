@@ -368,7 +368,7 @@ function LoadStateBadge({
  * Anthropic…), anything else is a local pool (jaccl, mlx, …). The
  * brand convention is ☁ for cloud, ⚙ for local.
  *
- * When `cluster_label` is set (Odysseus >= 1.7.10), it takes
+ * When `cluster_label` is set (OdyssAI-X >= 1.7.10), it takes
  * precedence over the raw pool id — the picker shows "Argo" /
  * "TeleCoder" instead of "main" / "telemak-code-next".
  */

@@ -1441,7 +1441,7 @@ function LiteLLMAddon() {
           </div>
           <span className="text-[13px] leading-[20px] text-gray-600">
             Stand-alone LiteLLM proxy for cascade fallback, budget tracking,
-            or the Anthropic protocol bridge. In gateway mode Odysseus
+            or the Anthropic protocol bridge. In gateway mode OdyssAI-X
             already proxies cloud providers — most users can keep this off
             and run the simpler chain.
           </span>
