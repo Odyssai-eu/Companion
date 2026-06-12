@@ -45,6 +45,7 @@ import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
 import { getProjectMemoryContext } from "../lib/project-memory";
 import {
   buildSystemPrompt,
+  prependTagToContent,
   tagUserMessages,
 } from "../lib/prompt-builder";
 import type { GuestTokenContext } from "../lib/guest-token";
@@ -310,6 +311,12 @@ chatRoute.post("/completions", async (c) => {
   // uses its default (~/companion). A project can override it via its picker.
   let projectCwd: string | null = null;
   let memoryBlock = "";
+  // Per-turn RAG retrieval (#30). Rides WITH the question at the END of the
+  // sequence — never in the system prompt (a per-turn block there invalidates
+  // the KV prefix of the whole conversation history: measured 8% cache hit,
+  // TTFT 113s on 6.9k tok). Injected into the outgoing copy of the last user
+  // message only; never persisted.
+  let ragBlock = "";
   let convKind: "chat" | "talk" = "chat";
   // Project-level memory toggles. When the conv belongs to a project,
   // we pull these from `projects` and use them to gate global-wiki
@@ -390,25 +397,15 @@ chatRoute.post("/completions", async (c) => {
         // see the "## Project memory" marker check after the RAG query.
         let projectMemory = "";
 
-        // Global wiki (Karpathy-style compiled articles from PG, served by
-        // companion-memory at :8001/context/{userId}). This is the "what
-        // do I remember about you" store, auto-maintained by the LLM
-        // compiler after each assistant turn. NOT the Obsidian vault and
-        // NOT the RAG/Qdrant index — those serve different purposes:
-        //   - Karpathy wiki (here)   = stable personal context for prompts
-        //   - rag_search tool        = encyclopedia lookups when the model
-        //                              needs reference docs (vLLM, etc.)
-        //   - Obsidian vault index   = available via the tool when curated
-        //
-        // Injected at SYSTEM-prompt level (stable across turns → KV cache
-        // hits hold). We don't re-fetch per-turn because the wiki only
-        // changes when the compiler runs, not when the user asks something.
-        let globalBlock = "";
+        // Memory split for KV-cache stability (#30):
+        //   ragBlock    = per-turn semantic retrieval (user/team/project/
+        //                 company tiers) — VARIABLE, goes with the question
+        //                 at the end of the sequence, never in system.
+        //   memoryBlock = stable-per-conversation fallbacks only (raw
+        //                 wiki/vault while the RAG is cold) — cacheable,
+        //                 stays in the system prompt.
+        let stableFallback = "";
         if (convMemoryEnabled) {
-          // Memory is always RAG now — the wiki backend is retired. Karpathy
-          // compiles conversations INTO the RAG (nemo); it's no longer injected
-          // directly. Semantic retrieval over user/team/company graphs, with the
-          // raw vault/wiki only as a cold-start fallback when RAG is still empty.
           const lastUserMsg = body.messages
             ?.filter((m: { role: string }) => m.role === "user")
             .at(-1);
@@ -416,21 +413,23 @@ chatRoute.post("/completions", async (c) => {
             typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
           // Tiers fan out in parallel: user + team (team project) + project
           // (dedicated memory) + company.
-          globalBlock = await nemoQuery(
+          ragBlock = await nemoQuery(
             userId, query, projectId, projectTeamId,
             dedicated && projectId ? projectId : null,
           );
-          if (!globalBlock) {
-            globalBlock = await getMemoryContext(userId, projectId);
+          if (!ragBlock) {
+            // Cold start (empty index / service down): the raw wiki+vault
+            // dump is stable per conversation → safe in the system prompt.
+            stableFallback = await getMemoryContext(userId, projectId);
           }
         }
         // Cold-start fallback for the project tier (independent of the
         // conv-level memory toggle, like the old vault injection): until
         // the project's RAG collection has content, inject the raw vault.
-        if (projectId && dedicated && !globalBlock.includes("## Project memory")) {
+        if (projectId && dedicated && !ragBlock.includes("## Project memory")) {
           projectMemory = await getProjectMemoryContext(projectId);
         }
-        memoryBlock = [projectMemory, globalBlock]
+        memoryBlock = [projectMemory, stableFallback]
           .filter((s) => s.trim().length > 0)
           .join("\n\n---\n\n");
       }
@@ -518,13 +517,37 @@ chatRoute.post("/completions", async (c) => {
     skillsIndex,
   });
 
+  // #30 — attach the per-turn RAG block to the LAST user message of the
+  // OUTGOING copy (taggedMessages entries are fresh objects). The client
+  // and the DB never see it, so the persisted history stays byte-stable
+  // and the upstream KV prefix (system + full history) survives every
+  // turn; only the previous exchange + this block re-prefill.
+  let upstreamMessages = taggedMessages;
+  if (ragBlock) {
+    let lastUserIdx = -1;
+    for (let i = taggedMessages.length - 1; i >= 0; i--) {
+      if (taggedMessages[i].role === "user") { lastUserIdx = i; break; }
+    }
+    if (lastUserIdx >= 0) {
+      upstreamMessages = taggedMessages.slice();
+      const m = upstreamMessages[lastUserIdx];
+      upstreamMessages[lastUserIdx] = {
+        ...m,
+        content: prependTagToContent(
+          m.content,
+          `${ragBlock}\n\n---\n`,
+        ),
+      };
+    }
+  }
+
   const withSystem =
     composedSystem.length > 0
       ? [
           { role: "system" as const, content: composedSystem },
-          ...taggedMessages,
+          ...upstreamMessages,
         ]
-      : taggedMessages;
+      : upstreamMessages;
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)
   const baseBody: Record<string, unknown> = {

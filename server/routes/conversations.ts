@@ -10,7 +10,7 @@ import {
   listActiveForUser,
 } from "../lib/inference-state";
 import { authHeaders } from "../lib/litellm";
-import { compileNow, getMemoryContext } from "../lib/memory";
+import { compileNow, getMemoryContext, isNemoAvailable } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
 import {
   buildSystemPrompt,
@@ -641,11 +641,13 @@ conversationsRoute.post(
       .limit(1);
     if (!user) return c.json({ error: "user_not_found" }, 404);
 
-    // Memory: read the Karpathy-style compiled wiki for SYSTEM-prompt
-    // injection. Same source as chat.ts uses; bound to the conversation's
-    // memoryEnabled flag so prewarm prefix matches what chat will send.
+    // Memory in the SYSTEM prompt must mirror chat.ts (#30): when the RAG
+    // serves (nemo deployed), chat puts NOTHING in the system — the per-turn
+    // block rides with the last user message instead. Only the cold-start
+    // path (no RAG service) still injects the stable wiki/vault dump here.
+    // Diverging would make prewarm warm a prefix chat never sends.
     let memoryBlock = "";
-    if (conv.memoryEnabled !== false) {
+    if (conv.memoryEnabled !== false && !isNemoAvailable()) {
       memoryBlock = await getMemoryContext(userId, conv.projectId);
     }
 
