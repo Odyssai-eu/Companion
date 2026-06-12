@@ -45,12 +45,12 @@ export default function LoginPage() {
           </h1>
         </div>
 
-        <Field label="Email">
+        <Field label="Email or username">
           <input
-            type="email"
+            type="text"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            autoComplete="email"
+            autoComplete="username"
             required
             className="w-full rounded-lg border border-gray-200 bg-white px-3.5 py-2.5 text-[14px] text-ink outline-none focus:border-cyan focus:shadow-[0_0_0_3px_rgba(79,179,217,0.12)]"
           />

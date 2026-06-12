@@ -7,7 +7,8 @@ import { users } from "./schema";
  * Default credentials for the seeded admin user on a fresh install.
  *
  * On an empty DB, the first boot creates this admin user with a DOCUMENTED
- * generic default password ("itak1234"). It's known, it's in the docs, and
+ * generic default password ("itak1234"), reachable by just typing "odyssai" in the
+ * login field (bare identifiers normalize to @odyssai.local). It's known, it's in the docs, and
  * the operator is expected to change it on first login (Settings → Profile)
  * — the same pattern self-hosted products ship with. A known default the
  * operator can log in with immediately beats a per-install random they'd
@@ -17,7 +18,7 @@ import { users } from "./schema";
  * The seed runs ONCE on an empty DB. After it lands, future boots skip the
  * seed regardless of these constants — existing deploys are never affected.
  */
-const SEED_ADMIN_EMAIL = (process.env.SEED_ADMIN_EMAIL || "admin@odyssai.local").toLowerCase();
+const SEED_ADMIN_EMAIL = (process.env.SEED_ADMIN_EMAIL || "odyssai@odyssai.local").toLowerCase();
 const SEED_ADMIN_NAME = process.env.SEED_ADMIN_NAME || "Admin";
 const SEED_ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || "itak1234";
 

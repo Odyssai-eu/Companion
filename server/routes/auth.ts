@@ -51,9 +51,17 @@ const signupSchema = z.object({
 });
 
 const loginSchema = z.object({
-  email: z.string().email().max(320),
+  // Accepts a full email OR a bare username ("odyssai") — bare logins are
+  // normalized to <name>@odyssai.local below. Signup stays strict-email.
+  email: z.string().min(1).max(320),
   password: z.string().min(1).max(200),
 });
+
+/** "odyssai" → "odyssai@odyssai.local" ; full emails pass through. */
+function normalizeLoginIdentifier(raw: string): string {
+  const t = raw.trim().toLowerCase();
+  return t.includes("@") ? t : `${t}@odyssai.local`;
+}
 
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
@@ -166,7 +174,7 @@ authRoute.post("/signup", zValidator("json", signupSchema), async (c) => {
 
 authRoute.post("/login", zValidator("json", loginSchema), async (c) => {
   const { email, password } = c.req.valid("json");
-  const normalized = email.toLowerCase().trim();
+  const normalized = normalizeLoginIdentifier(email);
   const meta = reqMeta(c);
 
   // Rate-limit by IP — 10 attempts per 15-min window.
