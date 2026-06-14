@@ -628,14 +628,47 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
             // new stream's live placeholder + sending state survive.
             return;
           }
-          try {
-            const fresh = await api.getConversation(cid);
-            if (loadedIdRef.current === cid) {
-              setMessages(fresh.messages.map(toUIMessage));
-              setConversation(fresh.conversation);
+          // The server persists the assistant turn AFTER the stream closes; on
+          // a slow path (http-proxy / mlx-vlm) that lands later than this
+          // teardown, so a blind DB reload would show the conversation WITHOUT
+          // the just-streamed reply → the text vanishes until the next reopen
+          // (the disappearing-text bug, worse on mlx-vlm Diff-Gemma, 2026-06-14;
+          // the old fixed 300ms delay was too short for these paths). Poll the
+          // DB until the assistant turn is persisted, keeping the live
+          // placeholder visible meanwhile, and only then swap in the snapshot.
+          const streamedLen = StreamManager.get(cid)?.content.length ?? 0;
+          let fresh: Awaited<ReturnType<typeof api.getConversation>> | null = null;
+          let confirmed = false;
+          for (let attempt = 0; attempt < 8; attempt++) {
+            const now = StreamManager.get(cid);
+            if (now && now.startedAt !== teardownStart) return; // new turn took over
+            try {
+              fresh = await api.getConversation(cid);
+            } catch {
+              fresh = null;
             }
-          } catch {
-            // ignore — old placeholder stays visible until next reopen
+            if (fresh) {
+              const last = fresh.messages[fresh.messages.length - 1];
+              const persisted =
+                !!last &&
+                last.role === "assistant" &&
+                (typeof last.content === "string"
+                  ? last.content.length > 0
+                  : last.content != null);
+              if (persisted || streamedLen === 0) {
+                confirmed = true;
+                break;
+              }
+            }
+            await new Promise((r) => setTimeout(r, 250));
+          }
+          // Only swap to the DB snapshot once it actually contains the reply.
+          // If the persist somehow never landed (rare), keep the streamed
+          // placeholder — it's already in `messages` state and the next reopen
+          // (CASE 2) reconciles it. The text is never lost.
+          if (confirmed && fresh && loadedIdRef.current === cid) {
+            setMessages(fresh.messages.map(toUIMessage));
+            setConversation(fresh.conversation);
           }
           StreamManager.cleanup(cid);
           api.clearInference(cid).catch(() => undefined);
