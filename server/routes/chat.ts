@@ -45,8 +45,8 @@ import {
   modelSupportsTools,
   getModelCaps,
   resolveModelLabel,
-  maxTokensCap,
 } from "../lib/model-policy";
+import { buildUpstreamBody } from "../lib/upstream-request";
 import { getProjectMemoryContext } from "../lib/project-memory";
 import {
   buildSystemPrompt,
@@ -116,7 +116,7 @@ type IncomingMessage = {
   createdAt?: string;
 };
 
-type ChatBody = {
+export type ChatBody = {
   conversationId?: string;
   messages?: IncomingMessage[];
   model?: string;
@@ -589,74 +589,7 @@ chatRoute.post("/completions", async (c) => {
       : upstreamMessages;
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)
-  const baseBody: Record<string, unknown> = {
-    model: body.model,
-    stream: true,
-  };
-  for (const k of [
-    "temperature",
-    "max_tokens",
-    "top_p",
-    "top_k",
-    "min_p",
-    "repetition_penalty",
-    "seed",
-    "stop",
-  ] as const) {
-    const v = body[k];
-    if (v !== undefined) baseBody[k] = v;
-  }
-  // Always be explicit about thinking. Previously we only set this when
-  // body.thinking was true — that left the upstream provider to apply its
-  // own default, which is OFF for our local mlx-lm runners (THINKING_DEFAULT
-  // = false) but ON for Inferencer's API. The proxy translates
-  // `enable_thinking: false` → `thinking: false` for Inferencer-style
-  // providers, so we get consistent behaviour either way.
-  baseBody.enable_thinking = body.thinking === true;
-  // reasoning_effort is independent of the thinking toggle — reasoning-first
-  // models (Step-3.7) always think; the dial sets how much. Forward whenever
-  // the client sent a concrete level so it reaches the engine even with
-  // thinking off ("none"/empty → let the engine's per-model default decide).
-  if (body.reasoning_effort && body.reasoning_effort !== "none")
-    baseBody.reasoning_effort = body.reasoning_effort;
-
-  // Prefix-cache key for OdyssAI-X (gateway mode). OdyssAI-X reads
-  // `session_id` from the body (or X-Session-Id header) and reuses the
-  // KV cache across turns when prompts share a prefix. Using the
-  // conversation id is exactly right: every turn of a conv shares the
-  // system prompt + memory snapshot + prior messages, so the cache hit
-  // rate is high. Hybrid/legacy paths through LiteLLM also tolerate
-  // unknown body fields (they're ignored), so we send unconditionally
-  // when conversationId is present.
-  if (body.conversationId) {
-    baseBody.session_id = body.conversationId;
-  }
-
-  // Anthropic API rejects requests that set both `temperature` and `top_p`.
-  // We always honour temperature and drop top_p for any model that LiteLLM
-  // routes to Anthropic (anthropic/* alias or claude-* default name).
-  const looksAnthropic =
-    /^anthropic\//i.test(body.model) || /^claude[-_]/i.test(body.model);
-  if (looksAnthropic && "top_p" in baseBody && "temperature" in baseBody) {
-    delete baseBody.top_p;
-  }
-
-
-  // Clamp max_tokens to the provider's published ceiling so we don't get
-  // 400s from the upstream. Local models served by exo/Inferencer don't
-  // need a clamp — they use whatever they accept and bail gracefully.
-  if (typeof baseBody.max_tokens === "number") {
-    const cap = maxTokensCap(body.model);
-    if (cap !== null && baseBody.max_tokens > cap) {
-      console.warn(
-        "[chat] clamping max_tokens %d → %d for model %s",
-        baseBody.max_tokens,
-        cap,
-        body.model,
-      );
-      baseBody.max_tokens = cap;
-    }
-  }
+  const baseBody = buildUpstreamBody(body);
 
   // Tool add-ons: when enabled (and the model is tool-capable), the chat
   // route forwards tools so the model can decide when to call them. Each
