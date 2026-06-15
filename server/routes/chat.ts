@@ -31,17 +31,12 @@ import { loadRouterConfigForUser } from "./addon-router";
 import { resolveChatTools } from "../lib/chat-tools";
 import { buildUpstreamBody } from "../lib/upstream-request";
 import { resolveConvContext } from "../lib/chat-context";
-import {
-  buildSystemPrompt,
-  prependTagToContent,
-  tagUserMessages,
-} from "../lib/prompt-builder";
+import { assembleMessages } from "../lib/chat-messages";
 import type { GuestTokenContext } from "../lib/guest-token";
 import {
   isInferenceActive,
   startInference,
 } from "../lib/inference-state";
-import { buildSkillsIndex } from "../lib/tools";
 import { runChatStream } from "../lib/chat-stream";
 
 export type Env = { Variables: { userId: string } };
@@ -294,82 +289,12 @@ chatRoute.post("/completions", async (c) => {
   // .50 host remains a standalone tool — Companion just doesn't pipe
   // user conversations to it anymore. (Ketchup on chocolate cake.)
 
-  // ── 4. Inject time tags into user messages ────────────────────────────
-  //
-  // Every user message is tagged the SAME way regardless of whether it's
-  // historical or being sent now. This is the only way the tag of a given
-  // message stays byte-identical across turns — once it's tagged at turn
-  // T (when it's the latest), turn T+1 sees it as historical and must
-  // reconstruct the same tag.
-  //
-  // Rules (apply identically to latest + historical):
-  //   stamp    = m.createdAt (frontend always provides it for user msgs)
-  //   previous = previous user message's createdAt within this payload
-  //              (= lastUserAt at the moment we encounter this msg)
-  //
-  // Nothing depends on the volatile `userRow.lastInteractionAt` anymore:
-  // including it would cause the latest msg's tag at turn T to differ
-  // from its historical re-rendering at turn T+1.
-  //
-  // Gating on memory: temporal tags are useful only when the model has
-  // memory of past interactions to anchor them against. With memory OFF,
-  // `[2026-05-17T08:52:20+02:00 | Δ: 4m]` is just noise that reasoning
-  // models will spend cycles trying to justify (cf. Hy3, Hunyuan, Qwen3
-  // in thinking mode). So when memory is disabled for this conversation,
-  // we skip tagging entirely — pure user content goes to the model.
-  // Time tags + system composition routed through the shared
-  // prompt-builder so prewarm (conversations.ts) and chat stay byte-
-  // identical. The byte-stability invariant is what makes the upstream
-  // KV prefix cache actually hit on the second turn.
-  const tz = userRow.timezone || "Europe/Brussels";
-  const taggedMessages = tagUserMessages(body.messages, {
-    enabled: convMemoryEnabled,
-    timezone: tz,
-    nowFallback: now,
-  });
-  const skillsIndex = await buildSkillsIndex(userId);
-  const composedSystem = buildSystemPrompt({
-    userSystemPrompt: body.system_prompt,
-    // Today chat.ts already collapsed project + global into a single
-    // memoryBlock above (joined with the same separator). Pass it as
-    // projectMemory so the builder doesn't double-join — globalMemory
-    // stays empty in this code path.
-    projectMemory: memoryBlock,
-    globalMemory: null,
-    skillsIndex,
-  });
-
-  // #30 — attach the per-turn RAG block to the LAST user message of the
-  // OUTGOING copy (taggedMessages entries are fresh objects). The client
-  // and the DB never see it, so the persisted history stays byte-stable
-  // and the upstream KV prefix (system + full history) survives every
-  // turn; only the previous exchange + this block re-prefill.
-  let upstreamMessages = taggedMessages;
-  if (ragBlock) {
-    let lastUserIdx = -1;
-    for (let i = taggedMessages.length - 1; i >= 0; i--) {
-      if (taggedMessages[i].role === "user") { lastUserIdx = i; break; }
-    }
-    if (lastUserIdx >= 0) {
-      upstreamMessages = taggedMessages.slice();
-      const m = upstreamMessages[lastUserIdx];
-      upstreamMessages[lastUserIdx] = {
-        ...m,
-        content: prependTagToContent(
-          m.content,
-          `${ragBlock}\n\n---\n`,
-        ),
-      };
-    }
-  }
-
-  const withSystem =
-    composedSystem.length > 0
-      ? [
-          { role: "system" as const, content: composedSystem },
-          ...upstreamMessages,
-        ]
-      : upstreamMessages;
+  // ── 4/5. Inject time tags + compose system prompt + assemble withSystem.
+  // Extracted to ../lib/chat-messages (issue #31) to keep this handler under
+  // 400 loc. Byte-for-byte identical to the old inline block — see that file
+  // for the full rationale (tagging rules, RAG-block attachment, the
+  // byte-stability invariant that lets the upstream KV prefix cache hit).
+  const { withSystem } = await assembleMessages({ body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock });
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)
   const baseBody = buildUpstreamBody(body);
@@ -443,11 +368,6 @@ chatRoute.post("/completions", async (c) => {
   c.header("X-Accel-Buffering", "no");
   return c.body(readable);
 });
-
-// ── Helpers ──────────────────────────────────────────────────────────────
-// `prependTagToContent` moved to ../lib/prompt-builder; chat.ts now calls
-// it via the unified `tagUserMessages()` wrapper. Don't re-add here —
-// the audit explicitly warned that two copies will inevitably drift.
 
 // ── Tool-call streaming infrastructure ─────────────────────────────────────
 
