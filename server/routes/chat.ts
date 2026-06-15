@@ -133,6 +133,42 @@ type ChatBody = {
   stop?: string | string[];
 };
 
+// ── Code-generation gate (issue #9.2) ─────────────────────────────────────
+// A code-GENERATION request ("écris un script X.py", "write a function", a
+// ```fence```, or a source-file extension near a code verb) wants the code IN
+// THE REPLY — not an fs_write/bash tool call. Eager tool-callers (MiniMax-M3,
+// Qwen3) otherwise emit a tool call instead of the code, and the user gets a
+// file-write invocation where they asked for a snippet. We strip the FS/exec
+// tools for these prompts when agent-mode is OFF (explicit agent mode keeps
+// them — the user opted in). This sits AFTER tool selection so it gates both
+// the semantic router and the regex fallback. See OdyssAI-X integration report
+// §9.2. NB: Unicode-aware boundaries (\p{L}) so the FR "Écris" matches — JS \b
+// is ASCII-only and would miss accented verbs.
+const CODE_GEN_EXT = /\.(py|js|ts|tsx|jsx|swift|c|cc|cpp|h|hpp|rs|go|java|rb|sh|bash|sql|kt|php|scala|lua|cs)\b/i;
+const CODE_GEN_VERB =
+  /(?<!\p{L})(write|create|generate|génère|genere|écris|ecris|implement|implémente|implemente|refactor|debug|coder?|fix)(?!\p{L})/giu;
+const CODE_GEN_NOUN =
+  /(?<!\p{L})(script|function|fonction|class|classe|program|programme|module|cli|snippet|code|method|méthode|endpoint|component|composant)(?!\p{L})/iu;
+
+function isCodeGenRequest(text: string): boolean {
+  if (!text) return false;
+  if (text.includes("```")) return true;          // prompt ships/asks for code
+  if (CODE_GEN_EXT.test(text)) return true;        // names a source file
+  // code verb with a code noun within ~40 chars (avoids an incidental
+  // "function" far from a "write" — e.g. the Bruit-Blanc JSON's key).
+  CODE_GEN_VERB.lastIndex = 0;
+  let mm: RegExpExecArray | null;
+  while ((mm = CODE_GEN_VERB.exec(text))) {
+    const w = text.slice(Math.max(0, mm.index - 40), mm.index + mm[0].length + 40);
+    if (CODE_GEN_NOUN.test(w)) return true;
+  }
+  return false;
+}
+
+function toolFnName(t: unknown): string {
+  return (t as { function?: { name?: string } })?.function?.name ?? "";
+}
+
 // ── Route ────────────────────────────────────────────────────────────────
 
 chatRoute.post("/completions", async (c) => {
@@ -708,6 +744,23 @@ chatRoute.post("/completions", async (c) => {
     }
   } else {
     agentTools = [];
+  }
+
+  // §9.2: a code-GENERATION request wants the code in the reply, not an
+  // fs_write/bash tool call. Strip FS/exec tools for code-gen prompts when
+  // agent-mode is OFF (gates both the semantic router and the regex fallback).
+  if (!convAgentMode && agentTools.length > 0 && isCodeGenRequest(lastMsgText)) {
+    const before = agentTools.length;
+    agentTools = agentTools.filter((t) => {
+      const n = toolFnName(t);
+      return !n.startsWith("fs_") && n !== "bash";
+    });
+    if (agentTools.length !== before) {
+      console.log(
+        "[chat] code-gen request → stripped %d FS/exec tool(s)",
+        before - agentTools.length,
+      );
+    }
   }
 
   const tools = [...alwaysOn, ...agentTools];
