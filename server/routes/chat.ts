@@ -21,17 +21,8 @@
 
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-// Both `fetch` and `Agent` must come from the SAME undici instance — Node's
-// built-in `fetch` uses its internal undici (different version), whose
-// Dispatcher interface (onRequestStart, …) doesn't match the userland
-// `undici@8.x` package. Passing one's Agent to the other's fetch throws
-// `UND_ERR_INVALID_ARG: invalid onRequestStart method`. The fix is to use
-// undici's own fetch with undici's own Agent.
-import { Agent, fetch as undiciFetch } from "undici";
 import { db } from "../db/index";
-import { conversations, messages, users } from "../db/schema";
-import { logAuthEvent, reqMeta } from "../lib/auth-log";
-import { incrementGuestUsage } from "../lib/guest-token";
+import { users } from "../db/schema";
 import { authHeaders } from "../lib/litellm";
 import {
   routeMessage,
@@ -39,11 +30,9 @@ import {
   EmbeddingServiceError,
 } from "../lib/semantic-router";
 import { loadRouterConfigForUser } from "./addon-router";
-import { registerInactivityCompile } from "../lib/memory-scheduler";
 import {
   modelSupportsTools,
   getModelCaps,
-  resolveModelLabel,
 } from "../lib/model-policy";
 import { buildUpstreamBody } from "../lib/upstream-request";
 import { resolveConvContext } from "../lib/chat-context";
@@ -54,52 +43,20 @@ import {
 } from "../lib/prompt-builder";
 import type { GuestTokenContext } from "../lib/guest-token";
 import {
-  appendInferenceContent,
-  deleteInference,
-  finishInference,
   isInferenceActive,
-  markInferenceError,
   startInference,
 } from "../lib/inference-state";
 import {
   alwaysOnTools,
   buildSkillsIndex,
-  executeTool,
   selectToolsForIntent,
   getToolDefs,
   toolsForUser,
 } from "../lib/tools";
-import { pipeAndCollect, collectNonStream, stringifyForTool, summarizeResult } from "../lib/stream-collector";
+import { runChatStream } from "../lib/chat-stream";
 
-type Env = { Variables: { userId: string } };
+export type Env = { Variables: { userId: string } };
 const chatRoute = new Hono<Env>();
-
-// Dedicated undici Agent for upstream LLM calls. Node's default global
-// dispatcher has `bodyTimeout: 300_000` (5 min) which is too short for big
-// prefills — observed symptom: Hy3-preview on Argo with a ~30k token wiki
-// injection times out mid-prefill, undici aborts the socket with
-// UND_ERR_BODY_TIMEOUT, finishInference never runs, and the client sees
-// a "ghost answer" (the partial response disappears on reload because
-// nothing got persisted to the DB).
-//
-// We disable bodyTimeout entirely (0 = no timeout). headersTimeout was
-// 60s but that's too tight for the tools+jaccl path: `shouldUseNonStream`
-// forces `stream: false` to avoid the XML tool-call leak on Qwen3/Hy3,
-// and OdyssAI-X then doesn't send any HTTP headers until the entire
-// response is generated. On slow models (GLM-5.1 on 4-node pipeline-AP
-// at ~7 tok/s with max_tokens 64k) that's >> 60s before first byte and
-// undici fails the fetch with HeadersTimeoutError before generation
-// completes. Bump to 600s (10 min) — generous for non-stream paths,
-// invisible for streaming paths which see their first byte in <5s
-// regardless. The chat route's heartbeat + finishInference cleanup
-// still catches genuine dead connections.
-const upstreamDispatcher = new Agent({
-  connect: { timeout: 10_000 },   // 10s to TCP+TLS connect
-  headersTimeout: 600_000,         // 10 min — generous for non-stream slow models
-  bodyTimeout: 0,                  // unbounded body — long prefills OK
-  keepAliveTimeout: 60_000,
-  keepAliveMaxTimeout: 600_000,
-});
 
 // ── Types from the client ─────────────────────────────────────────────────
 
@@ -649,530 +606,31 @@ chatRoute.post("/completions", async (c) => {
     safeWrite(encoder.encode(":keepalive\n\n"));
   }, 25_000);
 
-  void (async () => {
-    let conversation: ChatTurn[] = withSystem as ChatTurn[];
-    // Max upstream calls in the tool loop. History: 3 → 8 (2026-05-29) → 20.
-    // In agent mode the model legitimately needs many rounds — with N distinct
-    // tools (Hy3 case: 8 different tools) a real workflow can chain well past 8,
-    // and capping at 8 cut the model off mid-task with the misleading loop-guard
-    // message even though it was working correctly. This is just a cost/latency
-    // ceiling now, NOT the loop's safety: the final iteration forces a closing
-    // answer (tool_choice:"none" below), so hitting the cap always yields a
-    // real synthesis instead of an error.
-    const MAX_TOOL_ITERATIONS = 20;
-    // Aggregate usage across tool-loop iterations — guests are billed for
-    // every upstream call, not just the final one.
-    let totalPromptTokens = 0;
-    let totalCompletionTokens = 0;
-    let totalChunkCount = 0;
-    let sawUpstreamUsage = false;
-
-    // Stream/non-stream upstream policy:
-    //
-    // Most models route through this code path with `stream:true` so the
-    // user gets typewriter UX on every token. But local backends (mlx-vlm,
-    // Ollama, vLLM, llama.cpp) emit tool_calls correctly only in
-    // non-stream mode — in stream they leak the model's native tool-call
-    // syntax (e.g. Qwen-XML `<tool_call>...</tool_call>`) into the content
-    // delta, and LiteLLM doesn't normalise that. Anthropic and OpenAI
-    // handle stream + tools natively.
-    //
-    // Decision: if tools are enabled AND the model is not Anthropic/OpenAI,
-    // we fetch this iteration in non-stream mode and synthesise a single
-    // SSE chunk for the client. Subsequent iterations re-evaluate (e.g.
-    // the post-tool reply doesn't always need tools).
-    const modelLower = (body.model ?? "").toLowerCase();
-    /**
-     * Decide stream vs. non-stream for the upstream call when tools
-     * are enabled. The Odyssai x_odyssai contract tells the truth:
-     *
-     *   backend=jaccl                            → local distributed MLX
-     *                                              (argo, hades, …) — many
-     *                                              chat templates leak the
-     *                                              model's native tool-call
-     *                                              syntax into content when
-     *                                              streaming. Non-stream
-     *                                              forces an atomic JSON
-     *                                              response that the
-     *                                              backend's parser can
-     *                                              normalise into
-     *                                              tool_calls correctly.
-     *   backend=http-proxy + pool=openrouter     → cloud, stream OK
-     *   backend=http-proxy + other pool          → local mlx-vlm/mlx-coder
-     *                                              proxy, same issue as
-     *                                              jaccl, force non-stream
-     *   backend=null / no caps                   → fall back to the legacy
-     *                                              name heuristic
-     */
-    function shouldUseNonStream(): boolean {
-      // Only real agent-mode tools (fs/rag/web/MCP) trigger the XML leak
-      // workaround. Skill tools alone stream fine — they're meta-curation,
-      // the model doesn't emit them mid-response.
-      if (!agentToolsEnabled) return false;
-      if (modelCaps) {
-        const backend = modelCaps.backend;
-        const pool = modelCaps.pool;
-        if (backend === "jaccl") return true;
-        if (backend === "http-proxy") {
-          // Cloud passthrough (OpenRouter) handles stream+tools natively
-          if (pool === "openrouter" || pool === "or") return false;
-          // Other http-proxy pools are local (mlx-vlm, mlx-coder, …)
-          return true;
-        }
-        // Unknown backend with caps — be conservative, force non-stream
-        return true;
-      }
-      // No caps published — fall back to name heuristic.
-      if (modelLower.includes("claude") || modelLower.startsWith("anthropic/")) return false;
-      if (modelLower.startsWith("gpt-") || modelLower.startsWith("openai/")) return false;
-      return true;
-    }
-
-    // Track whether the loop ended via natural break (model produced
-    // a final answer or no tools) vs. exhausting MAX_TOOL_ITERATIONS.
-    // The latter signals a "tool-call loop" — model keeps emitting
-    // tool_calls without ever writing a user-facing summary. We
-    // surface a helpful message in that case so the user sees what
-    // happened instead of "..." silently disappearing.
-    let exitedNaturally = false;
-    // Most recent real answer text the model produced across the loop. Used to
-    // suppress the loop-guard message when the model DID write a reply but the
-    // turn still closed on a tool_calls finish_reason (content + trailing
-    // tool_call, or a model that ignores tool_choice:"none"). "Il a tout fini
-    // mais erreur à la fin" — don't claim "no answer" when there is one.
-    let lastAssistantContent = "";
-    try {
-      for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-        const useNonStream = shouldUseNonStream();
-        // On the final allowed iteration, forbid further tool calls
-        // (tool_choice:"none") so the model MUST write a closing answer from the
-        // accumulated results instead of being cut off mid-loop with an error.
-        // We keep the `tools` field present (some strict OpenAI-compat backends
-        // reject a history containing tool messages when `tools` is absent) and
-        // only flip the choice. In agent mode the model can legitimately need
-        // many rounds — this guarantees the turn always ends with a real reply.
-        const isFinalIteration = iter === MAX_TOOL_ITERATIONS - 1;
-        const requestBody = {
-          ...baseBody,
-          stream: !useNonStream,
-          messages: conversation,
-          ...(toolsEnabled
-            ? { tools, tool_choice: isFinalIteration ? "none" : "auto" }
-            : {}),
-        };
-
-        // Debug: hash both the conversation prefix AND the actual body
-        // sent to EXO. The first reveals our internal prompt drift, the
-        // second reveals if any non-message field (params, headers, body
-        // ordering, tools schema) is breaking the EXO-side cache key.
-        const bodyJson = JSON.stringify(requestBody);
-        // Per-user verbose request log. Off by default. Flip via Settings →
-        // Inference → Debug. Logs the full upstream body before each POST so
-        // we can diagnose tool-call shape, model id resolution, streaming
-        // weirdness, etc. Truncated at 8 KiB to keep docker logs sane.
-        if (userRow.debugVerbose || process.env.DEBUG_VERBOSE === "1") {
-          const preview = bodyJson.length > 8192
-            ? bodyJson.slice(0, 8192) + `…[+${bodyJson.length - 8192}B]`
-            : bodyJson;
-          console.log(
-            `[chat:upstream] iter=${iter} target=${target.baseUrl} ` +
-            `bytes=${bodyJson.length} body=${preview}`,
-          );
-        }
-        if (process.env.DEBUG_PROMPT_HASH === "1") {
-          const { createHash } = await import("node:crypto");
-          const parts: string[] = [];
-          for (let k = 1; k <= conversation.length; k++) {
-            const sub = JSON.stringify(conversation.slice(0, k));
-            const h = createHash("sha256")
-              .update(sub)
-              .digest("hex")
-              .slice(0, 10);
-            parts.push(`${k}:${conversation[k - 1].role[0]}=${h}`);
-          }
-          const fullJson = JSON.stringify(conversation);
-          const bodyHash = createHash("sha256")
-            .update(bodyJson)
-            .digest("hex")
-            .slice(0, 10);
-          // Hash the body without the LAST message — should be byte-stable
-          // across consecutive turns of the same conversation.
-          const bodyMinusLast = JSON.stringify({
-            ...requestBody,
-            messages: conversation.slice(0, -1),
-          });
-          const bodyPrefixHash = createHash("sha256")
-            .update(bodyMinusLast)
-            .digest("hex")
-            .slice(0, 10);
-          console.log(
-            `[chat:prompt-hash] msgs=${conversation.length} bytes=${fullJson.length} bodyBytes=${bodyJson.length} body=${bodyHash} bodyPrefix=${bodyPrefixHash} ${parts.join(" ")}`,
-          );
-        }
-
-        const upstream = await undiciFetch(
-          `${target.baseUrl}/v1/chat/completions`,
-          {
-            method: "POST",
-            headers,
-            body: bodyJson,
-            dispatcher: upstreamDispatcher,
-          },
-        );
-
-        if (!upstream.ok || !upstream.body) {
-          const text = await upstream.text().catch(() => "");
-          const err = `${upstream.status} ${upstream.statusText}: ${text.slice(0, 200)}`;
-          console.error("[chat] upstream not ok:", err);
-          await safeWrite(
-            encoder.encode(`data: ${JSON.stringify({ error: err })}\n\n`),
-          );
-          break;
-        }
-
-        // undici's fetch returns its own Response type; structurally compatible
-        // with the global Response that collectNonStream/pipeAndCollect expect.
-        const upstreamResp = upstream as unknown as Response;
-        const { toolCalls, finishReason, assistantContent, usage, chunkCount } =
-          useNonStream
-            ? await collectNonStream(upstreamResp, writer, encoder, body.conversationId)
-            : await pipeAndCollect(upstreamResp, writer, encoder, body.conversationId);
-        totalChunkCount += chunkCount;
-        if (usage) {
-          sawUpstreamUsage = true;
-          totalPromptTokens += usage.promptTokens;
-          totalCompletionTokens += usage.completionTokens;
-        }
-        // Retain the last non-empty reply (don't reset to "" on pure tool turns).
-        if (assistantContent && assistantContent.trim()) {
-          lastAssistantContent = assistantContent;
-        }
-
-        if (
-          toolsEnabled &&
-          finishReason === "tool_calls" &&
-          toolCalls.length > 0
-        ) {
-          // Notify the client visually (the parser ignores `_event` shape).
-          await safeWrite(
-            encoder.encode(
-              `data: ${JSON.stringify({
-                _event: "tool_start",
-                calls: toolCalls.map((tc) => ({
-                  name: tc.name,
-                  args: tryParseJson(tc.argumentsRaw),
-                })),
-              })}\n\n`,
-            ),
-          );
-
-          // Execute tools in parallel
-          const results = await Promise.all(
-            toolCalls.map((tc) =>
-              executeTool(tc.name, tryParseJson(tc.argumentsRaw), userId, projectCwd),
-            ),
-          );
-
-          await safeWrite(
-            encoder.encode(
-              `data: ${JSON.stringify({
-                _event: "tool_done",
-                calls: toolCalls.map((tc, i) => ({
-                  name: tc.name,
-                  result: summarizeResult(results[i]),
-                })),
-              })}\n\n`,
-            ),
-          );
-
-          // For workspace-mutating fs_* tools, push a file_changed event so
-          // the FilesPage hook (useWorkspaceFiles) can refresh in live.
-          for (let i = 0; i < toolCalls.length; i++) {
-            const tc = toolCalls[i];
-            const r = results[i];
-            if (!r.ok) continue;
-            if (tc.name !== "fs_write" && tc.name !== "fs_edit") continue;
-            const path = (r.data as { path?: string } | undefined)?.path;
-            if (!path) continue;
-            await safeWrite(
-              encoder.encode(
-                `data: ${JSON.stringify({ _event: "file_changed", path })}\n\n`,
-              ),
-            );
-          }
-
-          // Append assistant tool_calls + tool results to history for next iter
-          conversation = [
-            ...conversation,
-            {
-              role: "assistant",
-              content: assistantContent || null,
-              tool_calls: toolCalls.map((tc) => ({
-                id: tc.id,
-                type: "function",
-                function: {
-                  name: tc.name,
-                  arguments: tc.argumentsRaw,
-                },
-              })),
-            },
-            ...toolCalls.map((tc, i) => ({
-              role: "tool" as const,
-              tool_call_id: tc.id,
-              content: stringifyForTool(results[i]),
-            })),
-          ];
-          // Loop again — the model will integrate tool results into a final
-          // answer (or call more tools).
-          continue;
-        }
-        // Ghost guard: if the turn ends with NO assistant content and no
-        // tool calls, finishInference would skip persist (it requires
-        // inf.content truthy) → the bubble vanishes on reload. This is the
-        // recurring "ghost answer": a thinking model streams only
-        // `reasoning_content` (captured above into the reasoning channel)
-        // and never emits a `content` delta — e.g. thinking is enabled and
-        // the turn closes after the reasoning, or it hits the token cap
-        // mid-think. Mirror collectNonStream's fallback: emit a short note
-        // so the turn persists with something visible instead of ghosting.
-        if (!assistantContent.trim() && body.conversationId) {
-          const note =
-            "_(No answer was produced. If this model streams its reasoning on "
-            + "a separate channel, it may have spent the turn thinking without "
-            + "writing a reply — try disabling thinking for this model, or use a "
-            + "hosted model like `or:claude-haiku`.)_";
-          for (let i = 0; i < note.length; i += 32) {
-            const piece = note.slice(i, i + 32);
-            await safeWrite(
-              encoder.encode(
-                `data: ${JSON.stringify({
-                  choices: [
-                    { index: 0, delta: { content: piece }, finish_reason: null },
-                  ],
-                })}\n\n`,
-              ),
-            );
-            appendInferenceContent(body.conversationId, piece);
-          }
-        }
-        // Either no tools requested, or finish_reason !== "tool_calls" → done.
-        exitedNaturally = true;
-        break;
-      }
-      // Tool-call loop: the model kept emitting tool_calls without ever
-      // producing a final user-facing summary. Observed with Qwen3.6 on
-      // mlx-vlm when the second iteration's prompt grows large (tool
-      // results stuffed in). Without this fallback the user sees only
-      // the model's intro line ("I'll search...") then silence.
-      // Suppress when the model DID write a real reply this turn — the message
-      // would otherwise contradict an answer the user can plainly see.
-      if (!exitedNaturally && !lastAssistantContent.trim() && body.conversationId) {
-        const note =
-          "\n\nError - The model kept asking to call tools without writing a final answer";
-        for (let i = 0; i < note.length; i += 32) {
-          const piece = note.slice(i, i + 32);
-          await safeWrite(
-            encoder.encode(
-              `data: ${JSON.stringify({
-                choices: [
-                  { index: 0, delta: { content: piece }, finish_reason: null },
-                ],
-              })}\n\n`,
-            ),
-          );
-          appendInferenceContent(body.conversationId, piece);
-        }
-        await safeWrite(
-          encoder.encode(
-            `data: ${JSON.stringify({
-              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-            })}\n\n`,
-          ),
-        );
-      }
-      // End-of-stream marker for the client parser
-      await safeWrite(encoder.encode("data: [DONE]\n\n"));
-
-      // Guest accounting — bill the token, log the use. We do this after
-      // the stream has fully drained so we have the real usage numbers.
-      if (guest) {
-        // Fallback: when upstream didn't report `usage` (older EXO, some
-        // local engines), use the chunk count as a coarse proxy. Each
-        // streamed delta is ~1 token in practice for OpenAI-compat servers.
-        const completionTokens = sawUpstreamUsage
-          ? totalCompletionTokens
-          : totalChunkCount;
-        try {
-          await incrementGuestUsage(guest.id, completionTokens);
-        } catch (err) {
-          console.error("[chat] guest usage increment failed:", err);
-        }
-        const meta = reqMeta(c);
-        logAuthEvent({
-          userId: guest.createdBy,
-          event: "guest.use",
-          ip: meta.ip,
-          userAgent: meta.userAgent,
-          meta: {
-            tokenId: guest.id,
-            promptTokens: sawUpstreamUsage ? totalPromptTokens : null,
-            completionTokens,
-            usageReported: sawUpstreamUsage,
-          },
-        });
-      }
-    } catch (err) {
-      console.error("[chat] upstream pipe failed:", err);
-      if (body.conversationId) markInferenceError(body.conversationId, String(err));
-      await safeWrite(
-        encoder.encode(`data: ${JSON.stringify({ error: String(err) })}\n\n`),
-      );
-      await safeWrite(encoder.encode("data: [DONE]\n\n"));
-    } finally {
-      clearInterval(heartbeat);
-      try {
-        await writer.close();
-      } catch {
-        // already closed
-      }
-      // Mark the inference-state buffer done. The persist callback is the
-      // single source of assistant-message DB writes from now on — the
-      // client used to call api.appendMessage('assistant', …) on stream
-      // end, but Phase 2 of the inference-state port moves that here so
-      // the message lands even if the client disconnected mid-stream.
-      if (body.conversationId) {
-        const convIdLocal = body.conversationId;
-        // Resolve once before persistence — the cap cache is 60s TTL so this
-        // is a Map.get in the steady state. Failure falls back to raw alias.
-        const modelLabel = body.model
-          ? await resolveModelLabel(
-              body.model,
-              target?.baseUrl ?? null,
-              target?.apiKey ?? null,
-            ).catch(() => body.model)
-          : body.model;
-        await finishInference(convIdLocal, async (content, _reasoning, st) => {
-          const stats = sawUpstreamUsage
-            ? {
-                ttft: st.ttftMs !== null ? `${st.ttftMs}ms` : undefined,
-                tokens: st.promptTokens + st.completionTokens,
-                promptTokens: st.promptTokens,
-                completionTokens: st.completionTokens,
-                reasoningTokens: st.reasoningTokens,
-                // Cached prompt tokens — 0 = full re-prefill, >0 = upstream
-                // (oMLX tiered KV / Anthropic prompt cache) served part of
-                // the prefix from cache. Surfaced in the UI as "Cached".
-                cachedTokens: st.cachedTokens,
-                chunks: totalChunkCount,
-                durationMs: st.totalMs,
-                speed:
-                  st.totalMs && st.completionTokens
-                    ? `${((st.completionTokens / st.totalMs) * 1000).toFixed(1)} tok/s`
-                    : undefined,
-                // Decode-only tok/s — completion / (duration - ttft). Matches
-                // the throughput numbers model providers advertise (e.g.
-                // inferencer announces 5 tok/s for Mistral-Medium-3.5; the
-                // raw end-to-end "speed" pulls that down because it counts
-                // the prompt-eval phase in the denominator). Both rates
-                // shown side-by-side so users can sanity-check vs spec.
-                //
-                // Only meaningful when there's a genuine decode window. In
-                // non-stream mode (the tools path) the whole response lands
-                // at once, so ttft ≈ total, the decode window collapses to a
-                // few ms, and the rate explodes to a garbage ~1000 tok/s
-                // (observed 2026-05-29). Require the decode phase to be a
-                // non-trivial slice of total (≥250 ms AND ≥10% of duration)
-                // and at least a few tokens before trusting the number;
-                // otherwise suppress it (the UI just shows overall speed).
-                decodeSpeed: (() => {
-                  if (!st.totalMs || st.ttftMs === null || !st.completionTokens) {
-                    return undefined;
-                  }
-                  const decodeMs = st.totalMs - st.ttftMs;
-                  if (
-                    decodeMs < 250 ||
-                    decodeMs < st.totalMs * 0.1 ||
-                    st.completionTokens < 5
-                  ) {
-                    return undefined;
-                  }
-                  return `${((st.completionTokens / decodeMs) * 1000).toFixed(1)} tok/s`;
-                })(),
-                model: modelLabel,
-              }
-            : { chunks: totalChunkCount, durationMs: st.totalMs, model: modelLabel };
-          // Surface the auto-router decision so the UI can render a chip
-          // "via Auto → {model} ({label}, {score})". Stored on the
-          // assistant message so it's visible when the chat is reopened.
-          const statsWithRouting = routedDecision
-            ? { ...stats, routedFrom: "auto", routedLabel: routedDecision.label, routedScore: routedDecision.score, routedMs: routedDecision.ms }
-            : stats;
-          try {
-            await db.insert(messages).values({
-              conversationId: convIdLocal,
-              role: "assistant",
-              content,
-              stats: statsWithRouting as Record<string, unknown>,
-            });
-            await db
-              .update(conversations)
-              .set({ updatedAt: new Date() })
-              .where(eq(conversations.id, convIdLocal));
-          } catch (e) {
-            console.error(
-              "[chat] server-side assistant persist failed:",
-              (e as Error).message,
-            );
-          }
-        });
-        // Drop the buffer after a grace window so a late-arriving client
-        // can still see the final content via /inference. 60s is enough
-        // for a tab-switch / page-reload to catch up.
-        setTimeout(() => deleteInference(convIdLocal), 60_000);
-      }
-      // Memory wiki refresh — registered for inactivity-based compile.
-      // Was previously a per-turn `triggerCompile` call, which hammered
-      // the local Inferencer and contended with chat latency. Now we
-      // just mark the conv as a candidate; memory-scheduler fires the
-      // compile after MEMORY_INACTIVITY_COMPILE_MS (default 10 min) of
-      // quiet, OR via the time-scheduled slots (06/12:30/19).
-      // Suppressed when:
-      //  - the conv kind isn't 'chat' (Talk handles its own context)
-      //  - the conv's memoryEnabled is off
-      //  - the conv is a guest session (don't pollute the owner's wiki)
-      //  - the project has globalMemoryReadOnly = true (explicit opt-out)
-      //  - the project has dedicatedMemoryEnabled = true (writes belong
-      //    to the project corpus, not the global wiki)
-      //  - a custom system prompt is active (persona / fiction / writing
-      //    benchmark sessions). Compiling one into the biographical wiki
-      //    is exactly how "Le Bruit Blanc" became a lived memory
-      //    (2026-06-12) — so the conv is tainted DURABLY: memoryEnabled
-      //    flips off in DB (visible as the conv's memory toggle), which
-      //    also shields it from the scheduled global slots, not just
-      //    from this turn's registration.
-      if (body.system_prompt && body.conversationId && convMemoryEnabled) {
-        void db
-          .update(conversations)
-          .set({ memoryEnabled: false })
-          .where(eq(conversations.id, body.conversationId))
-          .then(() =>
-            console.log(
-              `[memory] conv ${body.conversationId} memoryEnabled→off (custom system prompt active)`,
-            ),
-          )
-          .catch(() => {});
-      } else if (
-        body.conversationId &&
-        convKind === "chat" &&
-        convMemoryEnabled &&
-        !guest &&
-        !projectGlobalReadOnly &&
-        !projectDedicatedMemoryEnabled
-      ) {
-        registerInactivityCompile(userId, body.conversationId);
-      }
-    }
-  })();
+  void runChatStream({
+    writer,
+    encoder,
+    safeWrite,
+    heartbeat,
+    withSystem,
+    baseBody,
+    tools,
+    toolsEnabled,
+    agentToolsEnabled,
+    modelCaps,
+    target,
+    headers,
+    userId,
+    projectCwd,
+    body,
+    userRow,
+    guest,
+    routedDecision,
+    convKind,
+    convMemoryEnabled,
+    projectGlobalReadOnly,
+    projectDedicatedMemoryEnabled,
+    c,
+  });
 
   c.header("Content-Type", "text/event-stream");
   c.header("Cache-Control", "no-cache");
@@ -1190,7 +648,7 @@ chatRoute.post("/completions", async (c) => {
 /** A row in the OpenAI-shaped messages array. We don't have to be strict —
  *  LiteLLM forwards extra fields like tool_calls or tool_call_id to its
  *  model adapters. */
-type ChatTurn =
+export type ChatTurn =
   | IncomingMessage
   | {
       role: "assistant";
@@ -1209,15 +667,5 @@ type ChatTurn =
 
 // model-policy helpers (modelSupportsTools / getModelCaps / resolveModelLabel
 // / maxTokensCap) extracted to ../lib/model-policy.ts — see issue #16.
-
-function tryParseJson(s: string): Record<string, unknown> {
-  if (!s) return {};
-  try {
-    const v = JSON.parse(s);
-    return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
 
 export default chatRoute;
