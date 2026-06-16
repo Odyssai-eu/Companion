@@ -139,11 +139,12 @@ export async function loadOmnigentConfigForUser(
 
 export type OmnigentRunInput = {
   task: string;
+  /** Agent profile to dispatch. The bridge builds the bundle from this and
+   *  knows only `polly` | `debby` | `custom` (bundle.py KNOWN_AGENTS). `polly`
+   *  IS the multi-agent orchestrator with cross-vendor review — there is no
+   *  separate orchestrate flag on the bridge, intent is encoded purely via the
+   *  agent profile. Omit to fall back to the configured default / `custom`. */
   agent?: string;
-  /** Hint passed straight to the bridge — lets omnigent_orchestrate request
-   *  multi-agent / cross-vendor review without a separate endpoint. */
-  orchestrate?: boolean;
-  crossVendorReview?: boolean;
 };
 
 /** SSE event re-emitted up to a caller that wants to stream
@@ -215,7 +216,11 @@ export async function runOmnigentSession(
   }
 
   const base = cfg.serverUrl!.replace(/\/+$/, "");
-  const agent = input.agent || cfg.defaultAgent || undefined;
+  // Agent profile resolution — the bridge knows only polly|debby|custom and
+  // builds the bundle from it. Fall back to the configured default, then to
+  // "custom" (the bridge's generic single-agent escape hatch) so the addon,
+  // not the bridge's settings.default_agent, decides the default.
+  const agent = input.agent || cfg.defaultAgent || "custom";
 
   // Resolve the user's enabledTools → the {name, description, parameters_schema}
   // shape the bridge expects, so the agent knows what it may call back into.
@@ -248,9 +253,6 @@ export async function runOmnigentSession(
         companion_callback_url: enabledTools.length ? callbackUrl : undefined,
         enabled_tools: enabledTools.length ? enabledTools : undefined,
         callback_token: enabledTools.length ? callbackToken : undefined,
-        // Provisional orchestration hints (flag for bridge reconciliation):
-        orchestrate: input.orchestrate || undefined,
-        cross_vendor_review: input.crossVendorReview || undefined,
       }),
       signal: AbortSignal.timeout(30_000),
     });
@@ -563,8 +565,6 @@ omnigentRoute.post("/probe", async (c) => {
 const runSchema = z.object({
   task: z.string().min(1).max(50_000),
   agent: z.string().max(120).optional(),
-  orchestrate: z.boolean().optional(),
-  crossVendorReview: z.boolean().optional(),
 });
 
 omnigentRoute.post("/run", zValidator("json", runSchema), async (c) => {
@@ -667,10 +667,10 @@ omnigentPublicRoute.post(
       c.req.valid("json");
 
     // Defence in depth: only tools the user explicitly exposed may be called.
+    // Same unwrapped error shape the bridge stringifies into the agent output.
     if (sess.enabledTools.size > 0 && !sess.enabledTools.has(tool)) {
       return c.json({
         result: {
-          ok: false,
           error: `tool '${tool}' is not in this session's allow-list`,
         },
       });
@@ -689,18 +689,23 @@ omnigentPublicRoute.post(
     }
 
     try {
-      const result = await executeTool(
+      const outcome = await executeTool(
         tool,
         (args ?? {}) as Record<string, unknown>,
         sess.userId,
       );
-      // executeTool already returns {ok:true,data}|{ok:false,error}; pass it
-      // through as the `result` the bridge expects.
+      // The bridge stringifies whatever we put in `result` straight into the
+      // agent's function_call_output.output (client_tools.py:226-237). So we
+      // UNWRAP executeTool's {ok,data}|{ok,error} envelope: on success the
+      // agent sees the tool's actual `data`, on failure a clean {error}.
+      // Returning the raw envelope would make the agent read a confusing
+      // stringified {"ok":true,"data":…} blob.
+      const result = outcome.ok ? outcome.data : { error: outcome.error };
       return c.json({ result, call_id });
     } catch (e) {
-      // Never 500 — hand the agent a usable error.
+      // Never 500 — hand the agent a usable error (unwrapped, as above).
       return c.json({
-        result: { ok: false, error: (e as Error).message },
+        result: { error: (e as Error).message },
         call_id,
       });
     }

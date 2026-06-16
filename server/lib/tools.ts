@@ -509,12 +509,12 @@ const OMNIGENT_TOOLS = [
     function: {
       name: "omnigent_orchestrate",
       description:
-        "Delegate a task to the Omnigent orchestrator, which can fan it out " +
-        "across multiple agents and (optionally) run a cross-vendor review " +
-        "pass where a different model checks the work. Use this for larger or " +
-        "higher-stakes tasks that benefit from multi-agent collaboration or a " +
-        "second-model sanity check. Returns the orchestrated result plus a " +
-        "digest of the agents and tools involved.",
+        "Delegate a task to the Omnigent orchestrator (the 'polly' agent), " +
+        "which fans it out across multiple agents and runs a cross-vendor " +
+        "review pass where a different model checks the work. Use this for " +
+        "larger or higher-stakes tasks that benefit from multi-agent " +
+        "collaboration plus a second-model sanity check. Returns the " +
+        "orchestrated result plus a digest of the agents and tools involved.",
       parameters: {
         type: "object",
         properties: {
@@ -523,13 +523,6 @@ const OMNIGENT_TOOLS = [
             description:
               "The full task description for the orchestrator, in natural " +
               "language.",
-          },
-          cross_vendor_review: {
-            type: "boolean",
-            description:
-              "Request a cross-vendor (different-model) review pass on the " +
-              "result. Default true.",
-            default: true,
           },
         },
         required: ["task"],
@@ -1451,12 +1444,10 @@ async function executeOmnigentTool(
   }
 
   if (name === "omnigent_orchestrate") {
-    const crossVendorReview = args.cross_vendor_review !== false; // default true
-    const r = await runOmnigentSession(userId, {
-      task,
-      orchestrate: true,
-      crossVendorReview,
-    });
+    // "polly" IS the multi-agent orchestrator (with cross-vendor review) on the
+    // bridge — there is no orchestrate flag, the agent profile encodes the
+    // intent (bundle.py: polly = "Companion-dispatched orchestrator agent").
+    const r = await runOmnigentSession(userId, { task, agent: "polly" });
     if (!r.ok) {
       return { ok: false, error: r.error ?? "omnigent orchestrate failed" };
     }
@@ -1467,7 +1458,7 @@ async function executeOmnigentTool(
         status: r.status,
         output: r.text,
         events: r.events,
-        cross_vendor_review: crossVendorReview,
+        agent: "polly",
         summary: omnigentSummary(r.text, r.events),
       },
     };
