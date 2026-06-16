@@ -21,6 +21,10 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { isLocalAgentConnected, localAgentExecute } from "../routes/local-agent";
+import {
+  runOmnigentSession,
+  getOmnigentSessionStatus,
+} from "../routes/addon-omnigent";
 import { db } from "../db/index";
 import { addons, agentSkills, mcpServers } from "../db/schema";
 import {
@@ -462,6 +466,98 @@ const SKILL_TOOLS = [
   },
 ];
 
+// ── Omnigent agent-delegation tools (gated by the Omnigent add-on) ──────────
+// The model calls these to hand a task to autonomous Omnigent agents on the
+// thecompai-omnigent-bridge. The agent can, in turn, call back into Companion
+// tools (the "deux sens" reverse channel handled in routes/addon-omnigent.ts).
+// Only surfaced to the model when the add-on is enabled + configured — see
+// toolsForUser(). Execution dispatches through runOmnigentSession() /
+// getOmnigentSessionStatus() in-process so the userId context is preserved.
+const OMNIGENT_TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "omnigent_run",
+      description:
+        "Delegate a task to a single autonomous Omnigent agent and wait for " +
+        "its result. Use this for a self-contained job you want an agent to " +
+        "carry out end-to-end (research, multi-step file work, a coding task) " +
+        "rather than doing it yourself turn-by-turn. Returns the agent's final " +
+        "output plus a digest of the tools it used. The agent may call back " +
+        "into your enabled Companion tools while it works.",
+      parameters: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+            description:
+              "The full task description for the agent, in natural language.",
+          },
+          agent: {
+            type: "string",
+            description:
+              "Which Omnigent agent to use. Omit to use the configured " +
+              "default agent.",
+          },
+        },
+        required: ["task"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "omnigent_orchestrate",
+      description:
+        "Delegate a task to the Omnigent orchestrator, which can fan it out " +
+        "across multiple agents and (optionally) run a cross-vendor review " +
+        "pass where a different model checks the work. Use this for larger or " +
+        "higher-stakes tasks that benefit from multi-agent collaboration or a " +
+        "second-model sanity check. Returns the orchestrated result plus a " +
+        "digest of the agents and tools involved.",
+      parameters: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+            description:
+              "The full task description for the orchestrator, in natural " +
+              "language.",
+          },
+          cross_vendor_review: {
+            type: "boolean",
+            description:
+              "Request a cross-vendor (different-model) review pass on the " +
+              "result. Default true.",
+            default: true,
+          },
+        },
+        required: ["task"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "omnigent_status",
+      description:
+        "Check the status of a previously started Omnigent session by its " +
+        "session id (returned by omnigent_run / omnigent_orchestrate). Use " +
+        "this to poll a long-running session you did not wait on.",
+      parameters: {
+        type: "object",
+        properties: {
+          sessionId: {
+            type: "string",
+            description: "The Omnigent session id to check.",
+          },
+        },
+        required: ["sessionId"],
+      },
+    },
+  },
+];
+
 export const TOOL_SCHEMAS = WEB_SEARCH_TOOLS;  // legacy export for places that still reference it
 
 /** Compact agent-skills catalog — progressive-disclosure tier 1
@@ -514,6 +610,10 @@ export async function toolsForUser(userId: string): Promise<unknown[]> {
   const out: unknown[] = [...FS_TOOLS, ...NATIVE_TOOLS];
   if (isRagConfigured()) out.push(...RAG_TOOLS);
   if (await isWebSearchEnabled(userId)) out.push(...WEB_SEARCH_TOOLS);
+  // Omnigent agent-delegation tools — only when the add-on is enabled +
+  // configured (mirrors the Web Search gate). Keeps the schema out of the
+  // prompt for users who don't run a bridge.
+  if (await isOmnigentEnabled(userId)) out.push(...OMNIGENT_TOOLS);
 
   // MCP tools — third-party servers the user registered. Read the cache
   // and refresh entries older than the TTL in the background; the cached
@@ -713,6 +813,68 @@ export async function getWebSearchKey(userId: string): Promise<string | null> {
 export async function isWebSearchEnabled(userId: string): Promise<boolean> {
   const k = await getWebSearchKey(userId);
   return Boolean(k);
+}
+
+// ── Omnigent add-on gating + tool resolution ──────────────────────────────
+const OMNIGENT_ADDON_NAME = "Omnigent";
+
+/** True when the Omnigent add-on row is enabled AND has a serverUrl. Mirrors
+ *  the Web Search gate so the omnigent_* tools only enter the prompt for users
+ *  who actually run a bridge. */
+export async function isOmnigentEnabled(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ enabled: addons.enabled, config: addons.config })
+    .from(addons)
+    .where(and(eq(addons.userId, userId), eq(addons.name, OMNIGENT_ADDON_NAME)))
+    .limit(1);
+  if (!row || !row.enabled) return false;
+  const cfg = (row.config ?? {}) as { serverUrl?: string };
+  return Boolean(cfg.serverUrl);
+}
+
+/**
+ * Resolve a list of Companion tool names into the
+ * `{name, description, parameters_schema}` shape the Omnigent bridge expects
+ * for `enabled_tools` (the tools the agent may call back into).
+ *
+ * The candidate set is everything this user could call this turn — always-on
+ * tools plus their gated/MCP tools (toolsForUser) — so exposing e.g. an MCP
+ * tool or a skill_* tool to the agent works exactly as it would in chat.
+ * Unknown / not-currently-available names are silently dropped (the agent
+ * simply won't be offered them).
+ *
+ * NOTE: the omnigent_* tools themselves are excluded from the exposable set —
+ * we don't let a delegated agent recursively spawn more Omnigent runs through
+ * the reverse channel.
+ */
+export async function resolveExposableTools(
+  userId: string,
+  names: string[],
+): Promise<
+  Array<{ name: string; description: string; parameters_schema: unknown }>
+> {
+  if (!names || names.length === 0) return [];
+  const wanted = new Set(names);
+  const candidates = [...alwaysOnTools(), ...(await toolsForUser(userId))];
+  const out: Array<{
+    name: string;
+    description: string;
+    parameters_schema: unknown;
+  }> = [];
+  const seen = new Set<string>();
+  for (const tool of candidates) {
+    const fn = (tool as { function?: { name?: string; description?: string; parameters?: unknown } }).function;
+    const name = fn?.name;
+    if (!name || !wanted.has(name) || seen.has(name)) continue;
+    if (name.startsWith("omnigent_")) continue; // no recursive delegation
+    seen.add(name);
+    out.push({
+      name,
+      description: fn?.description ?? "",
+      parameters_schema: fn?.parameters ?? { type: "object", properties: {} },
+    });
+  }
+  return out;
 }
 
 // ── Legacy Hermes tools (no-op stubs) ─────────────────────────────────────
@@ -1193,6 +1355,9 @@ export async function executeTool(
   if (name === "cluster_action" || name === "hermes_agent") {
     return hermesLegacyStub();
   }
+  if (name.startsWith("omnigent_")) {
+    return executeOmnigentTool(name, args, userId);
+  }
   if (name.startsWith("mcp_")) {
     return executeMcpTool(name, args, userId);
   }
@@ -1244,6 +1409,83 @@ async function executeMcpTool(
     };
   }
   return { ok: true, data: res.content };
+}
+
+// ── Omnigent tool dispatch ────────────────────────────────────────────────
+// omnigent_run / omnigent_orchestrate → start a bridge session and wait for
+// the consolidated result. omnigent_status → poll a session. The heavy lifting
+// (SSE consumption, callback-token lifecycle) lives in routes/addon-omnigent.ts
+// so the down path and the reverse channel share one module.
+async function executeOmnigentTool(
+  name: string,
+  args: ToolArgs,
+  userId: string,
+): Promise<ToolResult> {
+  if (name === "omnigent_status") {
+    const sessionId = String(args.sessionId ?? "").trim();
+    if (!sessionId) return { ok: false, error: "missing 'sessionId'" };
+    const r = await getOmnigentSessionStatus(userId, sessionId);
+    return r.ok ? { ok: true, data: r.status } : { ok: false, error: r.error };
+  }
+
+  const task = String(args.task ?? "").trim();
+  if (!task) return { ok: false, error: "missing 'task'" };
+
+  if (name === "omnigent_run") {
+    const agent =
+      typeof args.agent === "string" && args.agent.trim()
+        ? args.agent.trim()
+        : undefined;
+    const r = await runOmnigentSession(userId, { task, agent });
+    if (!r.ok) return { ok: false, error: r.error ?? "omnigent run failed" };
+    return {
+      ok: true,
+      data: {
+        session_id: r.sessionId,
+        status: r.status,
+        output: r.text,
+        events: r.events,
+        summary: omnigentSummary(r.text, r.events),
+      },
+    };
+  }
+
+  if (name === "omnigent_orchestrate") {
+    const crossVendorReview = args.cross_vendor_review !== false; // default true
+    const r = await runOmnigentSession(userId, {
+      task,
+      orchestrate: true,
+      crossVendorReview,
+    });
+    if (!r.ok) {
+      return { ok: false, error: r.error ?? "omnigent orchestrate failed" };
+    }
+    return {
+      ok: true,
+      data: {
+        session_id: r.sessionId,
+        status: r.status,
+        output: r.text,
+        events: r.events,
+        cross_vendor_review: crossVendorReview,
+        summary: omnigentSummary(r.text, r.events),
+      },
+    };
+  }
+
+  return { ok: false, error: `unknown omnigent tool: ${name}` };
+}
+
+/** Short human-readable summary surfaced in the chat tool-result chip. */
+function omnigentSummary(
+  text: string,
+  events: Array<Record<string, unknown>>,
+): string {
+  const toolCalls = events.filter((e) => e.kind === "tool_start").length;
+  const bits: string[] = [];
+  if (text) bits.push(`${text.length.toLocaleString()} chars output`);
+  if (toolCalls) bits.push(`${toolCalls} tool call${toolCalls === 1 ? "" : "s"}`);
+  return bits.join(", ") || "completed";
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -1526,7 +1768,7 @@ async function skillDelete(userId: string, name: string): Promise<ToolResult> {
 
 // Map tool name → its definition (for lazy injection)
 const TOOL_BY_NAME = new Map<string, unknown>(
-  [...FS_TOOLS, ...NATIVE_TOOLS].map((t) => [
+  [...FS_TOOLS, ...NATIVE_TOOLS, ...OMNIGENT_TOOLS].map((t) => [
     (t as { function: { name: string } }).function.name,
     t,
   ]),

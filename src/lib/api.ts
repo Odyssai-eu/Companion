@@ -1368,6 +1368,49 @@ export const api = {
       method: "POST",
     }),
 
+  // Omnigent add-on — bidirectional bridge client. See addon-omnigent.ts on
+  // the server. The model drives Omnigent agents via the omnigent_* tools
+  // (down path); the agent calls back into Companion's tools via the reverse
+  // /tool-callback channel (up path). This client only manages connection +
+  // exposure config.
+  omnigentAddonInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      configured: boolean;
+      serverUrl: string;
+      defaultAgent: string;
+      enabledAgents: string[];
+      enabledTools: string[];
+      hasApiKey: boolean;
+    }>("/api/addons/omnigent/info"),
+  omnigentAddonSetConfig: (body: {
+    enabled?: boolean;
+    serverUrl?: string;
+    apiKey?: string | null;
+    defaultAgent?: string | null;
+    enabledAgents?: string[];
+    enabledTools?: string[];
+  }) =>
+    request<{
+      ok: true;
+      enabled: boolean;
+      configured: boolean;
+      serverUrl: string;
+      defaultAgent: string;
+      enabledAgents: string[];
+      enabledTools: string[];
+      hasApiKey: boolean;
+    }>("/api/addons/omnigent/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  omnigentAddonProbe: () =>
+    request<{ ok: boolean; health?: unknown; error?: string; status?: number }>(
+      "/api/addons/omnigent/probe",
+      { method: "POST" },
+    ),
+
   // Auto Router add-on (semantic routing via embeddings)
   routerInfo: () =>
     request<{
