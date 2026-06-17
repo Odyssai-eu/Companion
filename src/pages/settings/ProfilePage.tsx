@@ -150,6 +150,7 @@ function MemoryVaultSection() {
     externalVaultPath?: string | null;
     externalVaultReadOnly?: boolean;
     autoMemoryEnabled?: boolean;
+    memoryMode?: "basic" | "advanced";
   }) {
     setSavingSettings(true);
     setErr(null);
@@ -289,6 +290,32 @@ function MemoryVaultSection() {
             <span className="text-gray-500">
               — when off, only your imported vault is injected ; the Karpathy
               auto-wiki is bypassed.
+            </span>
+          </label>
+          {savingSettings && (
+            <span className="font-mono text-[10px] text-gray-400">saving…</span>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2 text-[12px]">
+          <label className="flex items-center gap-2 text-ink">
+            <span className="font-medium">Memory mode</span>
+            <select
+              className="rounded border border-gray-300 bg-white px-2 py-1 text-[12px]"
+              value={settings?.memoryMode ?? "advanced"}
+              onChange={(e) =>
+                void commitSettings({
+                  memoryMode: e.target.value === "basic" ? "basic" : "advanced",
+                })
+              }
+            >
+              <option value="advanced">Advanced (RAG + 3 levels)</option>
+              <option value="basic">Basic (Wiki LLM only)</option>
+            </select>
+            <span className="text-gray-500">
+              — basic injects only the auto-compiled wiki + imported vault (no
+              embeddings, no Qdrant) ; advanced adds semantic RAG across the
+              personal / team / company tiers.
             </span>
           </label>
           {savingSettings && (

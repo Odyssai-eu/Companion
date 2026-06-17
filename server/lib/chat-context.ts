@@ -25,6 +25,10 @@ export type ConvContext = {
 export async function resolveConvContext(
   userId: string,
   body: ChatBody,
+  // Per-user memory mode (#29). 'advanced' (default) = RAG path (nemoQuery,
+  // embeddings, Qdrant). 'basic' = wiki/vault path only (getMemoryContext) —
+  // never calls nemoQuery, even when the nemo service is up.
+  memoryMode: "basic" | "advanced" = "advanced",
 ): Promise<ConvContext> {
   let projectId: string | null = null;
   // Working directory for local-agent tool execution. null → companion-local
@@ -131,16 +135,24 @@ export async function resolveConvContext(
             .at(-1);
           const query =
             typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-          // Tiers fan out in parallel: user + team (team project) + project
-          // (dedicated memory) + company.
-          ragBlock = await nemoQuery(
-            userId, query, projectId, projectTeamId,
-            dedicated && projectId ? projectId : null,
-          );
-          if (!ragBlock) {
-            // Cold start (empty index / service down): the raw wiki+vault
-            // dump is stable per conversation → safe in the system prompt.
+          if (memoryMode === "basic") {
+            // Basic mode (#29): force the wiki/vault path ONLY. Never call
+            // nemoQuery — no embeddings, no Qdrant, no /embed — even when the
+            // nemo service is available. The full wiki+vault dump is stable
+            // per conversation → safe in the system prompt (capped downstream).
             stableFallback = await getMemoryContext(userId, projectId);
+          } else {
+            // Advanced mode: tiers fan out in parallel: user + team (team
+            // project) + project (dedicated memory) + company.
+            ragBlock = await nemoQuery(
+              userId, query, projectId, projectTeamId,
+              dedicated && projectId ? projectId : null,
+            );
+            if (!ragBlock) {
+              // Cold start (empty index / service down): the raw wiki+vault
+              // dump is stable per conversation → safe in the system prompt.
+              stableFallback = await getMemoryContext(userId, projectId);
+            }
           }
         }
         // Cold-start fallback for the project tier (independent of the

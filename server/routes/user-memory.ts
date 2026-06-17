@@ -10,7 +10,7 @@
  *   POST   /api/profile/vault/import         multipart zip — unpacked into the corpus
  *   POST   /api/profile/vault/external       absolute path on the server filesystem
  *                                            → walk + copy into the corpus
- *   PUT    /api/profile/vault/settings       externalVaultPath / readOnly / autoMemoryEnabled
+ *   PUT    /api/profile/vault/settings       externalVaultPath / readOnly / autoMemoryEnabled / memoryMode
  *   DELETE /api/profile/vault/file?path=…    remove one file
  *   DELETE /api/profile/vault                wipe the whole corpus
  *
@@ -73,6 +73,7 @@ userMemoryRoute.get("/", async (c) => {
       externalVaultPath: users.externalVaultPath,
       externalVaultReadOnly: users.externalVaultReadOnly,
       autoMemoryEnabled: users.autoMemoryEnabled,
+      memoryMode: users.memoryMode,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -87,6 +88,8 @@ userMemoryRoute.get("/", async (c) => {
       externalVaultPath: u?.externalVaultPath ?? null,
       externalVaultReadOnly: u?.externalVaultReadOnly ?? true,
       autoMemoryEnabled: u?.autoMemoryEnabled ?? true,
+      memoryMode:
+        u?.memoryMode === "basic" ? "basic" : "advanced",
     },
   });
 });
@@ -198,6 +201,7 @@ const settingsSchema = z.object({
   externalVaultPath: z.string().max(1000).nullable().optional(),
   externalVaultReadOnly: z.boolean().optional(),
   autoMemoryEnabled: z.boolean().optional(),
+  memoryMode: z.enum(["basic", "advanced"]).optional(),
 });
 
 userMemoryRoute.put(
@@ -216,6 +220,9 @@ userMemoryRoute.put(
     }
     if (data.autoMemoryEnabled !== undefined) {
       patch.autoMemoryEnabled = data.autoMemoryEnabled;
+    }
+    if (data.memoryMode !== undefined) {
+      patch.memoryMode = data.memoryMode;
     }
     if (Object.keys(patch).length === 0) {
       return c.json({ ok: true, changed: false });

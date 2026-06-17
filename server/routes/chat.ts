@@ -188,6 +188,7 @@ chatRoute.post("/completions", async (c) => {
         engineMode: users.engineMode,
         litellmDisabled: users.litellmDisabled,
         debugVerbose: users.debugVerbose,
+        memoryMode: users.memoryMode,
       })
       .from(users)
       .where(eq(users.id, userId))
@@ -253,7 +254,11 @@ chatRoute.post("/completions", async (c) => {
     projectCwd, memoryBlock, ragBlock, convKind,
     projectGlobalReadOnly, projectDedicatedMemoryEnabled, convMemoryEnabled,
     convAgentMode,
-  } = await resolveConvContext(userId, body);
+  } = await resolveConvContext(
+    userId,
+    body,
+    (userRow.memoryMode === "basic" ? "basic" : "advanced"),
+  );
 
   // ── 3a. Inference-state buffer — open the server-side stream record so
   // the user can navigate away / refresh / open the same conv from another

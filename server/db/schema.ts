@@ -101,6 +101,13 @@ export const users = pgTable("users", {
   // Flip false when the user wants 100% manual control — only their
   // imported ZIP + external vault are injected, the service is bypassed.
   autoMemoryEnabled: boolean("auto_memory_enabled").notNull().default(true),
+  // Memory injection mode (#29). 'advanced' (default → zero regression) runs
+  // the full RAG path: nemoQuery() across the user/team/project/company tiers
+  // with embeddings + Qdrant. 'basic' forces the wiki/vault path
+  // (getMemoryContext) ONLY — no embeddings, no Qdrant, no nemoQuery — even
+  // when the nemo service is up. Orthogonal to conversations.memoryEnabled
+  // (the on/off switch): memoryMode only decides WHICH path when memory is ON.
+  memoryMode: text("memory_mode").notNull().default("advanced"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .default(sql`now()`),

@@ -324,6 +324,8 @@ export type ApiUserMemorySettings = {
   externalVaultPath: string | null;
   externalVaultReadOnly: boolean;
   autoMemoryEnabled: boolean;
+  // #29: 'advanced' (default) = full RAG path; 'basic' = wiki/vault only.
+  memoryMode: "basic" | "advanced";
 };
 
 export type ApiAddon = {
@@ -1152,6 +1154,7 @@ export const api = {
     externalVaultPath?: string | null;
     externalVaultReadOnly?: boolean;
     autoMemoryEnabled?: boolean;
+    memoryMode?: "basic" | "advanced";
   }) =>
     request<{ ok: boolean; changed: boolean }>(`/api/profile/vault/settings`, {
       method: "PUT",

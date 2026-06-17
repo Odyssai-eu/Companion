@@ -2,7 +2,18 @@
 
 Companion's memory system gives you a persistent, queryable knowledge base that grows with every conversation. It runs on **nemo-memory** — a native macOS service using `Qwen3-Embedding-0.6B-4bit-DWQ` via MLX on Apple Silicon — and organises context across three levels.
 
+## Basic vs advanced mode
+
+Memory injection runs in one of two modes, chosen per user in *Settings → Profile → Global memory vault → Memory mode*:
+
+- **Basic (Wiki LLM only)** — injects only the auto-compiled Karpathy wiki plus your imported vault. No embeddings, no Qdrant, no nemo-memory query in the chat hot-path. This is the "memory de base" — it works fully even when the nemo-memory / mlx-embed services are stopped, and never fires a `ragRetrieve` / `/embed` call. The full wiki+vault is injected (capped) and stays stable across the conversation.
+- **Advanced (RAG + 3 levels)** — the default. Adds semantic RAG on top: each turn queries nemo-memory across the personal / team / company tiers (embeddings + Qdrant) and injects the top relevant chunks. Falls back to the basic wiki+vault dump on cold start or if the service is down.
+
+The mode is **orthogonal** to the per-conversation Memory toggle (the chat-header switch): the toggle decides *whether* memory is injected at all; the mode decides *which path* runs when it is on. Default is **advanced** so existing users keep current behaviour.
+
 ## Memory levels
+
+> The three levels below describe **advanced** mode. In **basic** mode only the personal Wiki LLM + imported vault are injected, with no semantic retrieval across tiers.
 
 ### Personal memory (your knowledge graph)
 
