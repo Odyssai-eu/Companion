@@ -352,6 +352,8 @@ chatRoute.post("/completions", async (c) => {
     headers,
     userId,
     projectCwd,
+    memoryBlock,
+    ragBlock,
     body,
     userRow,
     guest,

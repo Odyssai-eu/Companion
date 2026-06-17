@@ -330,6 +330,17 @@ function AssistantMessage({
         {showMetrics && message.stats && !message.streaming && (
           <StatsRow stats={message.stats} model={message.model} />
         )}
+        {/* #36 memory transparency — inspectable chip of what memory was
+         *  injected this turn. Only present when something WAS injected. */}
+        {showMetrics &&
+          !message.streaming &&
+          message.stats?.memoryInjected &&
+          (message.stats.memoryTokens ?? 0) > 0 && (
+            <MemoryBlock
+              tokens={message.stats.memoryTokens ?? 0}
+              injected={message.stats.memoryInjected}
+            />
+          )}
         {!message.streaming && message.content && (
           <>
             <ActionsRow message={message} onRegenerate={onRegenerate} />
@@ -690,6 +701,54 @@ function StatsRow({
       >
         Copy
       </button>
+    </div>
+  );
+}
+
+/**
+ * #36 memory transparency — a compact "Memory N tok" chip that expands to
+ * reveal the exact memory text injected for this turn (stable wiki/vault +
+ * per-turn RAG). Rendered only when memory WAS injected (memoryTokens > 0);
+ * absence is the signal. Mirrors the ReasoningBlock collapse pattern.
+ */
+function MemoryBlock({
+  tokens,
+  injected,
+}: {
+  tokens: number;
+  injected: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-lg border border-gray-200 bg-gray-50/60">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left"
+      >
+        <span className="flex items-center gap-2 font-mono text-[11px] tracking-[0.04em] text-gray-600 uppercase">
+          <span className="h-1.5 w-1.5 rounded-full bg-cyan" />
+          <span>Memory {tokens} tok</span>
+        </span>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`text-gray-400 transition-transform ${open ? "rotate-180" : ""}`}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="max-h-[420px] overflow-auto border-t border-gray-200 px-4 py-3 font-mono text-[12px] leading-[18px] whitespace-pre-wrap text-gray-600">
+          {injected}
+        </div>
+      )}
     </div>
   );
 }

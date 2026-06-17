@@ -87,6 +87,14 @@ export type ChatStreamCtx = {
   headers: Record<string, string>;
   userId: string;
   projectCwd: string | null;
+  /** The memory actually injected this turn (#36 transparency). Both can be
+   *  "" when nothing was injected. `memoryBlock` = the stable per-conversation
+   *  wiki/vault prefix (system prompt); `ragBlock` = the per-turn semantic
+   *  retrieval that rides with the last user message. We only echo their
+   *  size + text into the assistant message stats so the user can inspect
+   *  exactly what was sent — we do NOT touch the injection itself. */
+  memoryBlock: string;
+  ragBlock: string;
   body: ChatBody;
   userRow: { debugVerbose: boolean };
   guest: GuestTokenContext | undefined;
@@ -116,6 +124,8 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
     headers,
     userId,
     projectCwd,
+    memoryBlock,
+    ragBlock,
     body,
     userRow,
     guest,
@@ -528,8 +538,35 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
               target?.apiKey ?? null,
             ).catch(() => body.model)
           : body.model;
+        // #36 memory transparency — surface exactly what memory was injected
+        // this turn so the user can see "ce qui part". memoryBlock = stable
+        // per-conversation wiki/vault (system prompt); ragBlock = per-turn
+        // semantic retrieval. Both can be "" (nothing injected → emit nothing,
+        // absence is the signal). Token estimate = chars/4 (no tokenizer).
+        // This only READS the already-injected strings; it does not change
+        // the injection (byte-stability / KV-cache invariant untouched).
+        const memChars = memoryBlock.length;
+        const ragChars = ragBlock.length;
+        const memoryFields =
+          memChars + ragChars > 0
+            ? {
+                memoryChars: memChars,
+                ragChars: ragChars,
+                memoryTokens: Math.ceil((memChars + ragChars) / 4),
+                memoryInjected: [
+                  memChars > 0
+                    ? `=== Memory (stable, system prompt) ===\n${memoryBlock}`
+                    : null,
+                  ragChars > 0
+                    ? `=== RAG (per-turn retrieval) ===\n${ragBlock}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join("\n\n"),
+              }
+            : {};
         await finishInference(convIdLocal, async (content, _reasoning, st) => {
-          const stats = sawUpstreamUsage
+          const statsBase = sawUpstreamUsage
             ? {
                 ttft: st.ttftMs !== null ? `${st.ttftMs}ms` : undefined,
                 tokens: st.promptTokens + st.completionTokens,
@@ -578,6 +615,9 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
                 model: modelLabel,
               }
             : { chunks: totalChunkCount, durationMs: st.totalMs, model: modelLabel };
+          // Fold in the #36 memory-transparency fields (empty object when no
+          // memory was injected → nothing surfaces in the UI).
+          const stats = { ...statsBase, ...memoryFields };
           // Surface the auto-router decision so the UI can render a chip
           // "via Auto → {model} ({label}, {score})". Stored on the
           // assistant message so it's visible when the chat is reopened.
