@@ -462,13 +462,6 @@ const SKILL_TOOLS = [
   },
 ];
 
-// Omnigent is NOT a model-callable tool. It is driven by the `/omnigent`
-// slash-command (agent-mode TUI, like /hermes) — see useChat.ts +
-// OmnigentPanel.tsx. The bridge client lives in routes/addon-omnigent.ts; the
-// panel consumes its `POST /run` SSE surface directly. (The old LLM-tool
-// approach — omnigent_run / omnigent_orchestrate / omnigent_status — was
-// dropped: an autonomous agent isn't a tool the model decides to call. #32)
-
 export const TOOL_SCHEMAS = WEB_SEARCH_TOOLS;  // legacy export for places that still reference it
 
 /** Compact agent-skills catalog — progressive-disclosure tier 1
@@ -720,57 +713,6 @@ export async function getWebSearchKey(userId: string): Promise<string | null> {
 export async function isWebSearchEnabled(userId: string): Promise<boolean> {
   const k = await getWebSearchKey(userId);
   return Boolean(k);
-}
-
-// ── Omnigent reverse-channel tool resolution ───────────────────────────────
-// The Omnigent agent (driven by the `/omnigent` slash-command TUI) can call
-// back into Companion's own tools during a run. resolveExposableTools maps the
-// user's enabledTools allow-list into the shape the bridge expects. (The old
-// LLM-tool gate isOmnigentEnabled was dropped with the omnigent_* tools — #32.)
-
-/**
- * Resolve a list of Companion tool names into the
- * `{name, description, parameters_schema}` shape the Omnigent bridge expects
- * for `enabled_tools` (the tools the agent may call back into).
- *
- * The candidate set is everything this user could call this turn — always-on
- * tools plus their gated/MCP tools (toolsForUser) — so exposing e.g. an MCP
- * tool or a skill_* tool to the agent works exactly as it would in chat.
- * Unknown / not-currently-available names are silently dropped (the agent
- * simply won't be offered them).
- *
- * NOTE: the omnigent_* tools themselves are excluded from the exposable set —
- * we don't let a delegated agent recursively spawn more Omnigent runs through
- * the reverse channel.
- */
-export async function resolveExposableTools(
-  userId: string,
-  names: string[],
-): Promise<
-  Array<{ name: string; description: string; parameters_schema: unknown }>
-> {
-  if (!names || names.length === 0) return [];
-  const wanted = new Set(names);
-  const candidates = [...alwaysOnTools(), ...(await toolsForUser(userId))];
-  const out: Array<{
-    name: string;
-    description: string;
-    parameters_schema: unknown;
-  }> = [];
-  const seen = new Set<string>();
-  for (const tool of candidates) {
-    const fn = (tool as { function?: { name?: string; description?: string; parameters?: unknown } }).function;
-    const name = fn?.name;
-    if (!name || !wanted.has(name) || seen.has(name)) continue;
-    if (name.startsWith("omnigent_")) continue; // no recursive delegation
-    seen.add(name);
-    out.push({
-      name,
-      description: fn?.description ?? "",
-      parameters_schema: fn?.parameters ?? { type: "object", properties: {} },
-    });
-  }
-  return out;
 }
 
 // ── Legacy Hermes tools (no-op stubs) ─────────────────────────────────────

@@ -25,9 +25,6 @@ import hermesAddonRoute from "./routes/addon-hermes";
 import hermesAgentRoute from "./routes/agent-hermes";
 import piAddonRoute from "./routes/addon-pi";
 import piAgentRoute from "./routes/agent-pi";
-import omnigentAddonRoute, {
-  omnigentPublicRoute,
-} from "./routes/addon-omnigent";
 import helpRoute from "./routes/help";
 import { loadCorpus as loadHelpCorpus } from "./lib/help-search";
 import adminGuestTokensRoute from "./routes/admin-guest-tokens";
@@ -123,11 +120,6 @@ app.use("/api/help", requireUser);
 // Resolve bearer-token auth for the Obsidian plugin BEFORE requireUser runs,
 // so the plugin can hit /api/addons/obsidian/vault.zip without a session cookie.
 app.use("/api/addons/obsidian/vault.zip", obsidianBearerLoader);
-// Omnigent reverse channel: the bridge POSTs the agent's Companion-tool calls
-// here, authenticated by a per-session callback_token (NOT a cookie). Mounted
-// BEFORE the requireUser gate so the cookie check never blocks the bridge; the
-// handler authenticates the token itself.
-app.route("/api/addons/omnigent", omnigentPublicRoute);
 app.use("/api/addons/*", requireUser);
 // MCP endpoint — Streamable HTTP, stateless. Auth is bearer-token only
 // (Cowork dispatch, Hermes Agent, third-party MCP clients hit this with
@@ -177,10 +169,6 @@ app.route("/api/addons/hermes", hermesAddonRoute);
 app.route("/api/agents/hermes", hermesAgentRoute);
 app.route("/api/addons/pi", piAddonRoute);
 app.route("/api/agents/pi", piAgentRoute);
-// Omnigent add-on (authenticated routes: /info, /config, /probe, /run,
-// /sessions/:id). The public /tool-callback is mounted separately above,
-// before the requireUser gate.
-app.route("/api/addons/omnigent", omnigentAddonRoute);
 app.route("/api/help", helpRoute);
 app.route("/api/models", modelsRoute);
 app.route("/api/inference", inferenceRoute);

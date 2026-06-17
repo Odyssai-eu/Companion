@@ -83,16 +83,6 @@ The niveau-2 architecture (coming) ships a small daemon you can install on any m
 
 The setup above is Companion → Hermes (you type `/hermes …` and Companion sends the prompt to the bridge). Hermes can also call **back into Companion** via MCP — useful when the agent needs to recall something from your memory, list your saved skills, or post a message into another conversation. That direction is covered in [Agents tokens](agents-tokens#hermes-agent): mint a `hms_…` token in Settings, then `hermes mcp add companion --url …`. Once both sides are wired, a single `/hermes` turn can read your memory, write a file, and post a follow-up — all without leaving the agent box.
 
-## `/omnigent` — autonomous multi-agent orchestrator
-
-`/omnigent` works exactly like `/hermes`: type it to enter Omnigent mode, type `/omnigent <prompt>` to enter and dispatch in one go, `/exit` (or `/omnigent_off`) to leave.
-
-The difference is under the hood. Where Hermes embeds its own web TUI, Omnigent talks to Companion over a streaming **bridge** (`thecompai-omnigent-bridge`). Companion sends your task to the bridge's `/run` endpoint and renders the run **inline** in the Omnigent panel — the same terminal box as Hermes: `$ your prompt` in cyan, the agent's text streamed in white, and amber `⚒ tool ·` / `⚑ approval ·` lines for every action and approval request. `⟲ reset` drops the local transcript so the next prompt starts a fresh bridge session.
-
-Omnigent is **bidirectional**: while a run is in flight, the agent can call **back** into Companion's own tools (the tools you exposed in its add-on settings) — so a single Omnigent turn can read your memory, run a Companion tool, and hand the result back to the agent without leaving the box.
-
-To use it: **Settings → Add-ons → Omnigent** — set the **bridge URL** (`http://<host>:8010`), an optional **API key**, a **default agent** profile (e.g. `polly`, the multi-agent orchestrator with cross-vendor review), and which Companion tools the agent may call back into. **Test connection** confirms the bridge answers `/health`. If the add-on is off or unconfigured, `/omnigent` returns a clear pointer back to this Settings page — it never silently falls through to normal chat.
-
 ## Adding more agents
 
 The slash command pattern is generic. Future drops will add:
