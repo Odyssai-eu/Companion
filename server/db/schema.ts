@@ -101,11 +101,6 @@ export const users = pgTable("users", {
   // Flip false when the user wants 100% manual control — only their
   // imported ZIP + external vault are injected, the service is bypassed.
   autoMemoryEnabled: boolean("auto_memory_enabled").notNull().default(true),
-  // Global memory-injection master switch (#36). Default FALSE — memory is
-  // OFF by default, the user opts in. When false the chat hot-path injects
-  // ZERO memory (no nemoQuery / getMemoryContext calls). Distinct from
-  // autoMemoryEnabled, which only governs wiki auto-compile, not injection.
-  memoryEnabled: boolean("memory_enabled").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .default(sql`now()`),
@@ -348,10 +343,12 @@ export const conversations = pgTable(
     // background.
     memorySnapshot: text("memory_snapshot"),
     memorySnapshotAt: timestamp("memory_snapshot_at", { withTimezone: true }),
-    // Per-conversation memory toggle. Inherited from project.memoryEnabled
-    // at creation; user can flip it from the chat header. When false, the
+    // Per-conversation memory toggle — THE memory control (green header
+    // switch). Default OFF (#36): a new conversation starts with memory off
+    // (toggle grey); the user flips it green to inject memory. Inherited from
+    // project.memoryEnabled at creation when in a project. When false, the
     // wiki is not injected into the prompt and "Remember now" is disabled.
-    memoryEnabled: boolean("memory_enabled").notNull().default(true),
+    memoryEnabled: boolean("memory_enabled").notNull().default(false),
     // Per-conversation "agent mode". When false (default), NO tool defs are
     // injected — `tools` is omitted from the upstream body entirely. This
     // gives a clean ~250-token prompt instead of 1000+ tokens of always-on

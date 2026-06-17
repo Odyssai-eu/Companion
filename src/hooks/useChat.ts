@@ -1460,7 +1460,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     /** Effective memory toggle: persisted conv value when the conv
      *  exists, else the pre-conversation pending override, else true. */
     memoryEnabled:
-      conversation?.memoryEnabled ?? pendingMemoryEnabled ?? true,
+      conversation?.memoryEnabled ?? pendingMemoryEnabled ?? false,
     /** Effective agent-mode (tools) toggle: persisted conv value when the
      *  conv exists, else the pre-conversation pending override, else false.
      *  Lets the TopBar tools button reflect a pre-first-message flip. (#28) */

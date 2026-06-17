@@ -113,10 +113,11 @@ conversationsRoute.post(
     //      lets the chat UI pre-toggle OFF before the conv exists, and
     //      lets MCP clients (Cowork etc.) override the inherited value.
     //   2. Otherwise inherit from the parent project (if any).
-    //   3. Otherwise default to true.
+    //   3. Otherwise default to FALSE (#36 — memory OFF by default; the user
+    //      flips the green header toggle to turn it on).
     // When memory ends up off we skip the wiki snapshot (no point paying
     // for a memory-service round-trip the route won't use).
-    let memoryEnabled = true;
+    let memoryEnabled = false;
     if (typeof data.memoryEnabled === "boolean") {
       memoryEnabled = data.memoryEnabled;
     } else if (data.projectId) {

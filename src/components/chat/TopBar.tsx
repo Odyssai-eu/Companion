@@ -30,7 +30,7 @@ export default function TopBar({
   panelOpen,
   onOpenMobileSidebar,
   conversationId,
-  memoryEnabled = true,
+  memoryEnabled = false,
   onToggleMemory,
   agentMode = false,
   onToggleAgentMode,
