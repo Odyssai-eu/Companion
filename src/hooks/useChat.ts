@@ -191,6 +191,14 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   // Hermes web dashboard), same as Pi. URL from the Hermes Agent add-on config.
   // When set, `/hermes` opens the iframe instead of the (retired) ACP bubble.
   const [hermesBridgeUrl, setHermesBridgeUrl] = useState<string>("");
+  // Omnigent runs as an agent-mode TUI (`/omnigent`), like Hermes — but the
+  // Omnigent bridge has no web UI to iframe, it's a pure SSE bridge. So the
+  // composer routes prompts to `POST /api/addons/omnigent/run` and we render
+  // the run client-side (OmnigentPanel). We just track whether the add-on is
+  // enabled + configured (so `/omnigent` can surface a clear error otherwise)
+  // and the default agent profile to dispatch.
+  const [omnigentReady, setOmnigentReady] = useState(false);
+  const [omnigentAgent, setOmnigentAgent] = useState<string>("");
   const [inferenceMode, setInferenceMode] = useState<
     "easy" | "advanced" | "expert"
   >("expert");
@@ -336,6 +344,18 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       })
       .catch(() => {
         /* not configured — leave hermesBridgeUrl empty (falls back to bubble) */
+      });
+    // Omnigent — agent-mode TUI driven by the SSE bridge. Track readiness so
+    // `/omnigent` can route the composer or surface a "not configured" error.
+    api
+      .omnigentAddonInfo()
+      .then((info) => {
+        if (cancelled) return;
+        setOmnigentReady(Boolean(info.enabled && info.configured));
+        setOmnigentAgent(info.defaultAgent ?? "");
+      })
+      .catch(() => {
+        /* not configured — leave omnigentReady false */
       });
     return () => {
       cancelled = true;
@@ -852,6 +872,180 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   );
 
   /**
+   * Omnigent agent run — like invokeAgent, but speaks the Omnigent bridge SSE
+   * shape rather than ACP. The `POST /api/addons/omnigent/run` route streams
+   * `event: omnigent` lines whose `data` is a collapsed `{kind, ...}` object
+   * (tool_start | tool_done | approval | status | text), then a terminal
+   * `event: done` (consolidated result) or `event: error`. We accumulate the
+   * `text` kind into one growing agent line and surface tool/approval/status
+   * as their own lines — rendered by OmnigentPanel (reuses AgentBubble shapes).
+   */
+  const omnigentInvoke = useCallback(
+    async (prompt: string) => {
+      setAgentError(null);
+      setAgentStreaming(true);
+
+      const userLineId = `local-user-${Date.now()}`;
+      setAgentMessages((prev) => [
+        ...prev,
+        { id: userLineId, role: "user", content: prompt },
+      ]);
+
+      const agentLineId = `local-omni-${Date.now()}`;
+      let agentText = "";
+      setAgentMessages((prev) => [
+        ...prev,
+        { id: agentLineId, role: "agent", content: "" },
+      ]);
+
+      const upsertToolLine = (
+        ev: Record<string, unknown>,
+        approval: boolean,
+      ) => {
+        const callId =
+          (ev.call_id as string) ??
+          (ev.id as string) ??
+          (ev.tool as string) ??
+          `${Date.now()}-${Math.random()}`;
+        const title =
+          (ev.title as string) ??
+          (ev.tool as string) ??
+          (ev.name as string) ??
+          (ev.kind as string) ??
+          "(tool)";
+        setAgentMessages((prev) => {
+          const lineId = `omni-tool-${callId}`;
+          const existing = prev.find((m) => m.id === lineId);
+          const stats = {
+            phase: ev.kind,
+            approval,
+            args: ev.arguments ?? ev.args ?? ev.result ?? ev.output ?? null,
+          };
+          if (existing) {
+            // tool_done after tool_start — update the same line in place.
+            return prev.map((m) =>
+              m.id === lineId
+                ? { ...m, content: title, stats }
+                : m,
+            );
+          }
+          // Insert the new tool line BEFORE the growing agent text line so the
+          // transcript reads in causal order.
+          const idx = prev.findIndex((m) => m.id === agentLineId);
+          const line: (typeof prev)[number] = {
+            id: lineId,
+            role: "tool",
+            content: title,
+            stats,
+          };
+          if (idx === -1) return [...prev, line];
+          return [...prev.slice(0, idx), line, ...prev.slice(idx)];
+        });
+      };
+
+      try {
+        const res = await fetch("/api/addons/omnigent/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            task: prompt,
+            ...(omnigentAgent ? { agent: omnigentAgent } : {}),
+          }),
+        });
+        if (!res.ok || !res.body) {
+          const err = await res.json().catch(() => ({
+            detail: res.statusText || `omnigent error ${res.status}`,
+          }));
+          setAgentError(
+            (err as { detail?: string; error?: string }).detail ??
+              (err as { error?: string }).error ??
+              `omnigent error ${res.status}`,
+          );
+          setAgentMessages((prev) => prev.filter((m) => m.id !== agentLineId));
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split("\n\n");
+          buffer = blocks.pop() ?? "";
+          for (const block of blocks) {
+            let event = "message";
+            let data = "";
+            for (const line of block.split("\n")) {
+              if (line.startsWith("event:")) event = line.slice(6).trim();
+              else if (line.startsWith("data:")) data += line.slice(5).trim();
+            }
+            if (!data) continue;
+            let parsed: Record<string, unknown>;
+            try {
+              parsed = JSON.parse(data);
+            } catch {
+              continue;
+            }
+            if (event === "omnigent") {
+              const kind = String(parsed.kind ?? "");
+              if (kind === "text") {
+                agentText += typeof parsed.text === "string" ? parsed.text : "";
+                setAgentMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === agentLineId ? { ...m, content: agentText } : m,
+                  ),
+                );
+              } else if (kind === "tool_start" || kind === "tool_done") {
+                upsertToolLine(parsed, false);
+              } else if (kind === "approval") {
+                upsertToolLine(parsed, true);
+              } else if (kind === "status") {
+                if (parsed.status === "error" || parsed.error) {
+                  setAgentError(
+                    String(parsed.error ?? parsed.reason ?? "agent error"),
+                  );
+                }
+              }
+            } else if (event === "done") {
+              // Consolidated result. If no `text` events streamed (the bridge
+              // only sent a final blob), backfill the agent line from it.
+              const result = parsed as { text?: string; error?: string };
+              if (!agentText && typeof result.text === "string" && result.text) {
+                setAgentMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === agentLineId
+                      ? { ...m, content: result.text as string }
+                      : m,
+                  ),
+                );
+              }
+              if (result.error) setAgentError(result.error);
+            } else if (event === "error") {
+              setAgentError(
+                (parsed as { message?: string }).message ?? "stream error",
+              );
+            }
+          }
+        }
+      } catch (e) {
+        setAgentError((e as Error).message);
+      } finally {
+        setAgentStreaming(false);
+      }
+    },
+    [omnigentAgent],
+  );
+
+  /** Drop the local Omnigent transcript. Next prompt starts a fresh bridge
+   *  session (the bridge mints a new session per `/run`). */
+  const omnigentReset = useCallback(() => {
+    setAgentMessages([]);
+    setAgentError(null);
+  }, []);
+
+  /**
    * /help <question> — RAG against the user-guide wiki.
    *
    * Server-side strips conv context: only the wiki + the question are
@@ -1072,6 +1266,47 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           return;
         }
 
+        if (cmd === "omnigent") {
+          if (!omnigentReady) {
+            setError(
+              "The Omnigent add-on isn't enabled or its bridge isn't " +
+                "configured. Open Settings → Add-ons → Omnigent to set it up.",
+            );
+            return;
+          }
+          // Need a conv before invoking; create one if this is a fresh chat.
+          let convId = conversationId ?? conversation?.id ?? null;
+          if (!convId) {
+            try {
+              const created = await api.createConversation({
+                title: (rest || "Omnigent session").slice(0, 80),
+                ...(model ? { model } : {}),
+              });
+              convId = created.conversation.id;
+              setConversation(created.conversation);
+              navigate(`/c/${convId}`, { replace: true });
+            } catch (e) {
+              setError((e as Error).message);
+              return;
+            }
+          }
+          // Enter agent mode (persistent — stays until /exit or /omnigent_off).
+          if (currentAgent !== "omnigent") {
+            try {
+              await api.setConversationActiveAgent(convId, "omnigent");
+              setConversation((prev) =>
+                prev ? { ...prev, activeAgent: "omnigent" } : prev,
+              );
+            } catch (e) {
+              setError((e as Error).message);
+              return;
+            }
+          }
+          // `/omnigent <prompt>` enters AND sends; bare `/omnigent` just enters.
+          if (rest) await omnigentInvoke(rest);
+          return;
+        }
+
         if (cmd === "hermes" || cmd === "pi") {
           const kind = cmd as "hermes" | "pi";
           // Need a conv before invoking; create one if this is a fresh chat
@@ -1124,6 +1359,20 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       // types directly in the terminal). We silently no-op for Pi so
       // accidentally-typed composer text doesn't hit normal chat with
       // the wrong context.
+      if (currentAgent === "omnigent") {
+        // Omnigent mode: the composer drives the SSE bridge, not the LLM.
+        // No conv needed for the run itself (the bridge is stateless per /run),
+        // but the activeAgent flag already lives on the conversation.
+        if (!omnigentReady) {
+          setError(
+            "The Omnigent bridge isn't configured. Use /exit to return to " +
+              "normal chat, or set it up in Settings → Add-ons → Omnigent.",
+          );
+          return;
+        }
+        await omnigentInvoke(trimmed);
+        return;
+      }
       if (currentAgent === "hermes" && !hermesBridgeUrl) {
         // Legacy ACP-bubble path — only when no Hermes iframe is configured.
         const convId = conversationId ?? conversation?.id;
@@ -1453,6 +1702,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     piReset,
     piBridgeUrl,
     hermesBridgeUrl,
+    omnigentInvoke,
+    omnigentReset,
+    omnigentReady,
     /** Persistent agent mode for this conv ('hermes' | null). When set,
      *  every plain message in the composer routes to that agent's
      *  bridge instead of the LLM chat path. `/exit` clears it. */

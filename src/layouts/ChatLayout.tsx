@@ -5,6 +5,7 @@ import Input from "~/components/chat/Input";
 import Messages from "~/components/chat/Messages";
 import { AgentBubble } from "~/components/chat/AgentBubble";
 import { HermesPanel } from "~/components/chat/HermesPanel";
+import { OmnigentPanel } from "~/components/chat/OmnigentPanel";
 import { PiPanel } from "~/components/chat/PiPanel";
 // RepoBindingBar (Hermes-only) retired 2026-05-19.
 import Sidebar from "~/components/chat/Sidebar";
@@ -259,7 +260,19 @@ export default function ChatLayout() {
          *  message-bubble agent. When the user is in /pi mode and
          *  the add-on URL is configured, render the terminal panel
          *  in place of the AgentBubble. */}
-        {chat.activeAgent === "pi" && chat.piBridgeUrl ? (
+        {chat.activeAgent === "omnigent" ? (
+          /* #32 — Omnigent runs as an agent-mode TUI like Hermes, but its
+           *  bridge has no web UI to iframe (pure SSE). So we render the run
+           *  client-side from the same agentMessages transcript, consuming
+           *  `POST /api/addons/omnigent/run`. */
+          <OmnigentPanel
+            messages={chat.agentMessages}
+            streaming={chat.agentStreaming}
+            error={chat.agentError}
+            onReset={chat.omnigentReset}
+            onExit={() => chat.sendMessage("/exit", [])}
+          />
+        ) : chat.activeAgent === "pi" && chat.piBridgeUrl ? (
           <PiPanel url={chat.piBridgeUrl} />
         ) : chat.activeAgent === "hermes" && chat.hermesBridgeUrl ? (
           /* #25 — enterprise Hermes runs as a shared TUI in the dashboard
