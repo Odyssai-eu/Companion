@@ -25,6 +25,9 @@ export type ConvContext = {
 export async function resolveConvContext(
   userId: string,
   body: ChatBody,
+  // #36: global memory master switch. Default false → memory OFF, the user
+  // opts in. When false, no memory is fetched or injected for this turn.
+  userMemoryEnabled: boolean = false,
 ): Promise<ConvContext> {
   let projectId: string | null = null;
   // Working directory for local-agent tool execution. null → companion-local
@@ -125,7 +128,7 @@ export async function resolveConvContext(
         //                 wiki/vault while the RAG is cold) — cacheable,
         //                 stays in the system prompt.
         let stableFallback = "";
-        if (convMemoryEnabled) {
+        if (userMemoryEnabled && convMemoryEnabled) {
           const lastUserMsg = body.messages
             ?.filter((m: { role: string }) => m.role === "user")
             .at(-1);
@@ -146,7 +149,7 @@ export async function resolveConvContext(
         // Cold-start fallback for the project tier (independent of the
         // conv-level memory toggle, like the old vault injection): until
         // the project's RAG collection has content, inject the raw vault.
-        if (projectId && dedicated && !ragBlock.includes("## Project memory")) {
+        if (userMemoryEnabled && projectId && dedicated && !ragBlock.includes("## Project memory")) {
           projectMemory = await getProjectMemoryContext(projectId);
         }
         memoryBlock = [projectMemory, stableFallback]

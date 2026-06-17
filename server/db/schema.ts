@@ -101,6 +101,11 @@ export const users = pgTable("users", {
   // Flip false when the user wants 100% manual control — only their
   // imported ZIP + external vault are injected, the service is bypassed.
   autoMemoryEnabled: boolean("auto_memory_enabled").notNull().default(true),
+  // Global memory-injection master switch (#36). Default FALSE — memory is
+  // OFF by default, the user opts in. When false the chat hot-path injects
+  // ZERO memory (no nemoQuery / getMemoryContext calls). Distinct from
+  // autoMemoryEnabled, which only governs wiki auto-compile, not injection.
+  memoryEnabled: boolean("memory_enabled").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .default(sql`now()`),
