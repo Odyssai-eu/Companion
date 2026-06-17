@@ -174,13 +174,17 @@ export async function resolveConvContext(
         //                 wiki/vault while the RAG is cold) — cacheable,
         //                 stays in the system prompt.
         let stableFallback = "";
+        // Last user message + triviality — computed once so BOTH the user/global
+        // fetch (below) and the project-tier fallback (further down) honour
+        // smart-skip: a trivial turn ("ok merci") injects nothing at all (#36).
+        const lastUserMsg = body.messages
+          ?.filter((m: { role: string }) => m.role === "user")
+          .at(-1);
+        const query =
+          typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
+        const trivialTurn = isTrivialTurn(query);
         if (convMemoryEnabled) {
-          const lastUserMsg = body.messages
-            ?.filter((m: { role: string }) => m.role === "user")
-            .at(-1);
-          const query =
-            typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-          if (isTrivialTurn(query)) {
+          if (trivialTurn) {
             // Smart-skip (#36, item 3): trivial turn → no memory fetch at all.
             // Leave ragBlock/stableFallback/memoryBlock empty. This does NOT
             // touch the byte-stability/KV invariant for non-trivial turns — it
@@ -209,7 +213,9 @@ export async function resolveConvContext(
         // Cold-start fallback for the project tier (independent of the
         // conv-level memory toggle, like the old vault injection): until
         // the project's RAG collection has content, inject the raw vault.
-        if (projectId && dedicated && !ragBlock.includes("## Project memory")) {
+        // #36 smart-skip: skip the project vault fallback too on a trivial turn
+        // (it lives outside the convMemoryEnabled block, so it needs its own guard).
+        if (!trivialTurn && projectId && dedicated && !ragBlock.includes("## Project memory")) {
           projectMemory = await getProjectMemoryContext(projectId);
         }
         memoryBlock = [projectMemory, stableFallback]
