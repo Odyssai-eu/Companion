@@ -10,6 +10,51 @@ import { getMemoryContext, nemoQuery } from "./memory";
 import { getProjectMemoryContext } from "./project-memory";
 import type { ChatBody } from "../routes/chat";
 
+// Smart-skip (#36, item 3): for clearly-trivial turns (greetings, short acks)
+// we skip the WHOLE memory fetch+injection — no nemoQuery, no wiki/vault dump,
+// no round-trip. Saves latency and keeps the prompt lean. CONSERVATIVE by
+// design: over-skipping silently loses memory the user wanted, so when in
+// doubt we inject (return false).
+//
+// A turn is trivial when it is EITHER very short (≤ TRIVIAL_MAX_WORDS words AND
+// ≤ TRIVIAL_MAX_CHARS chars after trim) OR an exact match (case/punctuation
+// insensitive) against the small greeting/ack set below. Anything that carries
+// a real question — a "?", a longer sentence — falls through to injection.
+const TRIVIAL_MAX_WORDS = 4;
+const TRIVIAL_MAX_CHARS = 24;
+// Exact-match greeting/ack set (normalised: lowercased, trailing punctuation
+// stripped). Kept deliberately small — only phrases that NEVER need memory.
+const TRIVIAL_PHRASES = new Set<string>([
+  "bonjour", "salut", "coucou", "hi", "hello", "hey", "yo",
+  "merci", "merci beaucoup", "thanks", "thank you", "thx", "ty",
+  "ok", "okay", "ok merci", "d'accord", "daccord",
+  "yes", "no", "oui", "non", "yep", "nope", "yeah",
+  "bye", "au revoir", "ciao", "a plus", "cool", "nice", "super",
+  "👍", "🙏", "👌", "🙂",
+]);
+
+/** Conservative triviality check for the smart-skip path. Returns true only for
+ *  clearly-trivial turns where injecting memory is pointless. When unsure,
+ *  returns false so memory is still injected. */
+export function isTrivialTurn(query: string): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return true; // empty turn — nothing to retrieve against
+  // A question mark almost always signals a real ask → never trivial.
+  if (trimmed.includes("?")) return false;
+  // Normalise for the phrase set: lowercase + strip surrounding punctuation.
+  const normalised = trimmed
+    .toLowerCase()
+    .replace(/^[\s.,!;:¡¿]+|[\s.,!;:]+$/g, "");
+  if (TRIVIAL_PHRASES.has(normalised)) return true;
+  // Very short turns with no question: greetings/acks not in the set
+  // ("ok then", "merci !"). Require BOTH the word and char ceilings.
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length <= TRIVIAL_MAX_WORDS && trimmed.length <= TRIVIAL_MAX_CHARS) {
+    return true;
+  }
+  return false;
+}
+
 export type ConvContext = {
   projectId: string | null;
   projectCwd: string | null;
@@ -135,7 +180,13 @@ export async function resolveConvContext(
             .at(-1);
           const query =
             typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-          if (memoryMode === "basic") {
+          if (isTrivialTurn(query)) {
+            // Smart-skip (#36, item 3): trivial turn → no memory fetch at all.
+            // Leave ragBlock/stableFallback/memoryBlock empty. This does NOT
+            // touch the byte-stability/KV invariant for non-trivial turns — it
+            // is purely an early skip of the variable per-turn injection.
+            console.log("[memory] smart-skip: trivial turn, no injection");
+          } else if (memoryMode === "basic") {
             // Basic mode (#29): force the wiki/vault path ONLY. Never call
             // nemoQuery — no embeddings, no Qdrant, no /embed — even when the
             // nemo service is available. The full wiki+vault dump is stable
