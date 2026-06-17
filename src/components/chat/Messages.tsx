@@ -512,6 +512,21 @@ function SearchIcon() {
   );
 }
 
+const THINKING_STATUS_SENTENCES = [
+  // #35 — Odyssée d'Ulysse + le Cid (tirade de Don Rodrigue, Acte IV sc. 3) :
+  // un signe que « ça mijote » quand le bloc thinking est replié.
+  "Ulysse trace sa route entre les écueils…",
+  "Pénélope tisse la réponse, fil à fil…",
+  "On hisse les voiles vers Ithaque…",
+  "Le stratagème se met en place dans l'ombre…",
+  "Les sirènes consultées, on poursuit la traversée…",
+  "« Cette obscure clarté qui tombe des étoiles… »",
+  "« Nous partîmes cinq cents ; mais par un prompt renfort… »",
+  "« Notre profond silence abusant leurs esprits… »",
+  "« L'onde s'enfle dessous, et d'un commun effort… »",
+  "« Et je feins hardiment d'avoir reçu de vous… »",
+];
+
 function ReasoningBlock({
   reasoning,
   thinking,
@@ -520,6 +535,20 @@ function ReasoningBlock({
   thinking: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [statusIdx, setStatusIdx] = useState(() =>
+    Math.floor(Math.random() * THINKING_STATUS_SENTENCES.length),
+  );
+  // #35: pendant que ça pense ET que le bloc est replié, on fait tourner une
+  // phrase de statut — l'utilisateur voit que quelque chose se passe sans
+  // avoir à déplier la fenêtre.
+  useEffect(() => {
+    if (!thinking || open) return;
+    const t = setInterval(
+      () => setStatusIdx((i) => (i + 1) % THINKING_STATUS_SENTENCES.length),
+      4500,
+    );
+    return () => clearInterval(t);
+  }, [thinking, open]);
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50/60">
       <button
@@ -527,17 +556,24 @@ function ReasoningBlock({
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left"
       >
-        <span className="flex items-center gap-2 font-mono text-[11px] tracking-[0.04em] text-gray-600 uppercase">
-          {thinking ? (
-            <>
-              <TypingDots />
-              <span>Thinking</span>
-            </>
-          ) : (
-            <>
-              <span className="h-1.5 w-1.5 rounded-full bg-cyan" />
-              <span>Thought</span>
-            </>
+        <span className="flex min-w-0 flex-col gap-1">
+          <span className="flex items-center gap-2 font-mono text-[11px] tracking-[0.04em] text-gray-600 uppercase">
+            {thinking ? (
+              <>
+                <TypingDots />
+                <span>Thinking</span>
+              </>
+            ) : (
+              <>
+                <span className="h-1.5 w-1.5 rounded-full bg-cyan" />
+                <span>Thought</span>
+              </>
+            )}
+          </span>
+          {thinking && !open && (
+            <span className="truncate text-[11px] font-normal text-gray-400 normal-case italic">
+              {THINKING_STATUS_SENTENCES[statusIdx]}
+            </span>
           )}
         </span>
         <svg
