@@ -332,8 +332,7 @@ function AssistantMessage({
         )}
         {/* #36 memory transparency — inspectable chip of what memory was
          *  injected this turn. Only present when something WAS injected. */}
-        {showMetrics &&
-          !message.streaming &&
+        {!message.streaming &&
           message.stats?.memoryInjected &&
           (message.stats.memoryTokens ?? 0) > 0 && (
             <MemoryBlock
