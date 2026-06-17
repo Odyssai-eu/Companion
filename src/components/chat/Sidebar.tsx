@@ -60,9 +60,11 @@ export default function Sidebar({
       await api.deleteConversationsBatch(ids);
       // Optimistic local update mirrors the single-delete pattern below.
       setConversations((prev) => prev.filter((c) => !selectedIds.has(c.id)));
-      // If the active conversation was in the batch, bounce home.
+      // If the active conversation was in the batch, navigate away from it.
+      // #34: stay INSIDE the project when deleting its conversations — don't
+      // bounce the user out to All Chats.
       if (activeConversationId && selectedIds.has(activeConversationId)) {
-        navigate("/");
+        navigate(activeProjectId ? `/projects/${activeProjectId}` : "/");
       }
       exitSelectionMode();
     } catch (err) {
@@ -274,11 +276,12 @@ export default function Sidebar({
               <button
                 type="button"
                 onClick={() => setSelectionMode(true)}
-                aria-label="Select multiple to delete"
-                title="Select multiple to delete"
-                className="inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1 text-gray-700 hover:bg-gray-50 hover:text-ink"
+                aria-label="Select conversations to delete"
+                title="Select conversations to delete"
+                className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-medium text-gray-700 hover:bg-gray-50 hover:text-ink"
               >
                 <CheckSquareIcon />
+                Delete
               </button>
             )}
           </div>
@@ -292,6 +295,7 @@ export default function Sidebar({
                 active={c.id === activeConversationId}
                 streaming={streamingIds?.has(c.id) ?? false}
                 projects={projectsList}
+                activeProjectId={activeProjectId}
                 onRemove={(id) =>
                   setConversations((prev) => prev.filter((x) => x.id !== id))
                 }
@@ -511,6 +515,7 @@ function ConversationRow({
   active,
   streaming,
   projects,
+  activeProjectId,
   onRemove,
   onChange,
   selectionMode = false,
@@ -521,6 +526,9 @@ function ConversationRow({
   active: boolean;
   streaming?: boolean;
   projects: ApiProject[];
+  /** Active project id (from the sidebar) — so a single delete of the open
+   *  conversation stays in the project instead of bouncing to All Chats (#34). */
+  activeProjectId?: string | null;
   /** Called with the deleted conversation id immediately after a successful
    *  DELETE — removes it from the parent's state without waiting for a
    *  re-fetch (ExoScopy pattern). */
@@ -571,7 +579,8 @@ function ConversationRow({
       // waiting for a re-fetch. Avoids the race where onChange() → refresh()
       // fails silently (swallowed catch) and the item reappears.
       onRemove(conversation.id);
-      if (active) navigate("/");
+      // #34: stay in the project on single-delete of the open conversation.
+      if (active) navigate(activeProjectId ? `/projects/${activeProjectId}` : "/");
     } catch (err) {
       console.error("delete failed", err);
       alert(`Couldn't delete: ${(err as Error).message ?? err}`);
@@ -601,7 +610,7 @@ function ConversationRow({
       }}
       className={`group flex flex-col gap-1 rounded-lg px-3 py-2 transition-colors ${
         selectionMode && selected
-          ? "bg-[rgba(79,179,217,0.18)] text-navy"
+          ? "bg-red-100 text-red-700"
           : active
             ? "bg-[rgba(79,179,217,0.12)] text-navy"
             : "text-ink hover:bg-gray-50"
