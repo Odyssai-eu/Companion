@@ -31,6 +31,20 @@ if [ "$BUMP" != "skip" ]; then
   echo "→ bumped to v$NEW_VERSION"
 fi
 
+# Preflight (#1): the remote .env carries machine-local creds and is
+# intentionally NOT in the source tree (.gitignore). The rsync below excludes
+# it so --delete can't wipe it — but if the host has NO .env at all, docker
+# compose would start with default creds that mismatch the existing DB volume
+# (the exact failure that bit us twice on the v0.2.0 rebuild). Fail loud here
+# rather than discover it after a broken rebuild. For a genuine first deploy,
+# create $APP_DIR/.env on the host before running this.
+if ! ssh "$HOST" "test -f '$APP_DIR/.env'"; then
+  echo "ERROR: no .env found at ${HOST}:${APP_DIR}/.env" >&2
+  echo "  Deploying now would start the container with default creds that" >&2
+  echo "  don't match the existing DB volume. Create the host .env first." >&2
+  exit 1
+fi
+
 # rsync (since the prod host has no GitHub access)
 rsync -a --delete \
   --exclude=node_modules --exclude=dist --exclude=".DS_Store" \
