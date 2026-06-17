@@ -143,6 +143,11 @@ export function tagUserMessages<M extends TaggableMessage>(
  */
 export function buildSystemPrompt(opts: {
   userSystemPrompt?: string | null;
+  /** Always-on user identity block (who the assistant is talking to). Injected
+   *  independently of the memory toggle / RAG / persona kind — see
+   *  getUserIdentityBlock. Pushed right after the system prompt so it frames
+   *  every turn even when conversational memory is off. */
+  identity?: string | null;
   projectMemory?: string | null;
   globalMemory?: string | null;
   /** Compact catalog of the user's agent skills (name + description),
@@ -159,6 +164,7 @@ export function buildSystemPrompt(opts: {
     segments.push(trimmed);
   };
   push(opts.userSystemPrompt);
+  push(opts.identity);
   push(opts.skillsIndex);
   // Project + global memory used to be concatenated together and pushed
   // as a single segment. That subtle difference vs. pushing them as two

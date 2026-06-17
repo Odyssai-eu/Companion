@@ -31,6 +31,7 @@ import { loadRouterConfigForUser } from "./addon-router";
 import { resolveChatTools } from "../lib/chat-tools";
 import { buildUpstreamBody } from "../lib/upstream-request";
 import { resolveConvContext } from "../lib/chat-context";
+import { getUserIdentityBlock } from "../lib/memory";
 import { assembleMessages } from "../lib/chat-messages";
 import type { GuestTokenContext } from "../lib/guest-token";
 import {
@@ -299,7 +300,12 @@ chatRoute.post("/completions", async (c) => {
   // 400 loc. Byte-for-byte identical to the old inline block — see that file
   // for the full rationale (tagging rules, RAG-block attachment, the
   // byte-stability invariant that lets the upstream KV prefix cache hit).
-  const { withSystem } = await assembleMessages({ body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock });
+  // Always-on identity (#profile): computed UNCONDITIONALLY — independent of
+  // convMemoryEnabled, the RAG retrieval, and persona/talk kind — so the
+  // assistant always knows who it is talking to (regression: with memory OFF
+  // or a persona conv, "qui suis-je ?" returned "I can't identify you").
+  const identityBlock = await getUserIdentityBlock(userId);
+  const { withSystem } = await assembleMessages({ body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock });
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)
   const baseBody = buildUpstreamBody(body);

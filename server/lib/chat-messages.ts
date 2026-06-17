@@ -31,8 +31,10 @@ export async function assembleMessages(args: {
   convMemoryEnabled: boolean;
   memoryBlock: string | null;
   ragBlock: string | null;
+  /** Always-on identity block — injected regardless of convMemoryEnabled. */
+  identityBlock: string | null;
 }): Promise<{ withSystem: ChatTurn[] }> {
-  const { body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock } =
+  const { body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock } =
     args;
 
   const tz = userRow.timezone || "UTC";
@@ -44,6 +46,7 @@ export async function assembleMessages(args: {
   const skillsIndex = await buildSkillsIndex(userId);
   const composedSystem = buildSystemPrompt({
     userSystemPrompt: body.system_prompt,
+    identity: identityBlock,
     // Today chat.ts already collapsed project + global into a single
     // memoryBlock above (joined with the same separator). Pass it as
     // projectMemory so the builder doesn't double-join — globalMemory

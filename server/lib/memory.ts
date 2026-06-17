@@ -15,9 +15,9 @@
  * of truth).
  */
 
-import { eq } from "drizzle-orm";
+import { and, eq, like } from "drizzle-orm";
 import { db } from "../db/index";
-import { users } from "../db/schema";
+import { memoryArticles, users } from "../db/schema";
 import { getCompanyRagUrl } from "./global-settings";
 import { getUserMemoryContext } from "./user-memory";
 
@@ -89,6 +89,49 @@ export async function getMemoryContext(
   if (!vault) return karpathy;
   if (!karpathy) return vault;
   return `${vault}\n\n---\n\n${karpathy}`;
+}
+
+/** Always-on user identity block. UNLIKE getMemoryContext, this is injected
+ *  regardless of the conversation memory toggle, the RAG retrieval, and the
+ *  persona/talk kind — so the assistant always knows WHO it is talking to, even
+ *  when conversational memory is off or empty. Sourced from the compiled
+ *  `profile/*` articles (the "what I remember about you"), capped small; falls
+ *  back to the user's name so there is ALWAYS at least an identity line. */
+export async function getUserIdentityBlock(userId: string): Promise<string> {
+  try {
+    const rows = await db
+      .select({ body: memoryArticles.body })
+      .from(memoryArticles)
+      .where(
+        and(
+          eq(memoryArticles.userId, userId),
+          like(memoryArticles.path, "profile/%"),
+        ),
+      )
+      .orderBy(memoryArticles.path);
+    const profile = rows
+      .map((r) => (r.body || "").trim())
+      .filter((s) => s.length > 0)
+      .join("\n\n");
+    if (profile) {
+      return capMarkdown(`## About the user\n\n${profile}`, 4096);
+    }
+  } catch (err) {
+    console.warn("[memory] getUserIdentityBlock failed:", (err as Error).message);
+  }
+  // Fallback: at minimum the name, always.
+  try {
+    const [u] = await db
+      .select({ name: users.name })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    const name = (u?.name || "").trim();
+    if (name) return `## About the user\n\nYou are talking with ${name}.`;
+  } catch {
+    /* ignore */
+  }
+  return "";
 }
 
 /** Fetch the Karpathy auto-compiled wiki block. Returns "" on failure or
