@@ -42,7 +42,7 @@ import {
 // gate any more. Compiles run sequentially per user — this is a background
 // cron, latency is irrelevant, and serial keeps load off the extraction LLM.
 
-const SCHEDULE_TZ = process.env.MEMORY_SCHEDULER_TZ ?? "Europe/Brussels";
+const SCHEDULE_TZ = process.env.MEMORY_SCHEDULER_TZ ?? "UTC";
 /** Local-clock targets. Order doesn't matter — we check all on every
  *  tick. `kind` selects which compile to fire: global wiki at 06:00 /
  *  12:30, project memory at 19:00. (User directive 2026-05-16: shift

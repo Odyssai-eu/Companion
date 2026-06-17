@@ -165,7 +165,7 @@ Override the seed defaults via env vars before first boot :
 ```bash
 SEED_ADMIN_EMAIL=you@example.com \
 SEED_ADMIN_PASSWORD=something-better \
-SEED_ADMIN_NAME=Sophie \
+SEED_ADMIN_NAME=Admin \
   docker compose up -d
 ```
 

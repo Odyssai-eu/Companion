@@ -35,7 +35,7 @@ export async function assembleMessages(args: {
   const { body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock } =
     args;
 
-  const tz = userRow.timezone || "Europe/Brussels";
+  const tz = userRow.timezone || "UTC";
   const taggedMessages = tagUserMessages(body.messages!, {
     enabled: convMemoryEnabled,
     timezone: tz,

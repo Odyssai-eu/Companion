@@ -55,7 +55,7 @@ export const users = pgTable("users", {
   // a lot of stdout. Server-only sink (console.log → docker logs).
   debugVerbose: boolean("debug_verbose").notNull().default(false),
   // Temporal awareness — fed into every inference as a context tag.
-  timezone: text("timezone").notNull().default("Europe/Brussels"),
+  timezone: text("timezone").notNull().default("UTC"),
   lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
   // Admin Extended — RBAC. Values: 'admin' | 'organiser' | 'user' | 'guest'.
   role: text("role").notNull().default("user"),

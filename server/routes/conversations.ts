@@ -662,7 +662,7 @@ conversationsRoute.post(
       globalMemory: null,
     });
 
-    const tz = user.timezone || "Europe/Brussels";
+    const tz = user.timezone || "UTC";
     type WireMsg = { role: string; content: string; createdAt?: string };
     // Build a tag-ready intermediate (Date instances) so the builder gets
     // the same types chat.ts feeds it.

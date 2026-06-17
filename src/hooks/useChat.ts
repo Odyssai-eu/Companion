@@ -1201,8 +1201,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       const nowIso = new Date().toISOString();
       const userMsg: UIMessage = {
         // crypto.randomUUID() throws in Safari on non-secure contexts
-        // (http:// origins) — observed 2026-05-25 on Sophie's
-        // http://192.168.86.39:3100 deploy: every Enter in the chat
+        // (http:// origins) — observed 2026-05-25 on a plain-HTTP LAN
+        // deploy: every Enter in the chat
         // box created the conversation server-side but the user
         // message and downstream stream never fired because this line
         // threw silently, breaking sendMessage. Fall back to

@@ -275,7 +275,7 @@ export function VoiceLivePanel() {
               type="text"
               value={ttsEndpoint}
               onChange={(e) => setTtsEndpoint(e.target.value)}
-              placeholder="http://192.168.86.49:8003"
+              placeholder="http://192.168.1.50:8003"
               className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
             />
           </Field>

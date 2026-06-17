@@ -19,5 +19,5 @@ ALTER TABLE "users"
   ADD COLUMN IF NOT EXISTS "default_model" text,
   ADD COLUMN IF NOT EXISTS "litellm_url" text,
   ADD COLUMN IF NOT EXISTS "litellm_api_key" text,
-  ADD COLUMN IF NOT EXISTS "timezone" text NOT NULL DEFAULT 'Europe/Brussels',
+  ADD COLUMN IF NOT EXISTS "timezone" text NOT NULL DEFAULT 'UTC',
   ADD COLUMN IF NOT EXISTS "last_interaction_at" timestamptz;
