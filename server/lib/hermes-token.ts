@@ -61,6 +61,8 @@ export async function mintHermesToken(
     .values({
       userId: opts.userId,
       tokenHash,
+      // Stored so the user can re-copy it from the active tokens list (#37).
+      token,
       label: opts.label ?? null,
       convId: opts.convId ?? null,
       source: opts.source ?? "hermes",
@@ -128,12 +130,15 @@ export async function revokeHermesToken(
 }
 
 /**
- * List the user's active (non-revoked) tokens. Hash is never returned.
+ * List the user's active (non-revoked) tokens. Hash is never returned; the
+ * plaintext `token` is (#37) so the UI can offer a copy button — null for
+ * legacy hash-only rows.
  */
 export async function listHermesTokens(userId: string) {
   return db
     .select({
       id: hermesTokens.id,
+      token: hermesTokens.token,
       label: hermesTokens.label,
       convId: hermesTokens.convId,
       source: hermesTokens.source,

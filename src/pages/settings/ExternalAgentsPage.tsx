@@ -31,6 +31,8 @@ function statusOf(t: Token): "active" | "expired" | "revoked" {
 
 export default function ExternalAgentsPage() {
   const [tokens, setTokens] = useState<Token[] | null>(null);
+  // Per-row "Copied!" feedback for the copy button (#37).
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -236,7 +238,23 @@ export default function ExternalAgentsPage() {
                           {st}
                         </span>
                       </td>
-                      <td className="px-4 py-2 text-right">
+                      <td className="px-4 py-2 text-right whitespace-nowrap">
+                        {t.token && st === "active" && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await copyToClipboard(t.token!);
+                              setCopiedId(t.id);
+                              setTimeout(
+                                () => setCopiedId((c) => (c === t.id ? null : c)),
+                                1500,
+                              );
+                            }}
+                            className="mr-3 text-[12px] text-gray-600 hover:underline"
+                          >
+                            {copiedId === t.id ? "Copied!" : "Copy"}
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => revoke(t.id)}

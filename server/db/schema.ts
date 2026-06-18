@@ -1044,6 +1044,11 @@ export const hermesTokens = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     tokenHash: text("token_hash").notNull().unique(),
+    // Plaintext token, kept so the user can re-copy it from the active tokens
+    // list (#37) instead of having to mint a new one. Single-operator LAN tool:
+    // re-copyability is the chosen tradeoff over one-shot reveal. Nullable —
+    // legacy rows minted before this are hash-only and stay copyless.
+    token: text("token"),
     label: text("label"),
     convId: uuid("conv_id").references(() => conversations.id, {
       onDelete: "set null",

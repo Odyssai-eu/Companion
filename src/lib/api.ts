@@ -1706,6 +1706,7 @@ export const api = {
     request<
       Array<{
         id: string;
+        token: string | null;
         label: string | null;
         convId: string | null;
         source: "hermes" | "cowork";
