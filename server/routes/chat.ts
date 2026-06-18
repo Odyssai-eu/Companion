@@ -300,11 +300,11 @@ chatRoute.post("/completions", async (c) => {
   // 400 loc. Byte-for-byte identical to the old inline block — see that file
   // for the full rationale (tagging rules, RAG-block attachment, the
   // byte-stability invariant that lets the upstream KV prefix cache hit).
-  // Always-on identity (#profile): computed UNCONDITIONALLY — independent of
-  // convMemoryEnabled, the RAG retrieval, and persona/talk kind — so the
-  // assistant always knows who it is talking to (regression: with memory OFF
-  // or a persona conv, "qui suis-je ?" returned "I can't identify you").
-  const identityBlock = await getUserIdentityBlock(userId);
+  // Identity (#profile): the NAME is always injected (independent of the RAG and
+  // the persona/talk bypass) so the assistant never says "I can't identify you".
+  // The RICH profile is appended ONLY when conversation memory is ON — with
+  // memory OFF the assistant must not recite the profile (#fix 2026-06-18).
+  const identityBlock = await getUserIdentityBlock(userId, convMemoryEnabled);
   const { withSystem } = await assembleMessages({ body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock });
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)

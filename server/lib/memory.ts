@@ -91,13 +91,40 @@ export async function getMemoryContext(
   return `${vault}\n\n---\n\n${karpathy}`;
 }
 
-/** Always-on user identity block. UNLIKE getMemoryContext, this is injected
- *  regardless of the conversation memory toggle, the RAG retrieval, and the
- *  persona/talk kind — so the assistant always knows WHO it is talking to, even
- *  when conversational memory is off or empty. Sourced from the compiled
- *  `profile/*` articles (the "what I remember about you"), capped small; falls
- *  back to the user's name so there is ALWAYS at least an identity line. */
-export async function getUserIdentityBlock(userId: string): Promise<string> {
+/** User identity for the system prompt, injected independently of the
+ *  persona/talk bypass (so a persona never says "I can't identify you").
+ *
+ *  TWO tiers, gated by the conversation memory toggle:
+ *   - ALWAYS (even memory OFF): a minimal one-liner — just WHO the assistant is
+ *     talking to (the user's name). Identity ≠ memory.
+ *   - ONLY when memory ON: the rich curated `profile/*` articles (preferences,
+ *     infrastructure, expertise…). With memory OFF the assistant must NOT recite
+ *     the profile — that is memory, and the toggle controls it
+ *     (#fix 2026-06-18: memory-off was still reciting the infra/profile). */
+export async function getUserIdentityBlock(
+  userId: string,
+  memoryEnabled: boolean,
+): Promise<string> {
+  let name = "";
+  try {
+    const [u] = await db
+      .select({ name: users.name })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    name = (u?.name || "").trim();
+  } catch {
+    /* ignore */
+  }
+  const head = name ? `You are talking with ${name}.` : "";
+
+  // Memory OFF → identity is JUST the name (or nothing). No profile recitation.
+  if (!memoryEnabled) {
+    return head ? `## About the user\n\n${head}` : "";
+  }
+
+  // Memory ON → append the curated profile/* articles. Injected here (not via
+  // the RAG/wiki path) so it survives the persona/talk bypass.
   try {
     const rows = await db
       .select({ body: memoryArticles.body })
@@ -114,24 +141,13 @@ export async function getUserIdentityBlock(userId: string): Promise<string> {
       .filter((s) => s.length > 0)
       .join("\n\n");
     if (profile) {
-      return capMarkdown(`## About the user\n\n${profile}`, 4096);
+      const body = [head, profile].filter(Boolean).join("\n\n");
+      return capMarkdown(`## About the user\n\n${body}`, 6144);
     }
   } catch (err) {
-    console.warn("[memory] getUserIdentityBlock failed:", (err as Error).message);
+    console.warn("[memory] getUserIdentityBlock profile failed:", (err as Error).message);
   }
-  // Fallback: at minimum the name, always.
-  try {
-    const [u] = await db
-      .select({ name: users.name })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-    const name = (u?.name || "").trim();
-    if (name) return `## About the user\n\nYou are talking with ${name}.`;
-  } catch {
-    /* ignore */
-  }
-  return "";
+  return head ? `## About the user\n\n${head}` : "";
 }
 
 /** Fetch the Karpathy auto-compiled wiki block. Returns "" on failure or
