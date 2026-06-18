@@ -33,8 +33,10 @@ export async function assembleMessages(args: {
   ragBlock: string | null;
   /** Always-on identity block — injected regardless of convMemoryEnabled. */
   identityBlock: string | null;
+  /** Agent mode — gates the skills catalogue (useless without the skill_get tool). */
+  convAgentMode: boolean;
 }): Promise<{ withSystem: ChatTurn[] }> {
-  const { body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock } =
+  const { body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock, convAgentMode } =
     args;
 
   const tz = userRow.timezone || "UTC";
@@ -43,7 +45,10 @@ export async function assembleMessages(args: {
     timezone: tz,
     nowFallback: now,
   });
-  const skillsIndex = await buildSkillsIndex(userId);
+  // Skills catalogue only matters in agent mode (the model loads a skill via the
+  // skill_get tool, which exists only then). Off → don't pollute the prompt, so a
+  // memory-off + agent-off conversation is a truly clean slate (e.g. benchmarks).
+  const skillsIndex = convAgentMode ? await buildSkillsIndex(userId) : null;
   const composedSystem = buildSystemPrompt({
     userSystemPrompt: body.system_prompt,
     identity: identityBlock,

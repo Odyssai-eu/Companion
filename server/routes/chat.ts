@@ -305,7 +305,7 @@ chatRoute.post("/completions", async (c) => {
   // The RICH profile is appended ONLY when conversation memory is ON — with
   // memory OFF the assistant must not recite the profile (#fix 2026-06-18).
   const identityBlock = await getUserIdentityBlock(userId, convMemoryEnabled);
-  const { withSystem } = await assembleMessages({ body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock });
+  const { withSystem } = await assembleMessages({ body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock, convAgentMode });
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)
   const baseBody = buildUpstreamBody(body);

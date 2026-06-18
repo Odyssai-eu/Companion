@@ -105,6 +105,12 @@ export async function getUserIdentityBlock(
   userId: string,
   memoryEnabled: boolean,
 ): Promise<string> {
+  // Memory OFF → inject NOTHING. A clean slate: the model sees ONLY the user's
+  // own system prompt + messages (e.g. code benchmarks — "il a pas besoin de
+  // savoir autre chose que le prompt que j'envoie"). Identity AND profile both
+  // ride the memory toggle (#fix 2026-06-18).
+  if (!memoryEnabled) return "";
+
   let name = "";
   try {
     const [u] = await db
@@ -118,12 +124,7 @@ export async function getUserIdentityBlock(
   }
   const head = name ? `You are talking with ${name}.` : "";
 
-  // Memory OFF → identity is JUST the name (or nothing). No profile recitation.
-  if (!memoryEnabled) {
-    return head ? `## About the user\n\n${head}` : "";
-  }
-
-  // Memory ON → append the curated profile/* articles. Injected here (not via
+  // Memory ON → name + the curated profile/* articles. Injected here (not via
   // the RAG/wiki path) so it survives the persona/talk bypass.
   try {
     const rows = await db
