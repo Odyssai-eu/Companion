@@ -570,7 +570,7 @@ function ReasoningBlock({
           <span className="flex items-center gap-2 font-mono text-[11px] tracking-[0.04em] text-gray-600 uppercase">
             {thinking ? (
               <>
-                <TypingDots />
+                <SparkleIcon className="animate-breathe text-cyan" />
                 <span>Thinking</span>
               </>
             ) : (
@@ -616,6 +616,30 @@ function TypingDots() {
       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:-0.15s]" />
       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" />
     </span>
+  );
+}
+
+// Étincelle qui respire — l'indicateur du bloc Thinking pendant le thinking.
+// Le glyphe "sparkles" de Tabler ; la respiration (scale + opacité) vient de
+// la classe `animate-breathe` (index.css), pas d'animate-pulse (opacité seule).
+function SparkleIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M16 18a2 2 0 0 1 2 2 2 2 0 0 1 2-2 2 2 0 0 1-2-2 2 2 0 0 1-2 2z" />
+      <path d="M16 6a2 2 0 0 1 2 2 2 2 0 0 1 2-2 2 2 0 0 1-2-2 2 2 0 0 1-2 2z" />
+      <path d="M9 18a6 6 0 0 1 6-6 6 6 0 0 1-6-6 6 6 0 0 1-6 6 6 6 0 0 1 6 6z" />
+    </svg>
   );
 }
 

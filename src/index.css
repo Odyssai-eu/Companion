@@ -278,3 +278,20 @@ html.a11y-dyslexia-line body {
 .md-body details.think-block[open] {
   padding-bottom: 0.85em;
 }
+
+/* "Étincelle qui respire" — l'icône du bloc Thinking pendant le thinking.
+   Scale + opacité (la respiration), distinct de animate-pulse (opacité seule). */
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+}
+.animate-breathe {
+  animation: breathe 1.6s ease-in-out infinite;
+}
