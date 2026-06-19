@@ -308,7 +308,7 @@ function AssistantMessage({
           ) : (
             !message.reasoning && (
               <span className="inline-flex items-center gap-2 text-[14px] text-gray-400">
-                <TypingDots />
+                <SparkleIcon className="animate-breathe text-cyan" />
               </span>
             )
           )}
