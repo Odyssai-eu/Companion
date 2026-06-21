@@ -4,18 +4,16 @@ import { BridgeAddonPanel } from "./BridgeAddonPanel";
 /**
  * ComfyUI Imager add-on panel.
  *
- * Scope: setup only. Configures the bridge URL + token, exposes a probe
- * button. Generation happens elsewhere — the chat route is the natural
- * surface:
- *   - Slash command `/comfyui <prompt>` opens an agent sub-thread.
- *   - The LLM can call the `comfyui_generate` tool itself when it decides
- *     an image would materially help the answer (returns base64 PNGs
- *     that the chat renders inline).
+ * Setup only. Configures the bridge URL + token, exposes a probe
+ * button. Generation happens elsewhere — the chat composer surfaces a
+ * `/comfyui <prompt>` enriched-prompt form on demand, and the LLM can
+ * call the `comfyui_generate` tool itself when an image would help
+ * the answer.
  *
- * Anything more than setup here would muddle two very different flows:
- *   - Setup (admin, infrequent): URL, token, probe.
- *   - Generation (creative, daily): chat-driven, where the prompt +
- *     model context already live.
+ * Mixing setup with generation here was a bad idea: settings is for
+ * infrequent admin actions, generation is a daily creative task, and
+ * blending them dilutes both. The chat is the right surface for
+ * generation; this panel stays focused on the connection.
  */
 export function ComfyuiAddonPanel() {
   return (
@@ -53,7 +51,9 @@ export function ComfyuiAddonPanel() {
           <code className="rounded bg-gray-100 px-1 font-mono">
             /comfyui &lt;your prompt&gt;
           </code>{" "}
-          in any chat, or let the model call{" "}
+          in any chat — an enriched-prompt form opens with the template
+          selector, dimensions, steps, CFG, seed, and a Generate button.
+          Or let the model call{" "}
           <code className="rounded bg-gray-100 px-1 font-mono">
             comfyui_generate
           </code>{" "}

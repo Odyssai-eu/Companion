@@ -213,6 +213,56 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   // with an eye toggle elsewhere. PATCH'd back to /api/inference/settings
   // when the user clicks the toggle.
   const [hiddenModels, setHiddenModels] = useState<string[]>([]);
+  /** ComfyUI Imager enriched-prompt modal. When set, the chat composer
+   *  (ChatLayout) opens the modal pre-filled with `prompt` (everything
+   *  the user typed after `/comfyui`, may be empty). The modal calls
+   *  /api/agents/comfyui/slash directly and pushes the resulting image
+   *  into `messages` via `pushComfyuiResult`. */
+  const [comfyuiPrompt, setComfyuiPrompt] = useState<{ prompt: string } | null>(
+    null,
+  );
+  /** Push the image (or set of images) returned by the modal into the
+   *  chat as a markdown attachment in the assistant message stream. */
+  const pushComfyuiResult = useCallback(
+    (r: {
+      prompt_id: string | null;
+      duration_s: number | null;
+      images: Array<{ filename: string; mime: string; dataBase64: string }>;
+      transcript_tail: Array<{ event: string; data: unknown }>;
+    }) => {
+      const userLineId = `local-comfyui-q-${Date.now()}`;
+      const assistantLineId = `local-comfyui-a-${Date.now()}`;
+      const imgMd = r.images
+        .map(
+          (img) =>
+            `![${img.filename}](data:${img.mime};base64,${img.dataBase64})`,
+        )
+        .join("\n\n");
+      const duration = r.duration_s ? `${r.duration_s.toFixed(1)}s` : "?";
+      const content = r.images.length
+        ? `${imgMd}\n\n*Generated in ${duration} · ${r.images.length} image(s) · ` +
+          `prompt_id: \`${r.prompt_id ?? "?"}\`*`
+        : "_Generation finished but no image was returned._";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: userLineId,
+          role: "user",
+          content: `/comfyui`,
+          createdAt: new Date().toISOString(),
+          streaming: false,
+        },
+        {
+          id: assistantLineId,
+          role: "assistant",
+          content,
+          createdAt: new Date().toISOString(),
+          streaming: false,
+        },
+      ]);
+    },
+    [],
+  );
   // Pre-conversation memory override. Null = no override (use project
   // default / true on create). The TopBar memory toggle writes here when
   // no conversation exists yet so the user can flip memory OFF before
@@ -1124,15 +1174,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         }
 
         if (cmd === "comfyui") {
-          // One-shot image generation. Not a persistent agent mode — each
-          // `/comfyui <prompt>` is independent, and the result lands as an
-          // attachment in the chat (no sub-thread / bubble).
-          if (!rest) {
-            setError(
-              "Type a prompt after /comfyui — e.g. /comfyui a small red fox in fresh snow.",
-            );
-            return;
-          }
+          // Slash command with or without a prompt. The chat composer
+          // (ChatLayout) opens the ComfyuiPromptModal — generation is
+          // interactive (template / size / steps / cfg / seed / batch),
+          // not a one-shot URL hit. We just stash the seed prompt and
+          // create a conv if needed; the modal does the rest.
           let convId = conversationId ?? conversation?.id ?? null;
           if (!convId) {
             try {
@@ -1148,62 +1194,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
               return;
             }
           }
-          // Optimistic user line — the slash command itself.
-          const userLineId = `local-comfyui-q-${Date.now()}`;
-          const assistantLineId = `local-comfyui-a-${Date.now()}`;
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: userLineId,
-              role: "user",
-              content: `/comfyui ${rest}`,
-              createdAt: new Date().toISOString(),
-              streaming: false,
-            },
-            {
-              id: assistantLineId,
-              role: "assistant",
-              content: "",
-              createdAt: new Date().toISOString(),
-              streaming: true,
-            },
-          ]);
-          setSending(true);
-          setError(null);
-          try {
-            const result = await api.comfyuiSlash({
-              conversationId: convId,
-              prompt: rest,
-            });
-            const img = result.images[0];
-            const duration = result.duration_s
-              ? `${result.duration_s.toFixed(1)}s`
-              : "?";
-            const content = img
-              ? `![${img.filename}](data:${img.mime};base64,${img.dataBase64})\n\n` +
-                `*Generated in ${duration} · ${result.images.length} image(s) · ` +
-                `prompt_id: \`${result.prompt_id ?? "?"}\`*`
-              : `_Generation finished but no image was returned._`;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantLineId
-                  ? { ...m, content, streaming: false }
-                  : m,
-              ),
-            );
-          } catch (e) {
-            const detail = (() => {
-              const err = e as { message?: string };
-              if (err.message?.startsWith("HTTP ")) return err.message;
-              return err.message ?? "comfyui slash failed";
-            })();
-            setError(detail);
-            setMessages((prev) =>
-              prev.filter((m) => m.id !== assistantLineId),
-            );
-          } finally {
-            setSending(false);
-          }
+          setComfyuiPrompt({ prompt: rest });
           return;
         }
         // Unknown slash — fall through to normal chat.
@@ -1557,6 +1548,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
      *  Lets the TopBar tools button reflect a pre-first-message flip. (#28) */
     agentMode:
       conversation?.agentMode ?? pendingAgentMode ?? false,
+    /** ComfyUI Imager enriched-prompt modal trigger. When this is set, the
+     *  chat composer opens a modal with the form. Generation lands back in
+     *  `messages` via `pushComfyuiResult`. */
+    comfyuiPrompt,
+    setComfyuiPrompt,
+    pushComfyuiResult,
   };
 }
 

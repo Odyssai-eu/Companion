@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
+import {
+  ComfyuiPromptModal,
+  type ComfyuiResult,
+} from "~/components/chat/ComfyuiPromptModal";
 import InferencePanel from "~/components/chat/InferencePanel";
 import Input from "~/components/chat/Input";
 import Messages from "~/components/chat/Messages";
@@ -337,6 +341,17 @@ export default function ChatLayout() {
           />
         )}
       </main>
+      {chat.comfyuiPrompt && chat.conversation && (
+        <ComfyuiPromptModal
+          initial={chat.comfyuiPrompt}
+          conversationId={chat.conversation.id}
+          onClose={() => chat.setComfyuiPrompt(null)}
+          onResult={(r: ComfyuiResult) => {
+            chat.pushComfyuiResult(r);
+            chat.setComfyuiPrompt(null);
+          }}
+        />
+      )}
     </div>
   );
 }
