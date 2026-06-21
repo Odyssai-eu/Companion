@@ -658,7 +658,7 @@ function StatsRow({
     items.push(["Prompt", `${stats.promptTokens} tok`]);
   // Show cache savings only when there's something to brag about. Display
   // as "Cached: N tok (XX%)" so the user immediately sees the prefix-share
-  // win from oMLX's tiered KV cache (or any upstream prompt cache).
+  // win from the upstream's tiered KV cache (any prefix/prompt cache).
   if (
     stats.cachedTokens !== undefined &&
     stats.cachedTokens > 0 &&

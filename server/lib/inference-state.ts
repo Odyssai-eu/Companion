@@ -36,7 +36,7 @@ export type InferenceEntry = {
   promptTokens: number;
   completionTokens: number;
   reasoningTokens: number;
-  /** Tokens served from the upstream's prefix cache (oMLX, Anthropic).
+  /** Tokens served from the upstream's prefix cache (Anthropic, vLLM, etc.).
    *  Exposed via OpenAI `prompt_tokens_details.cached_tokens` or
    *  Anthropic `cache_read_input_tokens`. 0 means cache miss. */
   cachedTokens: number;
@@ -92,7 +92,7 @@ export function recordInferenceUsage(
     input_tokens?: number;
     output_tokens?: number;
     completion_tokens_details?: { reasoning_tokens?: number };
-    // OpenAI-compat (oMLX 0.3.8+, vLLM, OpenAI native): cached input tokens
+    // OpenAI-compat (vLLM, OpenAI native, etc.): cached input tokens
     prompt_tokens_details?: { cached_tokens?: number };
     // Anthropic /v1/messages: cache_read_input_tokens = served from prefix
     // cache, cache_creation_input_tokens = freshly written to cache. We
@@ -111,7 +111,7 @@ export function recordInferenceUsage(
   if (usage.completion_tokens_details?.reasoning_tokens) {
     inf.reasoningTokens = usage.completion_tokens_details.reasoning_tokens;
   }
-  // Prefix-cache hit signal — show users the concrete win from oMLX's tiered
+  // Prefix-cache hit signal — show users the concrete win from the upstream's tiered
   // KV cache (or Anthropic's prompt cache). Accept either shape.
   if (usage.prompt_tokens_details?.cached_tokens) {
     inf.cachedTokens = usage.prompt_tokens_details.cached_tokens;

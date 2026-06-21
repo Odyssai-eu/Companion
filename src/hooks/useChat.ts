@@ -124,7 +124,7 @@ export type UIMessage = {
     promptTokens?: number;
     completionTokens?: number;
     reasoningTokens?: number;
-    /** Tokens served from the upstream's prefix cache (oMLX tiered KV
+    /** Tokens served from the upstream's prefix cache (tiered KV
      *  cache, Anthropic prompt cache). 0 = cache miss. Surfaced as
      *  "Cached" in the StatsRow. */
     cachedTokens?: number;
