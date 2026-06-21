@@ -98,6 +98,23 @@ Yes. 100% browser-side. No audio leaves your machine for transcription. See *Pri
 **Is there voice output / Talk mode today?**
 Not yet. Push-to-talk (input) works today; auto-speak (output) and the full-screen Talk surface are on the roadmap, with **Gemini Flash Live** as the planned TTS backend. See *Voice & talk* (08).
 
+## Slash commands & add-ons
+
+**How do I generate images?**
+Type `/comfyui <your prompt>` in any chat. It opens the ComfyUI Imager modal — set the template, size, steps, and send. Requires the ComfyUI Imager add-on configured in *Settings → Add-ons*. See *Slash commands* (066).
+
+**How do I use a coding agent on my machine?**
+Type `/hermes <task>` and Hermes takes over the turn — it reads and writes files, runs shell, streams all actions live. Requires the Hermes Agent add-on (bridge URL). See *Slash commands* (066) and *Add-ons* (13b).
+
+**What is /pi?**
+Pi is a reflective conversational TUI agent embedded as an iframe in chat. Type `/pi` to enter Pi mode; type `/exit` to return to LLM chat. Requires the Pi add-on. Less agentic than Hermes — designed for slow thinking and journaling.
+
+**How do I search the user guide?**
+Type `/help <question>` in any chat. Returns a synthesised answer with source chips linking to the relevant articles.
+
+**What slash commands are available?**
+`/help`, `/comfyui`, `/hermes`, `/pi`, `/exit`. See *Slash commands* (066) for the full reference.
+
 ## MCP / agents tokens
 
 **What's the difference between MCP servers and Agents tokens?**

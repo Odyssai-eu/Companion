@@ -30,6 +30,8 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Companion** — The web client. React + Hono + Postgres, packaged as a single Docker image.
 
+**ComfyUI Imager** — Add-on that enables the `/comfyui` slash command. Connects to a Companion ComfyUI bridge (your own ComfyUI install) for Flux image generation. See *Add-ons* (13b).
+
 **Compile (memory)** — Process by which the Karpathy compiler reads recent conversations and emits diffs to the wiki. Triggered by inactivity (10 min) or cron slots (06:00 / 12:30 / 19:00, server time). See *Memory* (10).
 
 **Cowork** — External coding agent that hits Companion as an MCP brain.
@@ -127,6 +129,8 @@ Terms used in Companion and the surrounding stack, with cross-references.
 **OpenRouter** — Cloud LLM aggregator. Aliased as `or:*` in the picker.
 
 ## P
+
+**Pi** — Add-on that enables the `/pi` slash command. A reflective conversational agent that runs as a TUI in an iframe. See *Add-ons* (13b).
 
 **Prefix cache** — Same as KV prefix cache. OdyssAI-X reuses it across turns of the same conversation via `session_id`.
 

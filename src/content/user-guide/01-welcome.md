@@ -2,7 +2,7 @@
 
 Companion is a universal client for AI inference. You bring the engine — local cluster (OdyssAI-X, Ollama, LM Studio, vLLM, MLX) or a cloud key (OpenRouter, Anthropic, OpenAI) — and Companion gives you a consistent client across desktop and mobile.
 
-This guide is the canonical reference. Pick the topic that matches what you're trying to do; the topics are independent. Everything you read here is also valid for the public docs at [companion.odyssai.eu/docs](https://companion.odyssai.eu) — the source is the same Markdown.
+This guide is the canonical reference. Pick the topic that matches what you're trying to do; the topics are independent. Search any topic with `/help <question>` in any chat.
 
 ## What Companion is, in one sentence
 
@@ -12,7 +12,7 @@ This guide is the canonical reference. Pick the topic that matches what you're t
 
 - **Chat** with any model you have access to, with full conversation history, edit/regenerate, attachments, voice, code-block helpers, multi-model picker.
 - **Organise** chats into **Projects** that share a system prompt, memory toggles, and (optionally) a project wiki.
-- **Extend** the agent with **Skills** ([agentskills.io](https://agentskills.io)-spec packages), **MCP servers** (Notion, Linear, Tavily, GitHub, your own), and **Agents tokens** that turn Companion into an MCP brain for external coding agents (Cline, Continue.dev, Claude Desktop, Cowork).
+- **Extend** the agent with **Skills** ([agentskills.io](https://agentskills.io)-spec packages), **MCP servers** (Notion, Linear, Tavily, GitHub, your own), **Add-ons** (Hermes, Pi, ComfyUI Imager, Voice Live, Web Search), and **Agents tokens** that turn Companion into an MCP brain for external coding agents (Cline, Continue.dev, Claude Desktop, Cowork).
 - **Remember** with a per-user wiki (Karpathy-style memory, Némo) and per-project memory. Curate by hand or let the agent append via `companion_remember`.
 - **Voice** in and out — push-to-talk on Space, full Talk mode for hands-free use.
 - **Speak many engines** — gateway mode (OdyssAI-X direct), hybrid (caps from engine, inference via LiteLLM), or legacy (LiteLLM only). One client, every backend.
@@ -34,9 +34,13 @@ Companion does **not** ship its own model. It's a client. You decide what's behi
 
 - **First time?** Read *Getting started* (02), then *Chat basics* (05). Skip the rest until you need it.
 - **Pairing an engine?** *Engine pairing* (16).
+- **Generating images?** *Slash commands* (066) → `/comfyui` section.
+- **Coding agent on your machine?** *Slash commands* (066) → `/hermes` section.
 - **Building a brain for your IDE?** *Agents tokens* (13).
+- **Configuring add-ons?** *Add-ons* (13b).
 - **Tuning a specific bug?** *Troubleshooting* (20).
 - **Lost on a term?** *Glossary* (21).
+- **Quick search?** Type `/help <question>` in any chat.
 
 ## A note on the voice
 

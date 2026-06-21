@@ -1,101 +1,115 @@
-# Slash commands & agents
+# Slash commands
 
-Slash commands turn the chat composer into a command palette. Type `/hermes` (or, later, `/pi`, `/openclaw`, etc.) and the next thing you send goes to an agent that can act on your machine — read files, write files, run shell — instead of going to the LLM. Type `/exit` and you're back to normal chat.
+Type a slash command in the chat composer to go beyond plain LLM chat — search the guide, generate images, or hand control to an agent that acts on your machine.
 
-> You have an army on your OdyssAI.
+## Quick reference
 
-## Why this is different from "agentic chat"
+| Command | What it does | Requires |
+|---|---|---|
+| `/help <question>` | Search the user guide, get a synthesised answer | — |
+| `/comfyui [prompt]` | Open the Flux image generator | ComfyUI Imager add-on |
+| `/hermes [prompt]` | Enter Hermes mode — real shell + filesystem access | Hermes Agent add-on |
+| `/pi` | Enter Pi TUI mode — reflective conversational agent | Pi add-on |
+| `/exit` | Leave any active agent mode, return to LLM chat | — |
 
-Normal chat = the assistant brain replies in text. Tools are pretend-tools at best: search-the-web, look-things-up. Nothing touches your filesystem.
+---
 
-Slash commands = a real agent on your hardware takes the keyboard for a turn. When the agent runs `write_file("./scratch/draft.md", "…")`, the file *actually appears* in your folder. When it runs `bash`, your shell *actually runs*.
+## /help — search the guide
 
-The chat keeps its identity, its memory, its model. The agent is invited, not always-on. You decide when to ask the army to act.
+```
+/help how do I configure semantic routing?
+/help comfyui setup
+```
 
-## Entering an agent mode
+BM25 search over all user-guide articles, LLM-synthesised answer streamed into the chat. Sources appear as blue chips below the reply — each chip names the article it came from.
 
-Type `/hermes` in the composer:
+`/help` alone (no question) shows a hint and the full docs URL.
 
-- **`/hermes`** alone — enters Hermes mode without sending anything. Useful when you want to brief the agent before kicking it off.
-- **`/hermes <prompt>`** — enters mode AND sends the prompt right away. The agent gets to work, results stream into the inline terminal panel below the messages.
+---
 
-Once in mode:
+## /comfyui — Flux image generation
 
-- A chip appears above the composer: `▶ hermes mode — every message routes to the agent · /exit`
-- The placeholder switches to `Talk to hermes… (/exit to leave)`
-- Every message you send (no `/` needed) goes to the agent until you exit
-- The model picker is still there but the chat doesn't need a model — Hermes brings its own brain
+```
+/comfyui a misty forest at dawn, wide shot
+```
 
-## Exiting
+Opens the **ComfyUI Imager** modal. Configure:
 
-Three equivalent ways:
+- **Prompt** — seeds from whatever you typed after `/comfyui`
+- **Negative prompt**
+- **Template** — workflow presets
+- **Size / Steps / CFG / Seed / Batch**
 
-- **`/exit`** — universal, works for any active agent mode
-- **`/hermes_off`** (or `/<kind>_off` for other agents) — explicit
-- Click the **`/exit`** chip button above the composer
+The resulting images are pushed directly into the conversation as image blocks. Generation runs on your ComfyUI bridge — nothing leaves the LAN if your bridge is local.
 
-The chat returns to normal LLM mode. The agent transcript stays visible in its terminal panel — scroll back through it any time. Open another conversation, your mode there is independent.
+**Requires** *Settings → Add-ons → ComfyUI Imager* → bridge URL + token.
 
-## The agent box
+---
 
-When an agent is in flight, an inline terminal-style panel renders below the message list:
+## /hermes — real-machine agent
 
-- `$ <your prompt>` — what you typed, in cyan
-- `<agent text>` — streamed token by token in white
-- `⚒ tool · <action>` — every file write, file read, shell command surfaces here in amber, so you can see exactly what the agent is doing
-- A status dot on the header: green pulse while thinking, gray when ready
-- A `⟲ reset` button to drop the session and start fresh (the next `/hermes` opens a new ACP session on the bridge)
+```
+/hermes refactor auth.ts to use JWT instead of sessions
+/hermes   ← enters mode without sending anything yet
+```
 
-The transcript is persisted server-side. Reload the page, switch conversations and come back — the box reappears with full history.
+Enters **Hermes** mode. Hermes is a coding agent that runs on your workstation — it reads files, writes files, runs shell commands, browses — and streams its actions into an inline terminal panel below the messages.
 
-## Installing Hermes on your machine
+Mode is **persistent**: every message you send routes to Hermes until you type `/exit`. The model picker is still there but Hermes brings its own brain.
 
-To use `/hermes`, you need three things running on the workstation where the agent should act:
+**The agent panel shows:**
 
-1. **Hermes itself** — the CLI runtime that actually edits files / runs shell / browses.
-2. **The ACP bridge** — a small HTTP service Companion talks to, which forwards to Hermes over ACP.
-3. **An MCP token back into Companion** (optional but recommended) — so Hermes can call back for memory / skills / past conversations.
+| Line style | Meaning |
+|---|---|
+| `$ <your prompt>` in cyan | What you sent |
+| White text | Agent tokens, streamed |
+| `⚒ tool · <action>` in amber | Every file/shell action — nothing is silent |
+| `⟲ reset` button | Drops the ACP session, next `/hermes` starts clean |
 
-The recommended way to set this up is to hand the job to a coding agent (Claude Code, Codex, Cursor, Aider — whichever you already use) and point it at the resources on GitHub:
+The transcript is persisted. Reload the page, switch conversations and come back — the panel reappears with full history.
 
-- **Hermes** — github.com/hermes-agent (install instructions in the repo README — covers macOS / Linux / Windows).
-- **ACP bridge** — same repo; ships as a small Node/Python service you start with one command.
-- **Wiring back to Companion via MCP** — see *Agents tokens* (13) for the `hms_…` token + `hermes mcp add companion …` step.
+**Requires** *Settings → Add-ons → Hermes Agent* → bridge URL (+ optional token).  
+**For Hermes → Companion memory**: mint an `hms_…` token in *Settings → Extensions → Agents tokens* and wire it to the bridge. See *Agents tokens* (13).
 
-Tell your coding agent something like: *"Install Hermes on this machine, start the ACP bridge on port 8003, and wire a Companion MCP token so it can read my memory."* It will do the venv / brew / config work and hand back the bridge URL + token to paste into Companion.
+---
 
-## Configuring the bridge in Companion
+## /pi — conversational TUI agent
 
-Once Hermes + the bridge are running, **Settings → Add-ons → Hermes Agent**. Two fields:
+```
+/pi
+```
 
-- **Bridge URL** — `http://<your-workstation>:<port>` (default port `8003`). Companion's server needs to be able to reach this URL — on the same LAN, or via a VPN/tunnel if Companion is hosted elsewhere.
-- **Bridge token** (optional) — a static bearer. Add one when the bridge isn't on a trusted LAN.
+Enters **Pi** mode. Pi is a reflective, conversational agent that opens as a TUI embedded in an iframe below the messages. Unlike Hermes, Pi isn't a shell agent — it's designed for slow thinking, journaling, long-form planning.
 
-Click **Test connection** to confirm the bridge answers `/health`. If it doesn't, the `/hermes` calls will return a clear 503 with a pointer back to this Settings page — Companion never silently falls back to "no agent".
+Once in mode, type directly in the Pi terminal (not in the main composer). The composer doesn't route to Pi. Use `/exit` to return to normal LLM chat.
 
-## What Hermes can actually do
+**Requires** *Settings → Add-ons → Pi* → bridge URL.
 
-Out of the box, Hermes ships with its toolset (file read/write, shell, browse, etc.) operating on the machine where it runs. In the niveau-1 architecture (today), that's your workstation directly — the box and the bridge live on the same machine.
+---
 
-The niveau-2 architecture (coming) ships a small daemon you can install on any machine — Linux, Windows, macOS — that connects out to Companion. Then `/hermes` from any browser session lands on the daemon's machine, and the agent acts there. Each user runs their own daemon; each daemon has its own allowlist of paths and commands.
+## /exit — leave agent mode
 
-## Wiring Hermes the other way (Hermes → Companion)
+```
+/exit
+/hermes_off
+/pi_off
+```
 
-The setup above is Companion → Hermes (you type `/hermes …` and Companion sends the prompt to the bridge). Hermes can also call **back into Companion** via MCP — useful when the agent needs to recall something from your memory, list your saved skills, or post a message into another conversation. That direction is covered in [Agents tokens](agents-tokens#hermes-agent): mint a `hms_…` token in Settings, then `hermes mcp add companion --url …`. Once both sides are wired, a single `/hermes` turn can read your memory, write a file, and post a follow-up — all without leaving the agent box.
+Universal. Works for any active agent mode. The agent transcript stays visible — scroll back any time. The conversation returns to normal LLM chat.
 
-## Adding more agents
+---
 
-The slash command pattern is generic. Future drops will add:
+## Rules that apply to all modes
 
-- **`/pi`** — Pi-AI, conversational and reflective
-- **`/openclaw`** — generalist agent with strong messaging gateway (WhatsApp, Slack, Discord, Telegram)
-- whatever else fits
+- **One agent per conversation.** Can't have Hermes and Pi active in the same chat simultaneously.
+- **Conversations are independent.** Mode is per-conversation, not global. A second tab has its own mode.
+- **Memory still works.** The wiki snapshot is in the chat's system prompt — the agent sees what Némo knows.
+- **Tools are always visible.** Every file write, shell command, and browse surfaces in the amber lines. No silent tool use.
 
-Each agent registers as its own add-on with its own bridge URL. The `/exit` command works for all of them. You can have only one agent active per conversation at a time — but different conversations can sit in different modes simultaneously.
+---
 
-## Tips
+## Related
 
-- **`/hermes` is per-conversation**, not global. Each chat has its own mode flag (stored in the DB). Switching conversations doesn't drag the mode with you.
-- **Memory still applies** when you ask the agent something. The agent doesn't read Companion's memory directly, but the chat asking it does — so the prompt you formulate has all the context Némo would have had.
-- **Tools are visible**. Anything the agent does on disk or in the shell is surfaced in the amber `⚒ tool · …` lines. There is no silent tool use.
-- **Reset when stuck**. If a session goes sideways (loop, weird state), click `⟲ reset` in the agent panel header. Next `/hermes` opens a fresh ACP session, clean slate.
+- *Add-ons* (13b) — configure Hermes, Pi, and ComfyUI bridges
+- *Agents tokens* (13) — wire Hermes back to Companion's memory via MCP
+- *Chat basics* (05) — normal LLM chat, no slash
