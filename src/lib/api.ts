@@ -1371,6 +1371,101 @@ export const api = {
       method: "POST",
     }),
 
+  // ComfyUI Imager add-on. Backed by the OdyssAI-Imager FastAPI bridge
+  // (port 8008 on .141). Generate returns an SSE stream of bridge events
+  // (preflight, params, fp8_fallback, downloads_*, submitting, sampling,
+  // done, error) — the panel UI subscribes per event name with a native
+  // EventSource-style reader. Wait=true on the bridge is forced server-side
+  // so a single call yields one image back.
+  comfyuiAddonInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      configured: boolean;
+      bridgeUrl: string;
+      hasToken: boolean;
+    }>("/api/addons/comfyui/info"),
+  comfyuiAddonSetConfig: (body: {
+    enabled?: boolean;
+    bridgeUrl?: string;
+    bridgeToken?: string | null;
+  }) =>
+    request<{
+      ok: true;
+      enabled: boolean;
+      configured: boolean;
+      bridgeUrl: string;
+      hasToken: boolean;
+    }>("/api/addons/comfyui/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  comfyuiAddonProbe: () =>
+    request<{ ok: boolean; health?: unknown; error?: string; status?: number }>(
+      "/api/addons/comfyui/probe",
+      { method: "POST" },
+    ),
+  comfyuiTemplates: () =>
+    request<{ templates: string[] }>("/api/agents/comfyui/templates"),
+  /**
+   * Stream a generation. Yields parsed `{event, data}` pairs from the
+   * bridge's SSE response. Throws on non-2xx (so the caller can show the
+   * upstream error verbatim).
+   */
+  async *comfyuiGenerate(body: {
+    template?: string;
+    prompt: string;
+    negative_prompt?: string;
+    width?: number;
+    height?: number;
+    steps?: number;
+    cfg?: number;
+    seed?: number;
+    filename_prefix?: string;
+  }): AsyncGenerator<{ event: string; data: unknown }> {
+    const r = await fetch("/api/agents/comfyui/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      credentials: "include",
+    });
+    if (!r.ok || !r.body) {
+      let detail = `HTTP ${r.status}`;
+      try {
+        const j = await r.json();
+        if (j?.detail) detail = JSON.stringify(j.detail);
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`comfyui bridge: ${detail}`);
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const blocks = buf.split("\n\n");
+      buf = blocks.pop() ?? "";
+      for (const block of blocks) {
+        if (!block.trim()) continue;
+        let ev = "message";
+        let data = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) ev = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        try {
+          yield { event: ev, data: JSON.parse(data) };
+        } catch {
+          yield { event: ev, data };
+        }
+      }
+    }
+  },
+
   // Auto Router add-on (semantic routing via embeddings)
   routerInfo: () =>
     request<{

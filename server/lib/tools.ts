@@ -31,6 +31,7 @@ import {
 } from "./mcp-client";
 import { parseSkillMd, SkillParseError } from "./skill-format";
 import { fsEdit, fsList, fsRead, fsWrite, WorkspaceError } from "./workspace";
+import { loadComfyuiConfigForUser } from "../routes/addon-comfyui";
 
 const execFileAsync = promisify(execFile);
 
@@ -82,6 +83,81 @@ const WEB_SEARCH_TOOLS = [
           },
         },
         required: ["url"],
+      },
+    },
+  },
+];
+
+// cluster_action / hermes_agent tools are retired (2026-05-19). The
+// executor still recognises the names so legacy conversations get a
+// clean error rather than a crash.
+
+// ── ComfyUI Imager (OdyssAI-Imager bridge) ───────────────────────────────
+
+const COMFYUI_TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "comfyui_generate",
+      description:
+        "Generate an image via the OdyssAI-Imager bridge (ComfyUI). " +
+        "Use this when the user asks for an illustration, a cover, a visual " +
+        "asset, or whenever an image would materially help the answer. " +
+        "Templates currently exposed: 'flux1-schnell-t2i-v1' (fast, " +
+        "4 steps, lower quality) and 'flux1-dev-t2i-v1' (full quality, " +
+        "20 steps, the article-cover default). Returns the image(s) as " +
+        "base64 PNG; the chat UI renders them inline.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description:
+              "What to draw. Be specific about subject, setting, lighting, " +
+              "style, camera. Avoid copyrighted names or trademarked " +
+              "characters.",
+          },
+          template: {
+            type: "string",
+            enum: ["flux1-schnell-t2i-v1", "flux1-dev-t2i-v1"],
+            description:
+              "Workflow template id. Default 'flux1-dev-t2i-v1' for " +
+              "publishable quality, 'flux1-schnell-t2i-v1' for fast " +
+              "iteration.",
+          },
+          negative_prompt: {
+            type: "string",
+            description:
+              "What to avoid. Optional. Common: 'blurry, low quality, " +
+              "watermark, text'.",
+          },
+          width: { type: "integer", minimum: 64, maximum: 4096 },
+          height: { type: "integer", minimum: 64, maximum: 4096 },
+          steps: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            description:
+              "Sampling steps. Schnell wants 4, dev wants ~20. Ignored " +
+              "by the template if you let it default.",
+          },
+          cfg: {
+            type: "number",
+            minimum: 0,
+            maximum: 100,
+            description:
+              "Classifier-free guidance. Schnell wants 1.0, dev wants " +
+              "3.5.",
+          },
+          seed: {
+            type: "integer",
+            minimum: 0,
+            description:
+              "Reproducibility seed. 0 = random. Pass an integer to " +
+              "regenerate the same image.",
+          },
+        },
+        required: ["prompt"],
       },
     },
   },
@@ -514,6 +590,7 @@ export async function toolsForUser(userId: string): Promise<unknown[]> {
   const out: unknown[] = [...FS_TOOLS, ...NATIVE_TOOLS];
   if (isRagConfigured()) out.push(...RAG_TOOLS);
   if (await isWebSearchEnabled(userId)) out.push(...WEB_SEARCH_TOOLS);
+  if (await isComfyuiEnabled(userId)) out.push(...COMFYUI_TOOLS);
 
   // MCP tools — third-party servers the user registered. Read the cache
   // and refresh entries older than the TTL in the background; the cached
@@ -614,6 +691,23 @@ function toOpenAiTool(serverSlug: string, t: McpToolSpec): unknown {
       parameters: t.inputSchema ?? { type: "object", properties: {} },
     },
   };
+}
+
+// ── ComfyUI Imager config ──────────────────────────────────────────────────
+
+export async function getComfyuiBridge(
+  userId: string,
+): Promise<{ bridgeUrl: string; bridgeToken: string | null } | null> {
+  // loadComfyuiConfigForUser is the source of truth — same loader the
+  // /api/agents/comfyui/* routes use. Returns null when the add-on is
+  // disabled or has no bridgeUrl set.
+  const cfg = await loadComfyuiConfigForUser(userId);
+  if (!cfg || !cfg.bridgeUrl) return null;
+  return { bridgeUrl: cfg.bridgeUrl, bridgeToken: cfg.bridgeToken ?? null };
+}
+
+export async function isComfyuiEnabled(userId: string): Promise<boolean> {
+  return Boolean(await getComfyuiBridge(userId));
 }
 
 // ── Tavily client ────────────────────────────────────────────────────────
@@ -918,6 +1012,206 @@ async function executeFsTool(
   }
 }
 
+// ── ComfyUI Imager executor ───────────────────────────────────────────────
+//
+// Forwards the request to the OdyssAI-Imager bridge's /v1/generate with
+// wait=true (we want one round trip per tool call). Parses the SSE stream
+// to extract the final image URLs, then fetches the actual image bytes
+// from the compute host and base64-encodes them so the chat frontend can
+// render them inline (the browser can't reach .42:8188 directly — that's
+// a private host behind Companion's LAN).
+
+async function executeComfyuiTool(
+  args: ToolArgs,
+  userId: string,
+): Promise<ToolResult> {
+  const bridge = await getComfyuiBridge(userId);
+  if (!bridge) {
+    return {
+      ok: false,
+      error:
+        "ComfyUI Imager add-on is not enabled or no bridge URL is set. " +
+        "Open Settings → Add-ons → ComfyUI Imager to configure it.",
+    };
+  }
+  const prompt = String(args.prompt ?? "").trim();
+  if (!prompt) return { ok: false, error: "missing 'prompt' argument" };
+
+  const body = {
+    prompt,
+    template:
+      typeof args.template === "string" && args.template
+        ? args.template
+        : undefined,
+    negative_prompt:
+      typeof args.negative_prompt === "string" ? args.negative_prompt : undefined,
+    width: typeof args.width === "number" ? args.width : undefined,
+    height: typeof args.height === "number" ? args.height : undefined,
+    steps: typeof args.steps === "number" ? args.steps : undefined,
+    cfg: typeof args.cfg === "number" ? args.cfg : undefined,
+    seed: typeof args.seed === "number" ? args.seed : undefined,
+    wait: true,
+  };
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(bridge.bridgeUrl.replace(/\/+$/, "") + "/v1/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        ...(bridge.bridgeToken
+          ? { Authorization: `Bearer ${bridge.bridgeToken}` }
+          : {}),
+      },
+      body: JSON.stringify(body),
+      // 6 minutes — matches the bridge's own timeout. flux1-dev at 20
+      // steps runs ~3 minutes; this leaves headroom for heavier templates.
+      signal: AbortSignal.timeout(6 * 60 * 1000),
+    });
+  } catch (e) {
+    return { ok: false, error: `bridge unreachable: ${(e as Error).message}` };
+  }
+
+  if (!upstream.ok || !upstream.body) {
+    const txt = await upstream.text().catch(() => "");
+    return {
+      ok: false,
+      error: `bridge ${upstream.status}: ${txt.slice(0, 300)}`,
+    };
+  }
+
+  // Parse the SSE stream. We only care about the final `done` and any
+  // `error` events; everything else (preflight, params, sampling…) is
+  // noise for the tool result.
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  // The bridge emits `done` with images: string[] (non-empty on success)
+  // and an optional raw_images / duration_s. We accept the JSON.parse
+  // result as `any` and re-validate the shape once the stream ends —
+  // TypeScript's narrowing across `JSON.parse → cast → use` is too
+  // fragile to be the only line of defence.
+  let rawDone: unknown = null;
+  let errorMsg: string | null = null;
+
+  function processBlock(block: string) {
+    let ev = "";
+    let data = "";
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event:")) ev = line.slice(6).trim();
+      else if (line.startsWith("data:")) data += line.slice(5).trim();
+    }
+    if (!data) return;
+    let parsed: any;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (ev === "done") rawDone = parsed;
+    else if (ev === "error") {
+      errorMsg = typeof parsed?.message === "string"
+        ? parsed.message
+        : JSON.stringify(parsed);
+    }
+  }
+
+  try {
+    while (true) {
+      const { done: streamDone, value } = await reader.read();
+      if (streamDone) break;
+      buf += decoder.decode(value, { stream: true });
+      const blocks = buf.split("\n\n");
+      buf = blocks.pop() ?? "";
+      for (const block of blocks) if (block.trim()) processBlock(block);
+    }
+    if (buf.trim()) processBlock(buf);
+  } catch (e) {
+    return { ok: false, error: `stream read failed: ${(e as Error).message}` };
+  }
+
+  if (errorMsg) return { ok: false, error: errorMsg };
+
+  // Validate the `done` payload shape manually. TS's narrowing across
+  // the `let rawDone: unknown = null` boundary isn't reliable enough to
+  // be the only check.
+  type FinalEvent = {
+    images: string[];
+    raw_images?: Array<{ filename?: string }>;
+    duration_s?: number;
+  };
+  let finalEvent: FinalEvent | null = null;
+  if (rawDone && typeof rawDone === "object") {
+    const obj = rawDone as Record<string, unknown>;
+    if (
+      Array.isArray(obj.images) &&
+      obj.images.length > 0 &&
+      obj.images.every((u) => typeof u === "string")
+    ) {
+      finalEvent = {
+        images: obj.images as string[],
+        raw_images: Array.isArray(obj.raw_images)
+          ? (obj.raw_images as Array<{ filename?: string }>)
+          : undefined,
+        duration_s:
+          typeof obj.duration_s === "number" ? obj.duration_s : undefined,
+      };
+    }
+  }
+  if (!finalEvent) {
+    return {
+      ok: false,
+      error: "bridge stream ended without a valid 'done' event",
+    };
+  }
+
+  // Fetch each image as base64 so the frontend can render them inline
+  // (the URLs point at .42:8188 which the browser cannot reach).
+  const images: Array<{
+    url: string;
+    filename: string;
+    mime: string;
+    dataBase64: string;
+  }> = [];
+  for (let i = 0; i < finalEvent.images.length; i++) {
+    const url = finalEvent.images[i]!;
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+      if (!r.ok) continue;
+      const mime = r.headers.get("content-type") || "image/png";
+      const imgBuf = Buffer.from(await r.arrayBuffer());
+      const filename =
+        finalEvent.raw_images?.[i]?.filename ?? `imager-${i}.png`;
+      images.push({
+        url,
+        filename,
+        mime,
+        dataBase64: imgBuf.toString("base64"),
+      });
+    } catch {
+      // Skip this image; the others (if any) still surface.
+    }
+  }
+
+  if (images.length === 0) {
+    return {
+      ok: false,
+      error: "bridge returned image URLs but all fetches failed",
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      template: typeof args.template === "string" ? args.template : null,
+      prompt,
+      duration_s: finalEvent.duration_s ?? null,
+      images, // each: { url, filename, mime, dataBase64 }
+    },
+  };
+}
+
 // ── Native tools implementation ───────────────────────────────────────────
 
 const WEB_CACHE_DIR = process.env.WEB_CACHE_DIR ?? "/tmp/companion-web-cache";
@@ -1182,6 +1476,9 @@ export async function executeTool(
   }
   if (name === "web_fetch") {
     return executeWebTool(name, args, userId);
+  }
+  if (name === "comfyui_generate") {
+    return executeComfyuiTool(args, userId);
   }
   if (name.startsWith("skill_")) {
     return executeSkillTool(name, args, userId);
