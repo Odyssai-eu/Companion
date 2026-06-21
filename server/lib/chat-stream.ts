@@ -424,10 +424,7 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
         // so the turn persists with something visible instead of ghosting.
         if (!assistantContent.trim() && body.conversationId) {
           const note =
-            "_(No answer was produced. If this model streams its reasoning on "
-            + "a separate channel, it may have spent the turn thinking without "
-            + "writing a reply — try disabling thinking for this model, or use a "
-            + "hosted model like `or:claude-haiku`.)_";
+            "_No answer was produced._";
           for (let i = 0; i < note.length; i += 32) {
             const piece = note.slice(i, i + 32);
             await safeWrite(
@@ -574,7 +571,7 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
                 completionTokens: st.completionTokens,
                 reasoningTokens: st.reasoningTokens,
                 // Cached prompt tokens — 0 = full re-prefill, >0 = upstream
-                // (oMLX tiered KV / Anthropic prompt cache) served part of
+                // (upstream prefix cache — Anthropic, vLLM, etc.) served part of
                 // the prefix from cache. Surfaced in the UI as "Cached".
                 cachedTokens: st.cachedTokens,
                 chunks: totalChunkCount,
