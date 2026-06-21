@@ -1465,6 +1465,32 @@ export const api = {
       }
     }
   },
+  /**
+   * Slash-command helper: POST /api/agents/comfyui/slash. Drains the SSE
+   * server-side and returns base64-encoded images so the chat composer
+   * can render them inline (the upstream image URLs point at a private
+   * compute host the browser cannot reach).
+   */
+  comfyuiSlash: (body: {
+    conversationId: string;
+    prompt: string;
+    template?: string;
+    negative_prompt?: string;
+    width?: number;
+    height?: number;
+    steps?: number;
+    cfg?: number;
+    seed?: number;
+  }) =>
+    request<{
+      prompt_id: string | null;
+      duration_s: number | null;
+      images: Array<{ filename: string; mime: string; dataBase64: string }>;
+      transcript_tail: Array<{ event: string; data: unknown }>;
+    }>("/api/agents/comfyui/slash", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // Auto Router add-on (semantic routing via embeddings)
   routerInfo: () =>
