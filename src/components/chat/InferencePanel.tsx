@@ -130,6 +130,7 @@ function SystemPromptSection({
   // one-off conv-level overrides; the dropdown loads a named entry
   // INTO the textarea (the choice doesn't persist back automatically).
   const [library, setLibrary] = useState<SavedPrompt[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function refresh() {
@@ -165,7 +166,49 @@ function SystemPromptSection({
   function onLoad(id: string) {
     const found = library.find((p) => p.id === id);
     if (!found) return;
+    setSelectedId(id);
     onChange({ systemPrompt: found.body, systemPromptEnabled: true });
+  }
+
+  // Save the current textarea back onto the loaded saved prompt — the
+  // "correct a recorded prompt" path (#39). updateSavedPrompt is a PATCH,
+  // so we send only the body here.
+  async function onUpdate() {
+    if (!selectedId) return;
+    if (!params.systemPrompt.trim()) return;
+    try {
+      await api.updateSavedPrompt(selectedId, { body: params.systemPrompt });
+      await refresh();
+    } catch (e) {
+      alert(`Couldn't update: ${(e as Error).message}`);
+    }
+  }
+
+  async function onRename(id: string, current: string) {
+    const name = window.prompt("Rename prompt:", current)?.trim();
+    if (!name || name === current) return;
+    try {
+      await api.updateSavedPrompt(id, { name });
+      await refresh();
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (/name_taken/.test(msg)) {
+        alert(`A saved prompt called "${name}" already exists.`);
+      } else {
+        alert(`Couldn't rename: ${msg}`);
+      }
+    }
+  }
+
+  async function onDelete(id: string, name: string) {
+    if (!confirm(`Delete saved prompt "${name}"?`)) return;
+    try {
+      await api.deleteSavedPrompt(id);
+      if (selectedId === id) setSelectedId(null);
+      await refresh();
+    } catch (e) {
+      alert(`Couldn't delete: ${(e as Error).message}`);
+    }
   }
 
   function onExport() {
@@ -246,6 +289,16 @@ function SystemPromptSection({
           >
             Save current
           </button>
+          {selectedId && (
+            <button
+              type="button"
+              onClick={onUpdate}
+              disabled={!params.systemPrompt.trim()}
+              className="text-[11px] text-cyan hover:text-navy disabled:opacity-40"
+            >
+              Update
+            </button>
+          )}
           <button
             type="button"
             onClick={onExport}
@@ -278,6 +331,45 @@ function SystemPromptSection({
           />
         </div>
       </div>
+      {library.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {library.map((p) => (
+            <span
+              key={p.id}
+              className={`group inline-flex items-center rounded-full border bg-white text-[11px] ${
+                selectedId === p.id
+                  ? "border-cyan text-navy"
+                  : "border-gray-200 text-gray-600 hover:border-cyan hover:text-navy"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => onLoad(p.id)}
+                title={p.body.slice(0, 200)}
+                className="rounded-l-full py-0.5 pr-1 pl-2.5"
+              >
+                {p.name}
+              </button>
+              <button
+                type="button"
+                onClick={() => onRename(p.id, p.name)}
+                title="Rename"
+                className="px-1 py-0.5 text-gray-400 hover:text-cyan"
+              >
+                ✎
+              </button>
+              <button
+                type="button"
+                onClick={() => onDelete(p.id, p.name)}
+                title="Delete"
+                className="rounded-r-full py-0.5 pr-2 pl-1 text-gray-400 hover:text-red-500"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <textarea
         value={params.systemPrompt}
         onChange={(e) => onChange({ systemPrompt: e.target.value })}
