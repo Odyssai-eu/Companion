@@ -306,22 +306,35 @@ comfyuiAgentRoute.post(
 
     // ── 3. Collect images ──────────────────────────────────────────────
     //
-    // `images` is keyed by node id; each value is an array of {filename,
-    // subfolder, type}. Flatten to a single ordered list. Preserve the
-    // order across nodes so the modal renders them predictably.
+    // `images` is keyed by node id. The bridge returns the raw ComfyUI
+    // history shape: each value is `{ images: [{filename, subfolder,
+    // type}, ...] }` for the modern output schema. Older workflows (and
+    // some custom nodes) return the array directly instead. Handle both
+    // so we don't lock the parser to one bridge version.
     const flat: Array<{
       filename: string;
       subfolder?: string;
       type?: string;
     }> = [];
     for (const nodeOutputs of Object.values(finalStatus.images ?? {})) {
-      if (!Array.isArray(nodeOutputs)) continue;
-      for (const out of nodeOutputs) {
-        if (typeof out?.filename === "string") {
+      let candidates: unknown[] | null = null;
+      if (Array.isArray(nodeOutputs)) {
+        candidates = nodeOutputs;
+      } else if (
+        nodeOutputs &&
+        typeof nodeOutputs === "object" &&
+        Array.isArray((nodeOutputs as { images?: unknown }).images)
+      ) {
+        candidates = (nodeOutputs as { images: unknown[] }).images;
+      }
+      if (!candidates) continue;
+      for (const out of candidates) {
+        if (out && typeof out === "object" && typeof (out as { filename?: unknown }).filename === "string") {
+          const o = out as { filename: string; subfolder?: unknown; type?: unknown };
           flat.push({
-            filename: out.filename,
-            subfolder: typeof out.subfolder === "string" ? out.subfolder : "",
-            type: typeof out.type === "string" ? out.type : "output",
+            filename: o.filename,
+            subfolder: typeof o.subfolder === "string" ? o.subfolder : "",
+            type: typeof o.type === "string" ? o.type : "output",
           });
         }
       }
