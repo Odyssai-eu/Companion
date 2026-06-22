@@ -86,6 +86,12 @@ export type ComfyuiPrompt = {
 export type ComfyuiResult = {
   prompt_id: string | null;
   duration_s: number | null;
+  bridge_url: string;
+  template: string;
+  /** Server returns the bytes base64-inlined so the modal can render
+   *  before persisting. The persisted message only stores the reference
+   *  (filename + mime + bridge_url); the bytes themselves stay on the
+   *  compute host. */
   images: Array<{ filename: string; mime: string; dataBase64: string }>;
   transcript_tail: Array<{ event: string; data: unknown }>;
 };
@@ -218,6 +224,8 @@ export function ComfyuiPromptModal({
       onResult({
         prompt_id: r.prompt_id,
         duration_s: r.duration_s,
+        bridge_url: r.bridge_url,
+        template: r.template,
         images: r.images,
         transcript_tail: r.transcript_tail,
       });

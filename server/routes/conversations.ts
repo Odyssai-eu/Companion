@@ -41,11 +41,22 @@ const createSchema = z.object({
   agentMode: z.boolean().optional(),
 });
 
+const comfyuiAttachmentSchema = z.object({
+  filename: z.string().min(1).max(500),
+  mime: z.string().min(1).max(120),
+  bridge_url: z.string().url().max(500),
+  template_slug: z.string().min(1).max(120).optional(),
+});
+
 const appendMessageSchema = z.object({
   role: z.enum(["user", "assistant", "system"]),
   content: z.string().default(""),
   reasoning: z.string().optional(),
   stats: z.record(z.unknown()).optional(),
+  /** ComfyUI image attachments (added 2026-06-22). Bytes live on the
+   *  compute host; we only persist the reference. See
+   *  drizzle/0057_message_attachments.sql and db/schema.ts. */
+  attachments: z.array(comfyuiAttachmentSchema).optional(),
   // Frontend-controlled timestamp. We store this exact value so the backend's
   // notion of when the message happened matches the frontend's — critical
   // for byte-stable time tags (and therefore for upstream KV-cache hits).
@@ -500,6 +511,7 @@ conversationsRoute.post(
       content: data.content,
       reasoning: data.reasoning,
       stats: data.stats,
+      attachments: data.attachments ?? [],
     };
     if (data.createdAt) insertValues.createdAt = new Date(data.createdAt);
     const [message] = await db.insert(messages).values(insertValues).returning();

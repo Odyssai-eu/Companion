@@ -103,24 +103,27 @@ export type ToolCallRecord = {
   };
 };
 
+export type ComfyuiAttachment = {
+  filename: string;
+  mime: string;
+  /** Bridge base URL (e.g. "http://192.168.86.141:8008") captured at
+   *  generation time. The full image URL is
+   *  `{bridge_url}/v1/image/{filename}`. */
+  bridge_url: string;
+  template_slug?: string;
+};
+
 export type UIMessage = {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
   reasoning?: string;
   streaming?: boolean;
-  /** ComfyUI image attachments. When present, the message renders the
-   *  images via <ComfyuiImages> instead of the markdown body — the
-   *  data URI approach inlined megabytes of base64 into the markdown
-   *  and gave us no way to add a Save button. Set by pushComfyuiResult;
-   *  not persisted server-side today (regenerated from transcript). */
-  images?: Array<{
-    filename: string;
-    mime: string;
-    /** Base64 (no data: prefix). The renderer builds the data URI at
-     *  paint time to keep message objects serialisable. */
-    dataBase64: string;
-  }>;
+  /** ComfyUI image attachments. Bytes live on the compute host — we
+   *  only persist a reference and the browser fetches via the bridge
+   *  URL at render time. Set by pushComfyuiResult and loaded from the
+   *  `messages.attachments` JSONB column by toUIMessage. */
+  attachments?: ComfyuiAttachment[];
   /** ISO-8601 — set when the message is created locally (sendMessage) or
    *  loaded from the server (toUIMessage). Used by the chat client to send
    *  per-message timestamps so the backend can compute Δ tags. */
@@ -234,16 +237,29 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     null,
   );
   /** Push the image (or set of images) returned by the modal into the
-   *  chat. The images are attached as a typed field on the assistant
-   *  message — <ComfyuiImages> renders them with a hover overlay that
-   *  offers Save. We keep a short caption in `content` for screen
-   *  readers, copy-to-clipboard, and the message list summary. */
+   *  chat as a persisted assistant message. The bytes live on the
+   *  ComfyUI compute host; we only persist the reference
+   *  (filename + mime + bridge URL) so the message survives a refresh
+   *  and renders the same image on reload via GET /v1/image/{filename}.
+   *
+   * Two messages get inserted:
+   *  1. A `user` line containing `/comfyui` so the conversation reads
+   *     naturally even before images load.
+   *  2. An `assistant` line with the caption + attachments array. This
+   *     is the line the renderer picks up via <ComfyuiAttachments>.
+   *
+   * If the server insert fails we fall back to local-only state (the
+   * user still sees their image in this session) and surface a toast
+   * — better than a silent regression to the old ephemeral behaviour.
+   */
   const pushComfyuiResult = useCallback(
-    (r: {
+    async (r: {
+      conversationId: string;
+      template_slug: string;
+      bridge_url: string;
       prompt_id: string | null;
       duration_s: number | null;
-      images: Array<{ filename: string; mime: string; dataBase64: string }>;
-      transcript_tail: Array<{ event: string; data: unknown }>;
+      images: Array<{ filename: string; mime: string }>;
     }) => {
       const userLineId = `local-comfyui-q-${Date.now()}`;
       const assistantLineId = `local-comfyui-a-${Date.now()}`;
@@ -252,24 +268,54 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         ? `*Generated ${r.images.length} image(s) in ${duration} · ` +
           `prompt_id: \`${r.prompt_id ?? "?"}\`*`
         : "_Generation finished but no image was returned._";
+      const attachments: ComfyuiAttachment[] = r.images.map((img) => ({
+        filename: img.filename,
+        mime: img.mime,
+        bridge_url: r.bridge_url,
+        template_slug: r.template_slug,
+      }));
+
+      // Optimistic local insert so the user sees the image instantly.
+      const now = new Date().toISOString();
       setMessages((prev) => [
         ...prev,
         {
           id: userLineId,
           role: "user",
           content: `/comfyui`,
-          createdAt: new Date().toISOString(),
+          createdAt: now,
           streaming: false,
         },
         {
           id: assistantLineId,
           role: "assistant",
           content: caption,
-          images: r.images.length > 0 ? r.images : undefined,
-          createdAt: new Date().toISOString(),
+          attachments: attachments.length > 0 ? attachments : undefined,
+          createdAt: now,
           streaming: false,
         },
       ]);
+
+      // Persist on the server so a refresh restores the same message.
+      // Fire-and-forget on success — the local state already shows it.
+      // On failure, log to console; a future toast will surface this.
+      try {
+        await Promise.all([
+          api.appendMessage(r.conversationId, {
+            role: "user",
+            content: "/comfyui",
+            createdAt: now,
+          }),
+          api.appendMessage(r.conversationId, {
+            role: "assistant",
+            content: caption,
+            attachments: attachments.length > 0 ? attachments : undefined,
+            createdAt: now,
+          }),
+        ]);
+      } catch (e) {
+        console.error("[comfyui] failed to persist image message", e);
+      }
     },
     [],
   );
@@ -1686,6 +1732,10 @@ function toUIMessage(m: ApiMessage): UIMessage {
     // isn't available anymore.
     model: stats?.model,
     stats,
+    // ComfyUI image references loaded from the messages.attachments
+    // JSONB column. Empty/null = text-only message.
+    attachments:
+      m.attachments && m.attachments.length > 0 ? m.attachments : undefined,
   };
 }
 

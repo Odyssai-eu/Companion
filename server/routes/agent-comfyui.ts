@@ -418,6 +418,13 @@ comfyuiAgentRoute.post(
     return c.json({
       prompt_id: promptId,
       duration_s: Math.round((Date.now() - t0) / 100) / 10,
+      // Echo the bridge URL + template slug so the modal can persist a
+      // self-contained attachment reference per message. Without this
+      // the bridge URL would have to be re-resolved from the add-on
+      // config at render time, and changing the configured bridge
+      // later would silently break old messages.
+      bridge_url: baseUrl,
+      template: body.template,
       images,
       transcript_tail: transcript.slice(-5),
     });

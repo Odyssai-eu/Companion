@@ -347,7 +347,18 @@ export default function ChatLayout() {
           conversationId={chat.conversation.id}
           onClose={() => chat.setComfyuiPrompt(null)}
           onResult={(r: ComfyuiResult) => {
-            chat.pushComfyuiResult(r);
+            chat.pushComfyuiResult({
+              conversationId: chat.conversation!.id,
+              template_slug: r.template,
+              bridge_url: r.bridge_url,
+              prompt_id: r.prompt_id,
+              duration_s: r.duration_s,
+              // Server returns base64 bytes inline so the modal can
+              // render optimistically, but we only persist the
+              // reference (filename + mime + bridge URL) — the bytes
+              // stay on the compute host.
+              images: r.images.map(({ filename, mime }) => ({ filename, mime })),
+            });
             chat.setComfyuiPrompt(null);
           }}
         />

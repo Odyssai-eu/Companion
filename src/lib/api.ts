@@ -395,6 +395,14 @@ export type ApiMessage = {
   content: string;
   reasoning: string | null;
   stats: Record<string, unknown> | null;
+  /** ComfyUI image references (post-refacto 2026-06-22). Mirrors
+   *  server/db/schema.ts ComfyuiAttachment. */
+  attachments: Array<{
+    filename: string;
+    mime: string;
+    bridge_url: string;
+    template_slug?: string;
+  }> | null;
   createdAt: string;
 };
 
@@ -844,6 +852,14 @@ export const api = {
       content: string;
       reasoning?: string;
       stats?: Record<string, unknown>;
+      /** ComfyUI image references (post-refacto 2026-06-22). Bytes live
+       *  on the compute host; we only persist the reference. */
+      attachments?: Array<{
+        filename: string;
+        mime: string;
+        bridge_url: string;
+        template_slug?: string;
+      }>;
       /** ISO-8601. Sent so the DB stores the frontend's notion of "when",
        *  matching the value used in the chat request — keeps prefix-cache
        *  bytes stable across page reloads. */
@@ -1496,6 +1512,8 @@ export const api = {
     request<{
       prompt_id: string | null;
       duration_s: number | null;
+      bridge_url: string;
+      template: string;
       images: Array<{ filename: string; mime: string; dataBase64: string }>;
       transcript_tail: Array<{ event: string; data: unknown }>;
     }>("/api/agents/comfyui/slash", {

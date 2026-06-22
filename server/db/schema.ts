@@ -385,6 +385,31 @@ export const conversations = pgTable(
   }),
 );
 
+/**
+ * A reference to a ComfyUI-generated image attachment on a message.
+ *
+ * The image bytes themselves are NOT stored here — they live on the
+ * ComfyUI compute host (`/Volumes/models-1/comfyui/output/...`) and
+ * are served via the OdyssAI-Imager bridge's `/v1/image/{filename}`
+ * endpoint. We only persist the reference: filename + mime + the
+ * bridge URL that was current when the generation completed. The
+ * browser re-fetches the bytes on every render.
+ *
+ * Storing `bridge_url` per message (not looking it up from the add-on
+ * config at render time) means changing the configured bridge later
+ * doesn't silently break old messages — if the old bridge is still up,
+ * the old image still renders.
+ */
+export type ComfyuiAttachment = {
+  filename: string;
+  mime: string;
+  /** Bridge base URL (e.g. "http://192.168.86.141:8008") resolved at
+   *  generation time. The full image URL is `{bridge_url}/v1/image/{filename}`. */
+  bridge_url: string;
+  /** Optional template slug, mainly for display in the UI badge. */
+  template_slug?: string;
+};
+
 export const messages = pgTable(
   "messages",
   {
@@ -396,6 +421,12 @@ export const messages = pgTable(
     content: text("content").notNull().default(""),
     reasoning: text("reasoning"),
     stats: jsonb("stats").$type<Record<string, unknown>>(),
+    /** ComfyUI image references (post-refacto 2026-06-22). Empty array
+     *  for text-only messages. Bytes live on the compute host. */
+    attachments: jsonb("attachments")
+      .$type<ComfyuiAttachment[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),

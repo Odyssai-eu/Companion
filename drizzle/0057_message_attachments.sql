@@ -1,0 +1,19 @@
+-- 2026-06-22: ComfyUI image attachments persistence (#refacto-image-stack).
+--
+-- Until now, /comfyui generations were appended to the chat as in-memory
+-- React state only — refreshing the tab lost every image the modal had
+-- produced. The images themselves live on the ComfyUI compute host
+-- (/Volumes/models-1/comfyui/output on .42) and are served by the
+-- OdyssAI-Imager bridge via GET /v1/image/{filename}. All we need to
+-- persist on the message row is the reference: filename + mime + the
+-- bridge URL that was current when the generation completed. The browser
+-- re-fetches the bytes on every render.
+--
+-- Storing the bridge URL per message (rather than looking it up from
+-- the add-on config at render time) means changing the configured
+-- bridge later doesn't silently break old messages — if the old bridge
+-- is still up, the old image still renders.
+--
+-- Nullable: text messages have no attachments. Default '[]' so existing
+-- rows don't need a backfill.
+ALTER TABLE "messages" ADD COLUMN IF NOT EXISTS "attachments" jsonb NOT NULL DEFAULT '[]'::jsonb;

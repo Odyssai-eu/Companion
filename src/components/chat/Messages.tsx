@@ -10,7 +10,7 @@ import {
 import { copyToClipboard } from "~/lib/clipboard";
 import { renderMarkdown } from "~/lib/markdown";
 import { tts } from "~/lib/tts";
-import { ComfyuiImages } from "./ComfyuiImages";
+import { ComfyuiAttachments } from "./ComfyuiAttachments";
 import SpaceInvaders from "./SpaceInvaders";
 
 const ATARI_SEQ = ["a", "t", "a", "r", "i"];
@@ -304,9 +304,9 @@ function AssistantMessage({
           <ToolCallsBlock calls={message.toolCalls} />
         )}
         <div className="text-[15px] leading-relaxed text-ink">
-          {message.images && message.images.length > 0 ? (
+          {message.attachments && message.attachments.length > 0 ? (
             <>
-              <ComfyuiImages images={message.images} />
+              <ComfyuiAttachments attachments={message.attachments} />
               {message.content && (
                 <div className="mt-2">
                   <MarkdownBody content={message.content} />
@@ -878,11 +878,11 @@ function ActionsRow({
   }
 
   // Messages with image attachments get their Save affordance from the
-  // per-image hover overlay (see <ComfyuiImages>). Hiding Save/Save WAV
-  // here keeps the toolbar from offering actions that don't fit the
-  // content (e.g. TTS-reading a one-line caption).
-  const hasImages =
-    Array.isArray(message.images) && message.images.length > 0;
+  // per-image hover overlay (see <ComfyuiAttachments>). Hiding
+  // Save/Save WAV here keeps the toolbar from offering actions that
+  // don't fit the content (e.g. TTS-reading a one-line caption).
+  const hasAttachments =
+    Array.isArray(message.attachments) && message.attachments.length > 0;
 
   return (
     <div className="flex items-center gap-5 text-[12px] text-gray-400">
@@ -902,7 +902,7 @@ function ActionsRow({
         <CopyIcon />
         <span>Copy</span>
       </button>
-      {!hasImages && (
+      {!hasAttachments && (
         <button
           type="button"
           onClick={onSaveMd}
@@ -923,7 +923,7 @@ function ActionsRow({
           <span>Regenerate</span>
         </button>
       )}
-      {!hasImages && (
+      {!hasAttachments && (
         <button
           type="button"
           onClick={onSaveWav}
