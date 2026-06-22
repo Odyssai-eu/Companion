@@ -43,18 +43,32 @@ const comfyuiAgentRoute = new Hono<Env>();
 
 // Static fallback used when the bridge is unreachable on first paint.
 // Mirrors the templates shipped today (see Imager/registry/inputs_map.yaml).
+// `defaults` matches the workflow's baked values — UI opens with the
+// intended aspect ratio instead of a generic 1024x1024 placeholder.
 const FALLBACK_TEMPLATES = [
   "flux1-schnell-t2i-v1",
   "flux1-dev-t2i-v1",
   "photo-article-tmb",
   "image-z-image-turbo",
+  "image-rapide",
 ];
+
+// Cinemascope 21:9 across the board (per the inputs_map.yaml descriptions).
+// Kept in sync by hand; the live bridge response wins when it's up.
+const FALLBACK_DEFAULTS: Record<string, Record<string, number>> = {
+  "flux1-schnell-t2i-v1": { width: 1664, height: 928, steps: 4 },
+  "flux1-dev-t2i-v1": { width: 1664, height: 928, steps: 20 },
+  "photo-article-tmb": { width: 1664, height: 928, steps: 20 },
+  "image-z-image-turbo": { width: 1664, height: 928, steps: 5 },
+  "image-rapide": { width: 1664, height: 928, steps: 12 },
+};
 
 type BridgeTemplate = {
   slug: string;
   description?: string;
   model?: string;
   inputs: string[];
+  defaults?: Record<string, number>;
 };
 
 type BridgeTemplatesResponse = {
@@ -97,6 +111,11 @@ comfyuiAgentRoute.get("/templates", async (c) => {
         description: null,
         model: null,
         inputs: ["prompt", "width", "height", "steps"],
+        defaults: FALLBACK_DEFAULTS[slug] ?? {
+          width: 1024,
+          height: 1024,
+          steps: 20,
+        },
       })),
       source: "fallback",
     });

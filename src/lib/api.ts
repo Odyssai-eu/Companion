@@ -1412,6 +1412,7 @@ export const api = {
         description: string | null;
         model: string | null;
         inputs: string[];
+        defaults?: Record<string, number>;
       }>;
       service?: string;
       version?: string;

@@ -26,6 +26,7 @@ type TemplateMeta = {
   description: string | null;
   model: string | null;
   inputs: string[];
+  defaults?: Record<string, number>;
 };
 
 export type ComfyuiPrompt = {
@@ -58,9 +59,9 @@ export function ComfyuiPromptModal({
   >(null);
   const [template, setTemplate] = useState<string>("");
   const [prompt, setPrompt] = useState(initial.prompt);
-  const [width, setWidth] = useState(1024);
-  const [height, setHeight] = useState(1024);
-  const [steps, setSteps] = useState(20);
+  const [width, setWidth] = useState(1664);
+  const [height, setHeight] = useState(928);
+  const [steps, setSteps] = useState(12);
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -84,23 +85,23 @@ export function ComfyuiPromptModal({
               ? prev
               : r.templates[0]!.slug,
           );
-          // Seed defaults from the first template's declared inputs where
-          // applicable. The bridge's defaults are workflow-side; the UI
-          // just picks reasonable starting values.
-          seedDefaultsFromTemplate(r.templates[0]!);
         }
       })
       .catch(() => undefined);
   }, []);
 
-  function seedDefaultsFromTemplate(t: TemplateMeta) {
-    // The workflow JSON keeps its own baked defaults for width/height/
-    // steps; the UI just needs to expose the fields. We don't currently
-    // query the workflow for those defaults, so we leave the hardcoded
-    // 1024 / 1024 / 20 values in place. (If a template declares fewer
-    // inputs, the corresponding <input> is rendered read-only or hidden.)
-    void t;
-  }
+  // Apply the selected template's defaults whenever the template changes.
+  // The user can still tweak any value after the seed; this only affects
+  // the initial render and template switches. Skipping when the template
+  // doesn't declare the input keeps the previous user value intact.
+  const currentTemplate = templates.find((t) => t.slug === template) ?? null;
+  useEffect(() => {
+    if (!currentTemplate?.defaults) return;
+    const d = currentTemplate.defaults;
+    if (typeof d.width === "number") setWidth(d.width);
+    if (typeof d.height === "number") setHeight(d.height);
+    if (typeof d.steps === "number") setSteps(d.steps);
+  }, [currentTemplate]);
 
   // Re-render the phase log on every update so the user sees progress
   // even though we no longer expose a real-time SSE stream (the server
@@ -125,8 +126,6 @@ export function ComfyuiPromptModal({
       void run();
     }
   }
-
-  const currentTemplate = templates.find((t) => t.slug === template) ?? null;
 
   async function run() {
     if (busy) return;
