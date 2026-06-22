@@ -1,28 +1,36 @@
 /**
- * ComfyUI agent invocation. Forward SSE stream from the OdyssAI-Imager
- * bridge to the client, with a thin translation layer so the front-end
- * doesn't need to speak ComfyUI's native SSE shapes.
+ * ComfyUI agent invocation. Forward bridge calls (OdyssAI-Imager) to the
+ * client, with a thin translation layer so the front-end doesn't need to
+ * speak the bridge's native shapes.
  *
- *   POST /api/agents/comfyui/generate
- *     body: typed GenerateRequest (template, prompt, optional knobs)
- *     responds: SSE — events relayed from the bridge's /v1/generate.
- *
+ * Routes:
  *   GET  /api/agents/comfyui/templates
- *     → {"templates": ["flux1-schnell-t2i-v1", "flux1-dev-t2i-v1"]}
- *     Used by the panel UI to populate the template dropdown.
+ *     → proxies the bridge GET /v1/templates, exposes slug + description +
+ *       model + declared inputs. Falls back to a static list if the bridge
+ *       is unreachable so the modal still renders.
+ *
+ *   POST /api/agents/comfyui/slash
+ *     body: { template, prompt, width?, height?, steps?, seed?, cfg?,
+ *             negative_prompt?, conversationId }
+ *     → submits to the bridge POST /v1/templates/{slug}/run (fire-and-forget),
+ *       then polls GET /v1/status/{prompt_id} until the bridge reports
+ *       completion, fetches each image from the ComfyUI compute host
+ *       (/view), base64-encodes them, and returns them inline. The browser
+ *       can't reach the compute host directly so URL-only wouldn't render.
+ *
+ * Why polling and not SSE:
+ *   - The new templates route is fire-and-forget on purpose. The bridge
+ *     returns a prompt_id immediately and exposes the result via
+ *     /v1/status/{prompt_id} polling. Holding an SSE stream open across
+ *     a multi-minute generation just to stay consistent with the legacy
+ *     /v1/generate shape is wasted complexity now that the modal is the
+ *     sole caller.
  *
  * Why a relay and not a client-direct call:
- *   - The bridge may sit behind a private network the browser can't reach.
+ *   - The bridge and compute host may sit behind a private network the
+ *     browser can't reach.
  *   - The bearer token (IMAGER_BRIDGE_TOKEN) stays server-side; the
  *     browser never sees it.
- *   - Same shape as Hermes agent invoke — the chat SSE consumer in
- *     useChat.ts already speaks `update` / `tool_call` / `error` events,
- *     and we map the bridge's events onto a few small types here.
- *
- * What lands in the SSE stream (translated from bridge /v1/generate):
- *   preflight, params, fp8_fallback, downloads_start, downloads_done,
- *   submitting, submitted, sampling, done (with image URLs),
- *   error (with phase + message).
  */
 
 import { Hono } from "hono";
@@ -33,165 +41,106 @@ import { loadComfyuiConfigForUser } from "./addon-comfyui";
 type Env = { Variables: { userId: string } };
 const comfyuiAgentRoute = new Hono<Env>();
 
-// Hardcoded list — mirrors the workflows/ folder shipped with the
-// OdyssAI-Imager bridge. Kept in sync by hand; a /v1/templates endpoint
-// on the bridge could replace this if the catalogue grows.
-const TEMPLATES = ["flux1-schnell-t2i-v1", "flux1-dev-t2i-v1"];
+// Static fallback used when the bridge is unreachable on first paint.
+// Mirrors the templates shipped today (see Imager/registry/inputs_map.yaml).
+const FALLBACK_TEMPLATES = [
+  "flux1-schnell-t2i-v1",
+  "flux1-dev-t2i-v1",
+  "photo-article-tmb",
+  "image-z-image-turbo",
+];
 
-comfyuiAgentRoute.get("/templates", (c) => {
-  return c.json({ templates: TEMPLATES });
+type BridgeTemplate = {
+  slug: string;
+  description?: string;
+  model?: string;
+  inputs: string[];
+};
+
+type BridgeTemplatesResponse = {
+  templates: BridgeTemplate[];
+  service?: string;
+  version?: string;
+};
+
+async function fetchBridgeTemplates(
+  baseUrl: string,
+  headers: Record<string, string>,
+): Promise<BridgeTemplatesResponse | null> {
+  try {
+    const r = await fetch(baseUrl + "/v1/templates", {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) return null;
+    const data = (await r.json()) as BridgeTemplatesResponse;
+    if (!Array.isArray(data.templates)) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// ── Templates list ────────────────────────────────────────────────────────
+
+comfyuiAgentRoute.get("/templates", async (c) => {
+  const userId = c.get("userId");
+  const cfg = await loadComfyuiConfigForUser(userId).catch(() => null);
+
+  // Not configured → return the static fallback so the modal renders.
+  // (The modal will let the user pick but error on submit.)
+  if (!cfg?.bridgeUrl) {
+    return c.json({
+      templates: FALLBACK_TEMPLATES.map((slug) => ({
+        slug,
+        description: null,
+        model: null,
+        inputs: ["prompt", "width", "height", "steps"],
+      })),
+      source: "fallback",
+    });
+  }
+
+  const baseUrl = cfg.bridgeUrl.replace(/\/+$/, "");
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (cfg.bridgeToken) headers.Authorization = `Bearer ${cfg.bridgeToken}`;
+
+  const live = await fetchBridgeTemplates(baseUrl, headers);
+  if (live) {
+    return c.json({ ...live, source: "bridge" });
+  }
+
+  // Bridge unreachable → fallback list. The modal will surface the error
+  // on submit anyway, but at least the dropdown is populated.
+  return c.json({
+    templates: FALLBACK_TEMPLATES.map((slug) => ({
+      slug,
+      description: null,
+      model: null,
+      inputs: ["prompt", "width", "height", "steps"],
+    })),
+    source: "fallback",
+  });
 });
 
-// ── Generate ──────────────────────────────────────────────────────────────
-
-const generateSchema = z.object({
-  template: z.string().min(1).max(80).optional(),
-  prompt: z.string().min(1).max(8000),
-  negative_prompt: z.string().max(4000).optional(),
-  width: z.number().int().min(64).max(4096).optional(),
-  height: z.number().int().min(64).max(4096).optional(),
-  steps: z.number().int().min(1).max(100).optional(),
-  cfg: z.number().min(0).max(100).optional(),
-  seed: z.number().int().min(0).optional(),
-  filename_prefix: z.string().max(120).optional(),
-  wait: z.boolean().optional(),
-});
-
-comfyuiAgentRoute.post(
-  "/generate",
-  zValidator("json", generateSchema),
-  async (c) => {
-    const userId = c.get("userId");
-    const body = c.req.valid("json");
-
-    const cfg = await loadComfyuiConfigForUser(userId);
-    if (!cfg) {
-      return c.json(
-        {
-          error: "comfyui_not_configured",
-          detail:
-            "The ComfyUI Imager add-on is not enabled or no bridge URL is " +
-            "set. Open Settings → Add-ons → ComfyUI Imager to configure it.",
-        },
-        400,
-      );
-    }
-
-    const baseUrl = cfg.bridgeUrl!.replace(/\/+$/, "");
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    };
-    if (cfg.bridgeToken) headers.Authorization = `Bearer ${cfg.bridgeToken}`;
-
-    // Default to wait=true so the panel and the slash command both get a
-    // single image back in one round trip. wait=false is reserved for
-    // future polling-style UIs that want to fire-and-check.
-    const upstreamBody = { ...body, wait: body.wait ?? true };
-
-    let upstream: Response;
-    try {
-      upstream = await fetch(baseUrl + "/v1/generate", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(upstreamBody),
-        // The bridge can take a few minutes for high-step generations.
-        // 6 minutes ceiling matches the bridge's own timeout.
-        signal: AbortSignal.timeout(6 * 60 * 1000),
-      });
-    } catch (e) {
-      return c.json(
-        {
-          error: "comfyui_unreachable",
-          detail: (e as Error).message,
-        },
-        502,
-      );
-    }
-
-    if (!upstream.ok || !upstream.body) {
-      const txt = await upstream.text().catch(() => "");
-      return c.json(
-        {
-          error: "comfyui_bridge_error",
-          status: upstream.status,
-          detail: txt.slice(0, 500),
-        },
-        502,
-      );
-    }
-
-    // ── SSE relay ──
-    //
-    // The bridge emits its own event names (preflight, params, done, error,
-    // …). We forward them unchanged so a panel client can subscribe with
-    // native EventSource and route on the event name. We do NOT translate
-    // to the Hermes `update` / `tool_call` shapes — ComfyUI is a one-shot
-    // generator, not a turn-by-turn agent, so the chat's sessionUpdate
-    // protocol doesn't apply here.
-    //
-    // One small filter: drop the redundant blank lines some proxies add.
-    const encoder = new TextEncoder();
-    const relay = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        const reader = upstream.body!.getReader();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            controller.enqueue(value);
-          }
-        } catch (e) {
-          // Forward the error as a final SSE event so the client sees it.
-          controller.enqueue(
-            encoder.encode(
-              `event: error\ndata: ${JSON.stringify({ message: (e as Error).message })}\n\n`,
-            ),
-          );
-        } finally {
-          controller.close();
-        }
-      },
-    });
-
-    return new Response(relay, {
-      headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-      },
-    });
-  },
-);
-
-// ── Slash command helper ──────────────────────────────────────────────────
+// ── Slash helper ──────────────────────────────────────────────────────────
 //
-// The slash command in useChat.ts (/comfyui <prompt>) hits the same
-// bridge endpoint but in a request/response mode rather than SSE. We
-// drain the SSE stream server-side, fetch the resulting image bytes,
-// base64-encode them, and return a plain JSON body. The browser can't
-// reach .42:8188 directly so the URL alone wouldn't be enough to render
-// the image inline. The chat composer accepts this JSON and inserts the
-// image as a markdown attachment in the assistant message.
+// Drains the new polling contract (POST /v1/templates/{slug}/run +
+// poll GET /v1/status/{prompt_id}) and returns the same JSON shape the
+// modal expects: { prompt_id, duration_s, images[], transcript_tail[] }.
 
 const slashSchema = z.object({
   conversationId: z.string().uuid(),
+  template: z.string().min(1).max(80),
   prompt: z.string().min(1).max(8000),
-  template: z.string().min(1).max(80).optional(),
   negative_prompt: z.string().max(4000).optional(),
   width: z.number().int().min(64).max(4096).optional(),
   height: z.number().int().min(64).max(4096).optional(),
-  steps: z.number().int().min(1).max(100).optional(),
+  steps: z.number().int().min(1).max(200).optional(),
   cfg: z.number().min(0).max(100).optional(),
   seed: z.number().int().min(0).optional(),
 });
-
-type DonePayload = {
-  prompt_id?: string;
-  images?: string[];
-  raw_images?: Array<{ filename?: string; subfolder?: string; type?: string }>;
-  duration_s?: number;
-};
 
 type ImageAttachment = {
   filename: string;
@@ -200,6 +149,11 @@ type ImageAttachment = {
 };
 
 type TranscriptEntry = { event: string; data: unknown };
+
+// How long to poll before giving up. Matches the bridge's own 6min
+// timeout and the legacy /v1/generate ceiling.
+const POLL_TIMEOUT_MS = 6 * 60 * 1000;
+const POLL_INTERVAL_MS = 3_000;
 
 comfyuiAgentRoute.post(
   "/slash",
@@ -220,24 +174,70 @@ comfyuiAgentRoute.post(
         400,
       );
     }
+    if (!cfg.bridgeUrl) {
+      return c.json(
+        {
+          error: "comfyui_not_configured",
+          detail:
+            "The ComfyUI Imager add-on has no bridge URL configured. " +
+            "Open Settings → Add-ons → ComfyUI Imager to set it.",
+        },
+        400,
+      );
+    }
 
-    const baseUrl = cfg.bridgeUrl!.replace(/\/+$/, "");
+    const baseUrl = cfg.bridgeUrl.replace(/\/+$/, "");
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      Accept: "text/event-stream",
+      Accept: "application/json",
     };
     if (cfg.bridgeToken) headers.Authorization = `Bearer ${cfg.bridgeToken}`;
 
-    const upstreamBody = { ...body, wait: true };
+    // The new run route only accepts prompt + (width, height, steps).
+    // Knobs the workflow doesn't expose (cfg, seed, negative_prompt,
+    // batch) stay client-side; the workflow keeps its baked values.
+    const runBody: Record<string, unknown> = { prompt: body.prompt };
+    if (body.width !== undefined) runBody.width = body.width;
+    if (body.height !== undefined) runBody.height = body.height;
+    if (body.steps !== undefined) runBody.steps = body.steps;
 
-    let upstream: Response;
+    // ── 1. Submit (fire-and-forget) ────────────────────────────────────
+    const t0 = Date.now();
+    let promptId: string;
+    let model: string | undefined;
     try {
-      upstream = await fetch(baseUrl + "/v1/generate", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(upstreamBody),
-        signal: AbortSignal.timeout(6 * 60 * 1000),
-      });
+      const r = await fetch(
+        `${baseUrl}/v1/templates/${encodeURIComponent(body.template)}/run`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(runBody),
+          signal: AbortSignal.timeout(60_000),
+        },
+      );
+      if (!r.ok) {
+        const txt = await r.text().catch(() => "");
+        return c.json(
+          {
+            error: "comfyui_bridge_error",
+            status: r.status,
+            detail: txt.slice(0, 500),
+          },
+          502,
+        );
+      }
+      const submitJson = (await r.json()) as {
+        prompt_id?: string;
+        model?: string;
+      };
+      if (!submitJson.prompt_id) {
+        return c.json(
+          { error: "comfyui_bridge_error", detail: "no prompt_id returned" },
+          502,
+        );
+      }
+      promptId = submitJson.prompt_id;
+      model = submitJson.model;
     } catch (e) {
       return c.json(
         { error: "comfyui_unreachable", detail: (e as Error).message },
@@ -245,126 +245,129 @@ comfyuiAgentRoute.post(
       );
     }
 
-    if (!upstream.ok || !upstream.body) {
-      const txt = await upstream.text().catch(() => "");
+    // ── 2. Poll /v1/status/{prompt_id} ─────────────────────────────────
+    const transcript: TranscriptEntry[] = [
+      {
+        event: "submitted",
+        data: { prompt_id: promptId, template: body.template, model },
+      },
+    ];
+
+    type StatusResponse = {
+      prompt_id: string;
+      status: string;
+      completed?: boolean;
+      images?: Record<string, Array<Record<string, unknown>>>;
+    };
+
+    let finalStatus: StatusResponse | null = null;
+    const deadline = t0 + POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      try {
+        const r = await fetch(`${baseUrl}/v1/status/${promptId}`, {
+          method: "GET",
+          headers,
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!r.ok) continue; // transient; keep polling
+        const status = (await r.json()) as StatusResponse;
+        transcript.push({ event: "status", data: status });
+        if (status.status === "error") {
+          return c.json(
+            {
+              error: "comfyui_error",
+              detail: `generation failed for prompt ${promptId}`,
+              transcript,
+            },
+            502,
+          );
+        }
+        if (status.status === "done") {
+          finalStatus = status;
+          break;
+        }
+      } catch {
+        // Network blip; keep polling until the deadline.
+      }
+    }
+
+    if (!finalStatus) {
       return c.json(
         {
-          error: "comfyui_bridge_error",
-          status: upstream.status,
-          detail: txt.slice(0, 500),
+          error: "comfyui_timeout",
+          detail: `polling /v1/status/${promptId} hit ${POLL_TIMEOUT_MS}ms ceiling`,
+          prompt_id: promptId,
+          transcript,
+        },
+        504,
+      );
+    }
+
+    // ── 3. Collect images ──────────────────────────────────────────────
+    //
+    // `images` is keyed by node id; each value is an array of {filename,
+    // subfolder, type}. Flatten to a single ordered list. Preserve the
+    // order across nodes so the modal renders them predictably.
+    const flat: Array<{
+      filename: string;
+      subfolder?: string;
+      type?: string;
+    }> = [];
+    for (const nodeOutputs of Object.values(finalStatus.images ?? {})) {
+      if (!Array.isArray(nodeOutputs)) continue;
+      for (const out of nodeOutputs) {
+        if (typeof out?.filename === "string") {
+          flat.push({
+            filename: out.filename,
+            subfolder: typeof out.subfolder === "string" ? out.subfolder : "",
+            type: typeof out.type === "string" ? out.type : "output",
+          });
+        }
+      }
+    }
+
+    if (flat.length === 0) {
+      return c.json(
+        {
+          error: "no_images_returned",
+          detail: "bridge reported done but no image filenames in outputs",
+          prompt_id: promptId,
+          transcript,
         },
         502,
       );
     }
 
-    // Drain the SSE stream, collecting a transcript (for debug) and the
-    // final `done` payload. Bail out early on `error`.
-    const reader = upstream.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    const transcript: TranscriptEntry[] = [];
-    let rawDone: unknown = null;
-    let errorMsg: string | null = null;
-
-    function processBlock(block: string) {
-      let ev = "message";
-      let data = "";
-      for (const line of block.split("\n")) {
-        if (line.startsWith("event:")) ev = line.slice(6).trim();
-        else if (line.startsWith("data:")) data += line.slice(5).trim();
-      }
-      if (!data) return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(data);
-      } catch {
-        return;
-      }
-      transcript.push({ event: ev, data: parsed });
-      if (ev === "done") rawDone = parsed;
-      else if (ev === "error") {
-        const m = (parsed as { message?: unknown }).message;
-        errorMsg = typeof m === "string" ? m : JSON.stringify(parsed);
-      }
-    }
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const blocks = buf.split("\n\n");
-        buf = blocks.pop() ?? "";
-        for (const block of blocks) if (block.trim()) processBlock(block);
-      }
-      if (buf.trim()) processBlock(buf);
-    } catch (e) {
-      return c.json(
-        { error: "stream_read_failed", detail: (e as Error).message },
-        502,
-      );
-    }
-
-    if (errorMsg) {
-      return c.json({ error: "comfyui_error", detail: errorMsg, transcript }, 502);
-    }
-
-    // Validate the `done` payload shape manually (TypeScript's narrowing
-    // across JSON.parse → use is too fragile to be the only check).
-    type ValidDone = {
-      images: string[];
-      raw_images?: DonePayload["raw_images"];
-      prompt_id?: string;
-      duration_s?: number;
-    };
-    let finalEvent: ValidDone | null = null;
-    if (rawDone && typeof rawDone === "object") {
-      const obj = rawDone as Record<string, unknown>;
-      if (
-        Array.isArray(obj.images) &&
-        obj.images.length > 0 &&
-        obj.images.every((u) => typeof u === "string")
-      ) {
-        finalEvent = {
-          images: obj.images as string[],
-          raw_images: Array.isArray(obj.raw_images)
-            ? (obj.raw_images as DonePayload["raw_images"])
-            : undefined,
-          prompt_id:
-            typeof obj.prompt_id === "string" ? obj.prompt_id : undefined,
-          duration_s:
-            typeof obj.duration_s === "number" ? obj.duration_s : undefined,
-        };
-      }
-    }
-    if (!finalEvent) {
-      return c.json({ error: "no_done_event", transcript }, 502);
-    }
-    // After the guard above, finalEvent is non-null. Reassign to a
-    // non-nullable local so the rest of the function can use the
-    // properties without optional chaining.
-    const doneEvent = finalEvent;
-
-    // Fetch each image and base64-encode it. URLs point at the private
-    // compute host which the browser can't reach, so the chat composer
-    // needs the bytes inline.
+    // ── 4. Fetch each image via the bridge's /v1/image proxy ─────────
+    //
+    // The bridge exposes /v1/image/{filename}?subfolder=&type= which
+    // proxies ComfyUI's /view on the compute host. The browser can't
+    // reach the compute host directly (private network), and even from
+    // the Companion server the host:port of ComfyUI is a separate
+    // detail we don't need to know — the bridge knows it.
     const images: ImageAttachment[] = [];
-    for (let i = 0; i < doneEvent.images.length; i++) {
-      const url = doneEvent.images[i]!;
+    for (const img of flat) {
+      const params = new URLSearchParams({
+        type: img.type ?? "output",
+      });
+      if (img.subfolder) params.set("subfolder", img.subfolder);
+      const imageUrl = `${baseUrl}/v1/image/${encodeURIComponent(img.filename)}?${params.toString()}`;
       try {
-        const r = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+        const r = await fetch(imageUrl, {
+          headers: { Accept: "image/*" },
+          signal: AbortSignal.timeout(60_000),
+        });
         if (!r.ok) continue;
         const mime = r.headers.get("content-type") || "image/png";
-        const imgBuf = Buffer.from(await r.arrayBuffer());
-        const filename =
-          doneEvent.raw_images?.[i]?.filename ?? `imager-${i}.png`;
+        const buf = Buffer.from(await r.arrayBuffer());
         images.push({
-          filename,
+          filename: img.filename,
           mime,
-          dataBase64: imgBuf.toString("base64"),
+          dataBase64: buf.toString("base64"),
         });
       } catch {
-        // Skip; the chat will see a shorter attachment list.
+        // Skip; modal will see a shorter attachment list.
       }
     }
 
@@ -372,7 +375,8 @@ comfyuiAgentRoute.post(
       return c.json(
         {
           error: "image_fetch_failed",
-          detail: "bridge returned image URLs but all fetches failed",
+          detail: "bridge reported done but all /view fetches failed",
+          prompt_id: promptId,
           transcript,
         },
         502,
@@ -380,12 +384,9 @@ comfyuiAgentRoute.post(
     }
 
     return c.json({
-      prompt_id: doneEvent.prompt_id ?? null,
-      duration_s: doneEvent.duration_s ?? null,
+      prompt_id: promptId,
+      duration_s: Math.round((Date.now() - t0) / 100) / 10,
       images,
-      // A short transcript (last 5 events) for the composer to show as a
-      // footnote if the user expands the message. Full transcript stays
-      // server-side; we don't ship 200 lines of SSE to the browser.
       transcript_tail: transcript.slice(-5),
     });
   },

@@ -1406,7 +1406,17 @@ export const api = {
       { method: "POST" },
     ),
   comfyuiTemplates: () =>
-    request<{ templates: string[] }>("/api/agents/comfyui/templates"),
+    request<{
+      templates: Array<{
+        slug: string;
+        description: string | null;
+        model: string | null;
+        inputs: string[];
+      }>;
+      service?: string;
+      version?: string;
+      source?: "bridge" | "fallback";
+    }>("/api/agents/comfyui/templates"),
   /**
    * Stream a generation. Yields parsed `{event, data}` pairs from the
    * bridge's SSE response. Throws on non-2xx (so the caller can show the
