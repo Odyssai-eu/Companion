@@ -109,6 +109,18 @@ export type UIMessage = {
   content: string;
   reasoning?: string;
   streaming?: boolean;
+  /** ComfyUI image attachments. When present, the message renders the
+   *  images via <ComfyuiImages> instead of the markdown body — the
+   *  data URI approach inlined megabytes of base64 into the markdown
+   *  and gave us no way to add a Save button. Set by pushComfyuiResult;
+   *  not persisted server-side today (regenerated from transcript). */
+  images?: Array<{
+    filename: string;
+    mime: string;
+    /** Base64 (no data: prefix). The renderer builds the data URI at
+     *  paint time to keep message objects serialisable. */
+    dataBase64: string;
+  }>;
   /** ISO-8601 — set when the message is created locally (sendMessage) or
    *  loaded from the server (toUIMessage). Used by the chat client to send
    *  per-message timestamps so the backend can compute Δ tags. */
@@ -222,7 +234,10 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     null,
   );
   /** Push the image (or set of images) returned by the modal into the
-   *  chat as a markdown attachment in the assistant message stream. */
+   *  chat. The images are attached as a typed field on the assistant
+   *  message — <ComfyuiImages> renders them with a hover overlay that
+   *  offers Save. We keep a short caption in `content` for screen
+   *  readers, copy-to-clipboard, and the message list summary. */
   const pushComfyuiResult = useCallback(
     (r: {
       prompt_id: string | null;
@@ -232,15 +247,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     }) => {
       const userLineId = `local-comfyui-q-${Date.now()}`;
       const assistantLineId = `local-comfyui-a-${Date.now()}`;
-      const imgMd = r.images
-        .map(
-          (img) =>
-            `![${img.filename}](data:${img.mime};base64,${img.dataBase64})`,
-        )
-        .join("\n\n");
       const duration = r.duration_s ? `${r.duration_s.toFixed(1)}s` : "?";
-      const content = r.images.length
-        ? `${imgMd}\n\n*Generated in ${duration} · ${r.images.length} image(s) · ` +
+      const caption = r.images.length
+        ? `*Generated ${r.images.length} image(s) in ${duration} · ` +
           `prompt_id: \`${r.prompt_id ?? "?"}\`*`
         : "_Generation finished but no image was returned._";
       setMessages((prev) => [
@@ -255,7 +264,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         {
           id: assistantLineId,
           role: "assistant",
-          content,
+          content: caption,
+          images: r.images.length > 0 ? r.images : undefined,
           createdAt: new Date().toISOString(),
           streaming: false,
         },

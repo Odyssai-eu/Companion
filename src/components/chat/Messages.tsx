@@ -10,6 +10,7 @@ import {
 import { copyToClipboard } from "~/lib/clipboard";
 import { renderMarkdown } from "~/lib/markdown";
 import { tts } from "~/lib/tts";
+import { ComfyuiImages } from "./ComfyuiImages";
 import SpaceInvaders from "./SpaceInvaders";
 
 const ATARI_SEQ = ["a", "t", "a", "r", "i"];
@@ -303,7 +304,16 @@ function AssistantMessage({
           <ToolCallsBlock calls={message.toolCalls} />
         )}
         <div className="text-[15px] leading-relaxed text-ink">
-          {message.content ? (
+          {message.images && message.images.length > 0 ? (
+            <>
+              <ComfyuiImages images={message.images} />
+              {message.content && (
+                <div className="mt-2">
+                  <MarkdownBody content={message.content} />
+                </div>
+              )}
+            </>
+          ) : message.content ? (
             <MarkdownBody content={message.content} />
           ) : (
             !message.reasoning && (
@@ -867,6 +877,13 @@ function ActionsRow({
       .catch(() => undefined);
   }
 
+  // Messages with image attachments get their Save affordance from the
+  // per-image hover overlay (see <ComfyuiImages>). Hiding Save/Save WAV
+  // here keeps the toolbar from offering actions that don't fit the
+  // content (e.g. TTS-reading a one-line caption).
+  const hasImages =
+    Array.isArray(message.images) && message.images.length > 0;
+
   return (
     <div className="flex items-center gap-5 text-[12px] text-gray-400">
       <button
@@ -885,14 +902,16 @@ function ActionsRow({
         <CopyIcon />
         <span>Copy</span>
       </button>
-      <button
-        type="button"
-        onClick={onSaveMd}
-        className="flex items-center gap-1.5 hover:text-ink"
-      >
-        <SaveIcon />
-        <span>Save</span>
-      </button>
+      {!hasImages && (
+        <button
+          type="button"
+          onClick={onSaveMd}
+          className="flex items-center gap-1.5 hover:text-ink"
+        >
+          <SaveIcon />
+          <span>Save</span>
+        </button>
+      )}
       {onRegenerate && (
         <button
           type="button"
@@ -904,15 +923,17 @@ function ActionsRow({
           <span>Regenerate</span>
         </button>
       )}
-      <button
-        type="button"
-        onClick={onSaveWav}
-        className="flex items-center gap-1.5 hover:text-ink"
-        title="Save spoken audio (.wav)"
-      >
-        <WaveIcon />
-        <span>Save WAV</span>
-      </button>
+      {!hasImages && (
+        <button
+          type="button"
+          onClick={onSaveWav}
+          className="flex items-center gap-1.5 hover:text-ink"
+          title="Save spoken audio (.wav)"
+        >
+          <WaveIcon />
+          <span>Save WAV</span>
+        </button>
+      )}
     </div>
   );
 }
