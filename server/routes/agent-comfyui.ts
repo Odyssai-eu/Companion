@@ -169,9 +169,10 @@ type ImageAttachment = {
 
 type TranscriptEntry = { event: string; data: unknown };
 
-// How long to poll before giving up. Matches the bridge's own 6min
-// timeout and the legacy /v1/generate ceiling.
-const POLL_TIMEOUT_MS = 6 * 60 * 1000;
+// How long to poll before giving up. Must stay >= Imager's
+// `comfyui_timeout_s` (currently 30 min). 35 min gives a safety margin
+// over ComfyUI's own per-prompt wall time on the compute host.
+const POLL_TIMEOUT_MS = 35 * 60 * 1000;
 const POLL_INTERVAL_MS = 3_000;
 
 comfyuiAgentRoute.post(
