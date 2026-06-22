@@ -16,10 +16,58 @@ import { Field } from "~/pages/settings/addons/shared";
  * negative_prompt) is intentionally absent — those knobs live inside
  * the workflow JSON and are not user-tunable today.
  *
+ * Persists the last-used prompt + template + dimensions to localStorage
+ * so the next /comfyui invocation opens with the same starting point.
+ * Fresh slash text (`/comfyui <something>`) always overrides the saved
+ * prompt — we only fall back to the saved one when the user typed a
+ * bare `/comfyui`.
+ *
  * On success the modal calls onResult(images, prompt_id, duration_s) and
  * closes; the chat composer decides how to render the image in the
  * message stream.
  */
+
+const LS_KEY = "companion:comfyui:last";
+
+type SavedForm = {
+  prompt: string;
+  template: string;
+  width: number;
+  height: number;
+  steps: number;
+};
+
+function loadSaved(): SavedForm | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof parsed.prompt === "string" &&
+      typeof parsed.template === "string" &&
+      typeof parsed.width === "number" &&
+      typeof parsed.height === "number" &&
+      typeof parsed.steps === "number"
+    ) {
+      return parsed as SavedForm;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveForm(form: SavedForm) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LS_KEY, JSON.stringify(form));
+  } catch {
+    /* quota / private mode — silently ignore */
+  }
+}
 
 type TemplateMeta = {
   slug: string;
@@ -57,15 +105,30 @@ export function ComfyuiPromptModal({
   const [templateSource, setTemplateSource] = useState<
     "bridge" | "fallback" | null
   >(null);
-  const [template, setTemplate] = useState<string>("");
-  const [prompt, setPrompt] = useState(initial.prompt);
-  const [width, setWidth] = useState(1664);
-  const [height, setHeight] = useState(928);
-  const [steps, setSteps] = useState(12);
+  // Initial form state: if the user typed `/comfyui <prompt>`, that text
+  // wins. Otherwise we fall back to the last session's form values so
+  // repeated invocations don't reset to defaults.
+  const initialSaved = useRef<SavedForm | null>(loadSaved());
+  const [template, setTemplate] = useState<string>(
+    initialSaved.current?.template ?? "",
+  );
+  const [prompt, setPrompt] = useState(
+    initial.prompt || initialSaved.current?.prompt || "",
+  );
+  const [width, setWidth] = useState(initialSaved.current?.width ?? 1664);
+  const [height, setHeight] = useState(initialSaved.current?.height ?? 928);
+  const [steps, setSteps] = useState(initialSaved.current?.steps ?? 12);
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
+
+  // Persist on every form change. Cheap (localStorage is sync, payload is
+  // ~100 bytes) and means a refresh mid-modal keeps the same prompt.
+  useEffect(() => {
+    if (!template) return; // don't write before we know which template
+    saveForm({ prompt, template, width, height, steps });
+  }, [prompt, template, width, height, steps]);
 
   // Load templates + their declared inputs on mount. The bridge is the
   // source of truth; on first paint we fall back to whatever the server
