@@ -194,7 +194,11 @@ export function VoiceLivePanel() {
         asrEndpoint: asrEndpoint.trim() || undefined,
         ttsModel: ttsModel.trim() || undefined,
         model: model.trim() || undefined,
-        voice: voice.trim() || undefined,
+        // Send the trimmed value verbatim (even ""), so clearing the field
+        // actually clears the saved voice — `|| undefined` made it un-clearable
+        // (backend skips undefined), which left stale Gemini voices like "Orus"
+        // stuck on local/mistral providers where they don't apply.
+        voice: voice.trim(),
         systemInstruction,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       });
@@ -302,13 +306,13 @@ export function VoiceLivePanel() {
           </Field>
           <Field
             label="Voice"
-            hint="Voice id your TTS server understands (e.g. en-Emma_woman, fr-Spk1_woman for VibeVoice)."
+            hint="Voice id your TTS server understands (e.g. en-Emma_woman for VibeVoice). Leave empty to let the server pick its own default voice."
           >
             <input
               type="text"
               value={voice}
               onChange={(e) => setVoice(e.target.value)}
-              placeholder="en-Emma_woman"
+              placeholder="(empty = server default)"
               className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
             />
           </Field>
