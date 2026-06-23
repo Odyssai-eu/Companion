@@ -106,7 +106,7 @@ const configSchema = z.object({
   ttsEndpoint: z.string().max(500).optional(),
   asrEndpoint: z.string().max(500).optional(),
   ttsModel: z.string().max(200).optional(),
-  voice: z.string().max(80).optional(),
+  voice: z.string().max(500).optional(),
 });
 
 voiceLiveRoute.patch("/config", zValidator("json", configSchema), async (c) => {

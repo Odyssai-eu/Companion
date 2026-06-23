@@ -108,7 +108,7 @@ export function VoiceLivePanel() {
       </Field>
       <Field
         label="Voice"
-        hint="Voice id your TTS server understands. Leave empty to let the server pick its own default voice."
+        hint="Describe the voice in natural language — e.g. « Une voix féminine française, douce et posée ». The same description always gives the same voice. Leave empty for the server's default voice."
       >
         <input
           type="text"
