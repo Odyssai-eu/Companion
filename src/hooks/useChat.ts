@@ -1521,9 +1521,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
   /**
    * Force a re-fetch of the active conversation. Useful for Talk mode,
-   * where messages are appended out-of-band by VoiceLiveOverlay rather
-   * than via sendMessage(), so the local cache wouldn't otherwise know
-   * the message store grew.
+   * where messages can be appended out-of-band rather than via
+   * sendMessage(), so the local cache wouldn't otherwise know the
+   * message store grew.
    */
   const reload = useCallback(async () => {
     if (!conversationId) return;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAuth } from "~/hooks/useAuth";
+import { useVoiceMode } from "~/hooks/useVoiceMode";
 import { api, type ApiConversation, type ApiProject } from "~/lib/api";
 import { ChatIcon, ProjectIcon } from "../ProjectIcon";
 import Wordmark from "../Wordmark";
@@ -32,6 +33,7 @@ export default function Sidebar({
   const [projectsList, setProjectsList] = useState<ApiProject[]>([]);
   const [search, setSearch] = useState("");
   const navigate = useNavigate();
+  const voiceMode = useVoiceMode();
   // Multi-select mode (mode A — explicit toggle). When on, rows show a
   // checkbox and clicking the row toggles selection instead of opening
   // it. The action bar at the bottom of the sidebar exposes "Delete
@@ -348,8 +350,14 @@ export default function Sidebar({
         <button
           type="button"
           onClick={startNewTalk}
-          aria-label="New talk"
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-cyan px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+          disabled={!voiceMode.enabled}
+          aria-label={voiceMode.enabled ? "New talk" : "Voice mode is off"}
+          title={voiceMode.enabled ? "New talk" : "Turn voice mode on to talk"}
+          className={`flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-[13px] font-medium text-white transition-opacity ${
+            voiceMode.enabled
+              ? "bg-cyan hover:opacity-90"
+              : "cursor-not-allowed bg-gray-300"
+          }`}
         >
           <MicIcon size={16} />
           <span>Talk</span>

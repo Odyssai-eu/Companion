@@ -12,9 +12,7 @@ const ttsRoute = new Hono<Env>();
  * stream the WAV back.
  *
  * VibeVoice-Realtime is HTTP chunked-transfer streaming (no WebSocket
- * needed), TTFB sub-millisecond, audio gen ~6× realtime. The Voxtral
- * 4B-TTS model works as a French fallback (better French quality) —
- * clients can request it explicitly via `model:` in the body.
+ * needed), TTFB sub-millisecond, audio gen ~6× realtime.
  */
 // Bootstrap fallback only — the live endpoint/model/voice now come from the
 // per-user Voice addon config (resolveVoiceConfig). See #26.
@@ -79,7 +77,6 @@ ttsRoute.get("/health", async (c) => {
   try {
     const res = await fetch(`${base}/v1/models`, {
       signal: AbortSignal.timeout(2000),
-      ...(vc.apiKey ? { headers: { Authorization: `Bearer ${vc.apiKey}` } } : {}),
     });
     if (!res.ok) return c.json({ ok: false, reason: `upstream_${res.status}` });
     const data = (await res.json()) as { data?: { id?: string }[] };
@@ -120,8 +117,8 @@ ttsRoute.post("/speak", async (c) => {
   }
 
   // #26 — endpoint/model/voice come from the user's Voice addon config (env is
-  // only the bootstrap default), so Voxtral / any OpenAI-compat server can be
-  // wired from Settings instead of being frozen on TTS_BASE_URL.
+  // only the bootstrap default), so any OpenAI-compat server can be wired from
+  // Settings instead of being frozen on TTS_BASE_URL.
   const vc = await resolveVoiceConfig(c.get("userId"));
   const base = vc.ttsEndpoint || TTS_BASE_URL;
   if (!base) return c.json({ error: "tts_not_configured" }, 400);
@@ -131,7 +128,6 @@ ttsRoute.post("/speak", async (c) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(vc.apiKey ? { Authorization: `Bearer ${vc.apiKey}` } : {}),
       },
       body: JSON.stringify({
         model: model ?? vc.ttsModel,
@@ -167,35 +163,39 @@ ttsRoute.post("/speak", async (c) => {
 });
 
 /**
- * ASR proxy. Forwards a multipart upload to mlx-audio's /v1/audio/transcriptions.
- * The default model is VibeVoice-ASR; the upstream sometimes errors with
- * "no Stream(gpu, 1) in current thread" — we surface the upstream status as-is.
+ * ASR proxy. The odyssai-voice server takes the RAW audio file as the request
+ * body (Content-Type audio/wav) with an optional `?language=` query, and
+ * returns `{ "text": "..." }`. (This is NOT a multipart upload — verified
+ * against .50:8771: raw body → 200, multipart → 500.) So we stream the
+ * browser's audio body straight through and forward the language query.
+ *
+ * The browser sends a WAV blob from src/lib/wav-recorder.ts; we pass its
+ * Content-Type through verbatim (defaulting to audio/wav) so the upstream's
+ * AVFoundation decoder sees the right container.
  */
 ttsRoute.post("/transcribe", async (c) => {
-  const form = await c.req.formData().catch(() => null);
-  if (!form) return c.json({ error: "invalid_form" }, 400);
-  const file = form.get("file");
-  if (!(file instanceof File)) return c.json({ error: "missing_file" }, 400);
-  const model =
-    (form.get("model") as string | null) ??
-    "mlx-community/VibeVoice-ASR-bf16";
-
-  const upstreamForm = new FormData();
-  upstreamForm.append("model", model);
-  upstreamForm.append("file", file);
-  if (form.get("language")) {
-    upstreamForm.append("language", form.get("language") as string);
+  const audio = await c.req.arrayBuffer().catch(() => null);
+  if (!audio || audio.byteLength === 0) {
+    return c.json({ error: "missing_audio" }, 400);
   }
 
   const vc = await resolveVoiceConfig(c.get("userId"));
   const base = vc.asrEndpoint || TTS_BASE_URL;
   if (!base) return c.json({ error: "asr_not_configured" }, 400);
+
+  // Forward the optional language hint (?language=fr) to the upstream query.
+  const language = c.req.query("language");
+  const url = new URL(`${base}/v1/audio/transcriptions`);
+  if (language) url.searchParams.set("language", language);
+
+  const contentType = c.req.header("content-type") ?? "audio/wav";
+
   let upstream: Response;
   try {
-    upstream = await fetch(`${base}/v1/audio/transcriptions`, {
+    upstream = await fetch(url, {
       method: "POST",
-      headers: vc.apiKey ? { Authorization: `Bearer ${vc.apiKey}` } : undefined,
-      body: upstreamForm,
+      headers: { "Content-Type": contentType },
+      body: audio,
     });
   } catch (err) {
     return c.json({ error: "asr_unreachable", detail: String(err) }, 502);
@@ -210,10 +210,10 @@ ttsRoute.post("/transcribe", async (c) => {
   }
 
   const text = await upstream.text();
-  // mlx-audio returns plain text; OpenAI returns { text }
+  // odyssai-voice returns { text }; tolerate a plain-text body too.
   try {
     const parsed = JSON.parse(text) as { text?: string };
-    if (parsed?.text) return c.json({ text: parsed.text });
+    if (typeof parsed?.text === "string") return c.json({ text: parsed.text });
   } catch {
     // not JSON, fall through
   }

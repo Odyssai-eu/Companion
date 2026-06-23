@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import {
   ComfyuiPromptModal,
@@ -66,7 +66,7 @@ import { useIsMobile } from "~/hooks/useIsMobile";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
 import { api } from "~/lib/api";
 import { voiceInput } from "~/lib/voice-input";
-import VoiceLiveOverlay from "~/components/chat/VoiceLiveOverlay";
+import { WavRecorder } from "~/lib/wav-recorder";
 
 export default function ChatLayout() {
   const { id } = useParams<{ id?: string }>();
@@ -77,22 +77,6 @@ export default function ChatLayout() {
   const navigate = useNavigate();
   const voiceMode = useVoiceMode();
   const isMobile = useIsMobile();
-  const [voiceLiveOpen, setVoiceLiveOpen] = useState(false);
-  const [voiceLiveAvailable, setVoiceLiveAvailable] = useState(false);
-  // #26 — the chat voice toggle branches on the selected provider: gemini opens
-  // the full-duplex overlay, local/mistral do TTS auto-speak (via /api/tts).
-  const [voiceProvider, setVoiceProvider] = useState<
-    "local" | "gemini" | "mistral"
-  >("local");
-  useEffect(() => {
-    api
-      .voiceLiveInfo()
-      .then((info) => {
-        setVoiceProvider(info.provider);
-        setVoiceLiveAvailable(info.enabled && info.hasApiKey);
-      })
-      .catch(() => setVoiceLiveAvailable(false));
-  }, []);
 
   // Union of client-side StreamManager active ids + server-side
   // `/conversations/active` poll. Drives the per-row pulsing dot in the
@@ -159,11 +143,6 @@ export default function ChatLayout() {
       if (chat.sending) chat.cancel();
     },
     onToggleVoiceMode: () => {
-      // #26 — gemini = full-duplex overlay; local/mistral = TTS auto-speak.
-      if (voiceProvider === "gemini") {
-        if (voiceLiveAvailable) setVoiceLiveOpen(true);
-        return;
-      }
       voiceMode.toggle();
     },
     onOpenSettings: () => navigate("/settings/inference"),
@@ -299,8 +278,8 @@ export default function ChatLayout() {
         )}
         {chat.conversation?.kind === "talk" ? (
           <TalkInput
-            onOpenVoiceLive={() => setVoiceLiveOpen(true)}
-            voiceLiveAvailable={voiceLiveAvailable}
+            talkAvailable={voiceMode.enabled}
+            onTranscript={(text) => chat.sendMessage(text, [])}
           />
         ) : (
           <Input
@@ -328,16 +307,7 @@ export default function ChatLayout() {
             hiddenModels={chat.hiddenModels}
             inferenceMode={chat.inferenceMode}
             onToggleHidden={chat.toggleModelHidden}
-            voiceLiveAvailable={voiceLiveAvailable}
-            onOpenVoiceLive={() => setVoiceLiveOpen(true)}
             priorTokens={priorTokens}
-          />
-        )}
-        {voiceLiveOpen && (
-          <VoiceLiveOverlay
-            onClose={() => setVoiceLiveOpen(false)}
-            conversationId={chat.conversation?.id ?? null}
-            onCommit={chat.reload}
           />
         )}
       </main>
@@ -369,37 +339,180 @@ export default function ChatLayout() {
 
 /**
  * Talk-mode "input": no textarea, no model picker — a single big circular
- * mic button that re-opens the Voice Live overlay so the user can resume
- * (or start) the conversation. Fills the same vertical slot as the normal
- * Input so the layout doesn't shift when switching kinds.
+ * mic button. Enabled only when voice mode is on. Push-and-hold to record
+ * (pointerdown → start, release → stop), the WAV is transcribed by OUR local
+ * ASR server via /api/tts/transcribe, and the resulting text is sent as a
+ * normal user message through `onTranscript` (= chat.sendMessage). The
+ * assistant's reply then auto-speaks via the existing voice-mode TTS in
+ * Messages.tsx — nothing to wire here for playback.
+ *
+ * Fills the same vertical slot as the normal Input so the layout doesn't
+ * shift when switching kinds.
  */
 function TalkInput({
-  onOpenVoiceLive,
-  voiceLiveAvailable,
+  talkAvailable,
+  onTranscript,
 }: {
-  onOpenVoiceLive: () => void;
-  voiceLiveAvailable: boolean;
+  talkAvailable: boolean;
+  onTranscript: (text: string) => void;
 }) {
+  type Phase = "idle" | "recording" | "transcribing";
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const recorderRef = useRef<WavRecorder | null>(null);
+  const startedAtRef = useRef<number>(0);
+  // Guards against pointerup + pointerleave both firing a stop for one press.
+  const stoppingRef = useRef(false);
+
+  // Release the mic if the component unmounts mid-recording (e.g. the user
+  // navigates away while holding).
+  useEffect(() => {
+    return () => recorderRef.current?.cancel();
+  }, []);
+
+  async function beginRecording() {
+    if (!talkAvailable || phase !== "idle") return;
+    setError(null);
+    stoppingRef.current = false;
+    const rec = new WavRecorder();
+    recorderRef.current = rec;
+    try {
+      await rec.start();
+    } catch (e) {
+      recorderRef.current = null;
+      setError((e as Error).message);
+      setPhase("idle");
+      return;
+    }
+    // If the user released before the mic actually opened, don't get stuck in
+    // a recording state with no way to stop.
+    if (stoppingRef.current) {
+      rec.cancel();
+      recorderRef.current = null;
+      setPhase("idle");
+      return;
+    }
+    startedAtRef.current = Date.now();
+    setPhase("recording");
+  }
+
+  async function endRecording() {
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
+    const rec = recorderRef.current;
+    // The mic may still be opening (start() not resolved) — flag handled there.
+    if (!rec) return;
+    if (phase !== "recording") {
+      // start() is still in flight; it will cancel on seeing stoppingRef.
+      return;
+    }
+    recorderRef.current = null;
+
+    // Ignore very short presses (accidental taps) — cancel without sending.
+    if (Date.now() - startedAtRef.current < 300) {
+      rec.cancel();
+      setPhase("idle");
+      return;
+    }
+
+    let blob: Blob;
+    try {
+      blob = await rec.stop();
+    } catch {
+      setPhase("idle");
+      setError("Recording failed.");
+      return;
+    }
+    if (blob.size <= 44) {
+      // Header-only → no audio captured.
+      setPhase("idle");
+      return;
+    }
+
+    setPhase("transcribing");
+    try {
+      const res = await fetch("/api/tts/transcribe?language=fr", {
+        method: "POST",
+        headers: { "Content-Type": "audio/wav" },
+        body: blob,
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        setError(
+          (detail as { error?: string }).error
+            ? `Transcription failed (${(detail as { error?: string }).error}).`
+            : `Transcription failed (${res.status}).`,
+        );
+        setPhase("idle");
+        return;
+      }
+      const data = (await res.json()) as { text?: string };
+      const text = (data.text ?? "").trim();
+      setPhase("idle");
+      if (text) onTranscript(text);
+    } catch {
+      setError("Could not reach the transcription service.");
+      setPhase("idle");
+    }
+  }
+
+  const busy = phase === "transcribing";
+  const recording = phase === "recording";
+  const label = !talkAvailable
+    ? "Voice mode is off"
+    : recording
+      ? "Recording — release to send"
+      : busy
+        ? "Transcribing…"
+        : "Hold to talk";
+
   return (
-    <div className="flex shrink-0 items-center justify-center border-t border-gray-200 bg-white px-4 py-6">
+    <div className="flex shrink-0 flex-col items-center justify-center gap-2 border-t border-gray-200 bg-white px-4 py-6">
       <button
         type="button"
-        onClick={onOpenVoiceLive}
-        disabled={!voiceLiveAvailable}
-        aria-label={voiceLiveAvailable ? "Resume talking" : "Voice Live not configured"}
+        disabled={!talkAvailable || busy}
+        aria-label={label}
+        aria-pressed={recording}
         title={
-          voiceLiveAvailable
-            ? "Tap to resume talking"
-            : "Enable Voice (Gemini Live) in Settings → Add-ons"
+          talkAvailable
+            ? "Hold to talk"
+            : "Turn voice mode on to talk"
         }
-        className={`flex h-20 w-20 items-center justify-center rounded-full text-white shadow-lg transition-all ${
-          voiceLiveAvailable
-            ? "bg-cyan hover:scale-105 hover:opacity-95 active:scale-95"
-            : "cursor-not-allowed bg-gray-300"
+        // Pointer events cover mouse + touch + pen. preventDefault stops the
+        // touch long-press / text-selection gestures from hijacking the hold.
+        onPointerDown={(e) => {
+          e.preventDefault();
+          void beginRecording();
+        }}
+        onPointerUp={(e) => {
+          e.preventDefault();
+          void endRecording();
+        }}
+        onPointerLeave={() => {
+          if (recording) void endRecording();
+        }}
+        onPointerCancel={() => {
+          if (recording) void endRecording();
+        }}
+        className={`flex h-20 w-20 select-none items-center justify-center rounded-full text-white shadow-lg transition-all ${
+          !talkAvailable
+            ? "cursor-not-allowed bg-gray-300"
+            : recording
+              ? "scale-110 animate-pulse bg-red-500"
+              : busy
+                ? "cursor-wait bg-cyan/70"
+                : "bg-cyan hover:scale-105 hover:opacity-95 active:scale-95"
         }`}
       >
         <BigMicIcon />
       </button>
+      <span
+        className={`text-[12px] ${
+          error ? "text-red-600" : "text-gray-500"
+        }`}
+      >
+        {error ?? label}
+      </span>
     </div>
   );
 }

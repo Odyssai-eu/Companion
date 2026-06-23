@@ -1570,46 +1570,29 @@ export const api = {
       body: JSON.stringify({ input }),
     }),
 
-  // Voice add-on (unified: local / gemini / mistral)
+  // Voice add-on (local OpenAI-compatible TTS + ASR)
   voiceLiveInfo: () =>
     request<{
       addonId: string;
       enabled: boolean;
-      provider: "local" | "gemini" | "mistral";
+      provider: "local";
       ttsEndpoint: string;
       asrEndpoint: string;
       ttsModel: string;
       voice: string;
-      hasApiKey: boolean;
-      model: string;
-      systemInstruction: string;
     }>("/api/addons/voice-live/info"),
   voiceLiveUpdateConfig: (
     body: Partial<{
-      provider: "local" | "gemini" | "mistral";
+      provider: "local";
       ttsEndpoint: string;
       asrEndpoint: string;
       ttsModel: string;
-      apiKey: string | null;
-      model: string;
       voice: string;
-      systemInstruction: string;
     }>,
   ) =>
     request<{ ok: true }>("/api/addons/voice-live/config", {
       method: "PATCH",
       body: JSON.stringify(body),
-    }),
-  voiceLiveSession: (body?: { conversationId?: string }) =>
-    request<{
-      apiKey: string;
-      model: string;
-      voice: string;
-      systemInstruction: string;
-      wsUrl: string;
-    }>("/api/addons/voice-live/session", {
-      method: "POST",
-      body: JSON.stringify(body ?? {}),
     }),
 
   // Auth
