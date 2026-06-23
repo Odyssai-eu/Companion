@@ -28,7 +28,6 @@ import {
   EmbeddingServiceError,
 } from "../lib/semantic-router";
 import { loadRouterConfigForUser } from "./addon-router";
-import { loadHybridConfigForUser } from "./addon-hybrid-routing";
 import { resolveChatTools } from "../lib/chat-tools";
 import { buildUpstreamBody } from "../lib/upstream-request";
 import { resolveConvContext } from "../lib/chat-context";
@@ -104,25 +103,6 @@ chatRoute.post("/completions", async (c) => {
     | { from: string; to: string; label: string; score: number; ms: number }
     | null = null;
   if (body.model === "auto") {
-    // ── Hybrid Routing pre-step (#40) ─────────────────────────────────────
-    // When the Hybrid Routing add-on is enabled in "hybrid" mode, auto-routed
-    // traffic goes to the user's chosen cloud model INSTEAD of the local Auto
-    // Router. This only intervenes on body.model === "auto" — an explicit
-    // model pick is respected upstream (we never reach here for it). If hybrid
-    // is off / in "local" mode / unconfigured, loadHybridConfigForUser returns
-    // null and the existing Auto Router runs unchanged.
-    const hybrid = await loadHybridConfigForUser(userId);
-    if (hybrid) {
-      console.log("[chat] hybrid-routing → %s (auto → cloud)", hybrid.cloudModel);
-      body.model = hybrid.cloudModel;
-      routedDecision = {
-        from: "hybrid",
-        to: hybrid.cloudModel,
-        label: "hybrid",
-        score: 1,
-        ms: 0,
-      };
-    } else {
     const routerCfg = await loadRouterConfigForUser(userId);
     if (!routerCfg) {
       return c.json(
@@ -180,7 +160,6 @@ chatRoute.post("/completions", async (c) => {
         { error: "auto_router_unavailable", detail: msg },
         503,
       );
-    }
     }
   }
 

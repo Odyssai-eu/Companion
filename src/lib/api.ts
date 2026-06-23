@@ -1595,27 +1595,6 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // Hybrid Routing add-on (#40) — Local/Hybrid toggle + cloud-model picker.
-  // In hybrid mode, auto-routed traffic (model="auto") goes to the chosen
-  // cloud model instead of the local Auto Router.
-  hybridRoutingInfo: () =>
-    request<{
-      addonId: string;
-      enabled: boolean;
-      mode: "local" | "hybrid";
-      cloudModel: string;
-    }>("/api/addons/hybrid-routing/info"),
-  hybridRoutingUpdateConfig: (
-    body: Partial<{
-      mode: "local" | "hybrid";
-      cloudModel: string;
-    }>,
-  ) =>
-    request<{ ok: true }>("/api/addons/hybrid-routing/config", {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    }),
-
   // Auth
   me: () => request<{ user: AuthUser | null }>("/api/auth/me"),
   login: (body: { email: string; password: string }) =>
