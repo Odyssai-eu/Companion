@@ -9,6 +9,7 @@ import { ObsidianPanel } from "./addons/ObsidianPanel";
 import { TavilyPanel } from "./addons/TavilyPanel";
 import { VoiceLivePanel } from "./addons/VoiceLivePanel";
 import { RouterPanel } from "./addons/RouterPanel";
+import { HybridRoutingPanel } from "./addons/HybridRoutingPanel";
 import { HermesAddonPanel } from "./addons/HermesAddonPanel";
 import { PiAddonPanel } from "./addons/PiAddonPanel";
 import { ComfyuiAddonPanel } from "./addons/ComfyuiAddonPanel";
@@ -50,6 +51,7 @@ export default function AddonsPage() {
       try {
         await Promise.all([
           api.routerInfo().catch(() => undefined),
+          api.hybridRoutingInfo().catch(() => undefined),
           api.voiceLiveInfo().catch(() => undefined),
           api.hermesAddonInfo().catch(() => undefined),
           api.piAddonInfo().catch(() => undefined),
@@ -195,6 +197,7 @@ function AddonCard({
       addon.name === "Web Search" ||
       addon.name === "Voice" ||
       addon.name === "Auto Router" ||
+      addon.name === "Hybrid Routing" ||
       addon.name === "Hermes Agent" ||
       addon.name === "Pi Agent" ||
       addon.name === "ComfyUI Imager");
@@ -232,6 +235,7 @@ function AddonCard({
           {addon.name === "Web Search" && <TavilyPanel />}
           {addon.name === "Voice" && <VoiceLivePanel />}
           {addon.name === "Auto Router" && <RouterPanel />}
+          {addon.name === "Hybrid Routing" && <HybridRoutingPanel />}
           {addon.name === "Hermes Agent" && <HermesAddonPanel />}
           {addon.name === "Pi Agent" && <PiAddonPanel />}
           {addon.name === "ComfyUI Imager" && <ComfyuiAddonPanel />}
