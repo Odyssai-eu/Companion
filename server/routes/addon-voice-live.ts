@@ -82,8 +82,9 @@ const DEFAULT_PROVIDER: VoiceProvider = "local";
 const DEFAULT_TTS_ENDPOINT = process.env.TTS_BASE_URL ?? "";
 const DEFAULT_TTS_MODEL =
   process.env.TTS_DEFAULT_MODEL ?? "mlx-community/VibeVoice-Realtime-0.5B-8bit";
-// Our server's named-voice default.
-const DEFAULT_TTS_VOICE = process.env.TTS_DEFAULT_VOICE ?? "voice-2";
+// Our server's default speaker (CustomVoice). Pre-fills the Voice field so the
+// user sees it and can change it — not hard-coded.
+const DEFAULT_TTS_VOICE = process.env.TTS_DEFAULT_VOICE ?? "Sohee";
 
 voiceLiveRoute.get("/info", async (c) => {
   const userId = c.get("userId");
