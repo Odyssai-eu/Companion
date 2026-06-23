@@ -34,6 +34,12 @@ class TtsController {
   private nextStartTime = 0;
   private listeners = new Set<Listener>();
   private activeSources = new Set<AudioBufferSourceNode>();
+  // Monotonic per-utterance token. Bumped on every speak()/stop() so that a
+  // previous utterance's in-flight read loop (suspended at `await read()`, or
+  // running its tail-flush) can NEVER schedule audio into a newer utterance's
+  // timeline. Without this, message 1's leftover chunks overlap message 2 —
+  // the choppy double-voice bug. Every scheduling path checks it.
+  private playToken = 0;
 
   subscribe(fn: Listener) {
     this.listeners.add(fn);
@@ -64,9 +70,16 @@ class TtsController {
   }
 
   async speak(id: string, text: string, voice?: string) {
+    // Fully halt + tear down any current playback BEFORE starting the new
+    // utterance: stops every active/scheduled source, clears the queue, resets
+    // nextStartTime, and bumps playToken so the old read loop is fenced off.
     this.stop();
     const clean = cleanText(text);
     if (!clean) return;
+
+    // Claim this utterance. Every async continuation below re-checks `token`
+    // so a later speak()/stop() makes this whole flow a no-op for scheduling.
+    const token = this.playToken;
 
     this.currentId = id;
     this.notify();
@@ -87,6 +100,9 @@ class TtsController {
       this.finish(id);
       return;
     }
+    // A newer utterance took over while the fetch was in flight — bail without
+    // touching shared state (finish() would be wrong; it belongs to `id`).
+    if (token !== this.playToken) return;
     if (!res.ok || !res.body) {
       this.finish(id);
       return;
@@ -100,7 +116,7 @@ class TtsController {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        if (this.currentId !== id) return; // stop()'d in the meantime
+        if (token !== this.playToken) return; // stop()/speak()'d in the meantime
 
         const merged = new Uint8Array(pending.length + value.length);
         merged.set(pending);
@@ -120,25 +136,30 @@ class TtsController {
         const usable = pending.length - (pending.length % 2);
         if (usable < 2) continue;
 
-        this.scheduleChunk(pending.subarray(0, usable));
+        this.scheduleChunk(pending.subarray(0, usable), token);
         pending = pending.slice(usable);
       }
-      // Flush any tail samples
-      if (pending.length >= 2) {
+      // Flush any tail samples — but only if we still own playback, else this
+      // would schedule message 1's tail into message 2's timeline (overlap).
+      if (token === this.playToken && pending.length >= 2) {
         const usable = pending.length - (pending.length % 2);
-        this.scheduleChunk(pending.subarray(0, usable));
+        this.scheduleChunk(pending.subarray(0, usable), token);
       }
     } catch {
       // aborted
     } finally {
       // Finish when the last scheduled buffer ends — gives the UI time to show
-      // the speaking state for the actual audio duration.
-      const remaining = Math.max(0, this.nextStartTime - ctx.currentTime);
-      window.setTimeout(() => this.finish(id), remaining * 1000);
+      // the speaking state for the actual audio duration. Skip if superseded.
+      if (token === this.playToken) {
+        const remaining = Math.max(0, this.nextStartTime - ctx.currentTime);
+        window.setTimeout(() => this.finish(id), remaining * 1000);
+      }
     }
   }
 
-  private scheduleChunk(bytes: Uint8Array) {
+  private scheduleChunk(bytes: Uint8Array, token: number) {
+    // Token re-check: never schedule audio for a superseded utterance.
+    if (token !== this.playToken) return;
     const ctx = this.getCtx();
 
     // Copy to a fresh ArrayBuffer so we can safely cast to Int16Array
@@ -174,18 +195,35 @@ class TtsController {
   }
 
   stop() {
+    // Fence off any in-flight speak() loop: its `token` no longer matches, so
+    // it can't schedule further chunks or fire finish() for the old id.
+    this.playToken++;
+
     if (this.abort) {
       this.abort.abort();
       this.abort = null;
     }
+    // Stop every source — already-started ones halt immediately, and ones
+    // scheduled to start in the future are cancelled (Web Audio cancels a
+    // pending start() when stop() is called before the start time). Disconnect
+    // so a stopped node can't linger on the graph.
     for (const source of this.activeSources) {
       try {
+        source.onended = null;
         source.stop();
       } catch {
-        // already stopped
+        // already stopped / never started
+      }
+      try {
+        source.disconnect();
+      } catch {
+        // already disconnected
       }
     }
     this.activeSources.clear();
+    // Reset the schedule clock so the next utterance starts at ctx.currentTime,
+    // never stacked behind the halted one's leftover nextStartTime.
+    this.nextStartTime = 0;
     this.currentId = null;
     this.notify();
   }

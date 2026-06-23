@@ -6,8 +6,10 @@ export type ShortcutHandlers = {
   onStop?: () => void;
   onToggleVoiceMode?: () => void;
   onOpenSettings?: () => void;
-  /** True while the user is holding Space outside an input — for push-to-talk */
-  onPushToTalkChange?: (active: boolean) => void;
+  /** Space pressed once outside any text field — toggles our ASR recorder
+   *  (start on first press, stop+transcribe on the next). One press = one
+   *  toggle; auto-repeat is ignored. */
+  onVoiceToggle?: () => void;
 };
 
 /**
@@ -18,9 +20,10 @@ export type ShortcutHandlers = {
  *   - Cmd/Ctrl is treated identically (Mac vs Windows)
  *   - We don't fire when the user is typing in an input/textarea/contenteditable
  *     (except for Esc, which is a global "stop")
- *   - Push-to-talk: Space held outside any text field, with both onPushToTalkChange(true)
- *     on keydown and onPushToTalkChange(false) on keyup. Repeated keydown events
- *     (auto-repeat) are filtered.
+ *   - Voice toggle: a single Space press outside any text field fires
+ *     onVoiceToggle() once (auto-repeat filtered). It drives OUR WavRecorder +
+ *     /api/tts/transcribe (see ChatLayout) — NOT the Web Speech API. The
+ *     typing guard means Space never gets hijacked while the user is writing.
  */
 export function useGlobalShortcuts(handlers: ShortcutHandlers) {
   useEffect(() => {
@@ -36,8 +39,6 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers) {
       );
     }
 
-    let pttActive = false;
-
     function onKeyDown(e: KeyboardEvent) {
       const cmd = e.metaKey || e.ctrlKey;
       const typing = isTyping(e.target);
@@ -50,24 +51,19 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers) {
         return;
       }
 
-      // Push-to-talk: Space held outside inputs
+      // Voice toggle: a single Space press outside inputs. Guard against
+      // hijacking Space while the user is typing in a field.
       if (
         e.code === "Space" &&
         !typing &&
         !cmd &&
         !e.shiftKey &&
         !e.altKey &&
-        handlers.onPushToTalkChange
+        handlers.onVoiceToggle
       ) {
-        if (e.repeat) {
-          e.preventDefault();
-          return;
-        }
-        if (!pttActive) {
-          pttActive = true;
-          handlers.onPushToTalkChange(true);
-        }
         e.preventDefault();
+        if (e.repeat) return; // auto-repeat → ignore, one press = one toggle
+        handlers.onVoiceToggle();
         return;
       }
 
@@ -99,18 +95,9 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers) {
       }
     }
 
-    function onKeyUp(e: KeyboardEvent) {
-      if (e.code === "Space" && pttActive && handlers.onPushToTalkChange) {
-        pttActive = false;
-        handlers.onPushToTalkChange(false);
-      }
-    }
-
     window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
     };
   }, [
     handlers.onNewChat,
@@ -118,7 +105,7 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers) {
     handlers.onStop,
     handlers.onToggleVoiceMode,
     handlers.onOpenSettings,
-    handlers.onPushToTalkChange,
+    handlers.onVoiceToggle,
     handlers,
   ]);
 }

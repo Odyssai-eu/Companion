@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { UIMessage } from "~/hooks/useChat";
-import { useVoiceMode } from "~/hooks/useVoiceMode";
+import { useA11yPrefs } from "~/hooks/useA11yPrefs";
 import {
   downloadAllAsZip,
   downloadFile,
@@ -37,7 +37,7 @@ export default function Messages({
   // next token. A ref (not state) — updated on every scroll, read at
   // auto-scroll time, no re-render needed.
   const stickRef = useRef(true);
-  const voice = useVoiceMode();
+  const a11y = useA11yPrefs();
 
   function handleScroll() {
     const el = scrollRef.current;
@@ -86,11 +86,13 @@ export default function Messages({
     }
   }, [messages]);
 
-  // Auto-speak when Voice mode is on: each assistant message that finished
-  // streaming gets spoken once. We track ids in a ref so React re-renders
-  // don't replay them.
+  // Auto-speak assistant replies — opt-in accessibility feature, gated on the
+  // `autoSpeakReplies` a11y pref (NOT voice mode, which only gates the mic /
+  // ASR input). Each assistant message that finished streaming gets spoken
+  // once. We track ids in a ref so React re-renders don't replay them. The
+  // per-message "Listen" button stays available independently of this.
   useEffect(() => {
-    if (!voice.enabled) return;
+    if (!a11y.autoSpeakReplies) return;
     const last = messages[messages.length - 1];
     if (!last) return;
     if (last.role !== "assistant") return;
@@ -99,7 +101,7 @@ export default function Messages({
     if (spokenIdsRef.current.has(last.id)) return;
     spokenIdsRef.current.add(last.id);
     tts.speak(last.id, last.content).catch(() => undefined);
-  }, [messages, voice.enabled]);
+  }, [messages, a11y.autoSpeakReplies]);
 
   if (messages.length === 0 && !error) {
     return (

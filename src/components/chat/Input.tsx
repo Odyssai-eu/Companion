@@ -9,7 +9,7 @@ import {
 } from "~/lib/file-attach";
 import { estimateTokens, formatTokenCount } from "~/lib/tokens";
 import { voiceInput, type VoiceInputState } from "~/lib/voice-input";
-import { useA11yPrefs } from "~/hooks/useA11yPrefs";
+import { useVoiceMode } from "~/hooks/useVoiceMode";
 import ModelDropdown from "./ModelDropdown";
 
 export default function Input({
@@ -27,6 +27,7 @@ export default function Input({
   hiddenModels = [],
   inferenceMode = "expert",
   onToggleHidden,
+  injectText,
 }: {
   onSend: (text: string, attachments: Attachment[]) => void;
   onCancel: () => void;
@@ -50,10 +51,15 @@ export default function Input({
   /** Toggle a model id's hidden state. Provided by ChatLayout; called
    *  from the eye button next to each row in advanced/expert mode. */
   onToggleHidden?: (id: string) => void;
+  /** Signal to append transcribed text into the composer. ChatLayout bumps
+   *  `nonce` after the Space-bar ASR finishes in a normal chat — the effect
+   *  appends `text` to the draft and focuses the textarea. `nonce` (not the
+   *  text) is the trigger so repeating the same phrase still fires. */
+  injectText?: { text: string; nonce: number };
 }) {
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState<VoiceInputState>({ status: "idle" });
-  const a11y = useA11yPrefs();
+  const voiceMode = useVoiceMode();
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -80,6 +86,20 @@ export default function Input({
       unsub();
     };
   }, []);
+
+  // Space-bar ASR (normal chat): append the transcript to the draft. Keyed on
+  // `nonce` so the same phrase twice still lands; a space joins it to existing
+  // text. Then focus the textarea so the user can edit / hit Enter.
+  const injectNonceRef = useRef(0);
+  useEffect(() => {
+    if (!injectText) return;
+    if (injectText.nonce === injectNonceRef.current) return;
+    injectNonceRef.current = injectText.nonce;
+    const add = injectText.text.trim();
+    if (!add) return;
+    setValue((prev) => (prev ? `${prev.replace(/\s+$/, "")} ${add}` : add));
+    textareaRef.current?.focus();
+  }, [injectText]);
 
   function startTalk() {
     if (voice.status === "listening") {
@@ -297,12 +317,12 @@ export default function Input({
               <ExpandIcon />
             </button>
           )}
-          {a11y.voiceUiVisible && (
+          {voiceMode.enabled && (
             <button
               type="button"
               onClick={startTalk}
               disabled={disabled || sending}
-              title={listening ? "Stop listening" : "Talk (push-to-talk)"}
+              title={listening ? "Stop listening" : "Talk (click to toggle)"}
               className={`mb-0.5 flex flex-shrink-0 items-center gap-1.5 rounded-full border font-medium transition-colors disabled:opacity-50 ${
                 isMobile ? "h-11 w-11 justify-center" : "px-3 py-1.5 text-[12px]"
               } ${

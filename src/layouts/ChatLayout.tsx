@@ -65,7 +65,7 @@ import { useGlobalShortcuts } from "~/hooks/useGlobalShortcuts";
 import { useIsMobile } from "~/hooks/useIsMobile";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
 import { api } from "~/lib/api";
-import { voiceInput } from "~/lib/voice-input";
+import { transcribeWav } from "~/lib/transcribe";
 import { WavRecorder } from "~/lib/wav-recorder";
 
 export default function ChatLayout() {
@@ -128,6 +128,90 @@ export default function ChatLayout() {
     [chat.messages],
   );
 
+  // ── Space-bar voice toggle (OUR ASR) ──────────────────────────────────────
+  // A single Space press (outside any text field — guarded in
+  // useGlobalShortcuts) toggles our WavRecorder. In a Talk conversation we
+  // forward the toggle to the TalkInput's own recorder (one state machine, so
+  // the keyboard and the big mic stay in sync). In a normal chat we run a
+  // recorder here and inject the transcript into the composer instead of
+  // sending. NOT the Web Speech API — capture + transcription are both ours.
+  const talkControlRef = useRef<TalkControls | null>(null);
+  // Signal bumped to push transcribed text into the composer (normal chat).
+  const [composerInject, setComposerInject] = useState<{
+    text: string;
+    nonce: number;
+  } | null>(null);
+  // Standalone recorder + phase for the normal-chat spacebar path. A ref holds
+  // the phase so the keydown handler reads the current value without resubscribing.
+  const spaceRecorderRef = useRef<WavRecorder | null>(null);
+  const spacePhaseRef = useRef<"idle" | "recording" | "transcribing">("idle");
+  // Stable accessors so the toggle never closes over stale chat state.
+  const isTalkRef = useRef(false);
+  isTalkRef.current = chat.conversation?.kind === "talk";
+  const voiceEnabledRef = useRef(false);
+  voiceEnabledRef.current = voiceMode.enabled;
+  const sendMessageRef = useRef(chat.sendMessage);
+  sendMessageRef.current = chat.sendMessage;
+
+  async function spacebarStart() {
+    if (spacePhaseRef.current !== "idle") return;
+    const rec = new WavRecorder();
+    spaceRecorderRef.current = rec;
+    try {
+      await rec.start();
+    } catch {
+      spaceRecorderRef.current = null;
+      spacePhaseRef.current = "idle";
+      return;
+    }
+    spacePhaseRef.current = "recording";
+  }
+
+  async function spacebarStop() {
+    if (spacePhaseRef.current !== "recording") return;
+    const rec = spaceRecorderRef.current;
+    spaceRecorderRef.current = null;
+    spacePhaseRef.current = "transcribing";
+    if (!rec) {
+      spacePhaseRef.current = "idle";
+      return;
+    }
+    try {
+      const blob = await rec.stop();
+      const text = await transcribeWav(blob);
+      if (text) {
+        // Normal chat: drop the transcript into the composer for review/edit,
+        // rather than sending blind. (Talk-mode sends; this path inserts.)
+        setComposerInject((prev) => ({
+          text,
+          nonce: (prev?.nonce ?? 0) + 1,
+        }));
+      }
+    } catch {
+      // Swallow — the composer just won't get new text. Talk-mode surfaces
+      // its own errors in the big-mic UI; here there's no affordance to show.
+    } finally {
+      spacePhaseRef.current = "idle";
+    }
+  }
+
+  // Release a half-open spacebar recording if the user navigates away.
+  useEffect(() => {
+    return () => spaceRecorderRef.current?.cancel();
+  }, []);
+
+  function onVoiceToggle() {
+    // Talk conversation → drive the big-mic recorder (shared state machine).
+    if (isTalkRef.current) {
+      talkControlRef.current?.toggle();
+      return;
+    }
+    // Normal chat → only when voice mode is on, run our recorder and insert.
+    if (!voiceEnabledRef.current) return;
+    if (spacePhaseRef.current === "idle") void spacebarStart();
+    else if (spacePhaseRef.current === "recording") void spacebarStop();
+  }
+
   useGlobalShortcuts({
     onNewChat: () => navigate("/"),
     onFocusSearch: () => {
@@ -146,15 +230,7 @@ export default function ChatLayout() {
       voiceMode.toggle();
     },
     onOpenSettings: () => navigate("/settings/inference"),
-    onPushToTalkChange: (active) => {
-      if (active) {
-        voiceInput.start((text) => {
-          if (text) chat.sendMessage(text, []);
-        });
-      } else {
-        voiceInput.stop();
-      }
-    },
+    onVoiceToggle,
   });
 
   function onStyleChange(next: ChatStyle) {
@@ -280,12 +356,14 @@ export default function ChatLayout() {
           <TalkInput
             talkAvailable={voiceMode.enabled}
             onTranscript={(text) => chat.sendMessage(text, [])}
+            controlRef={talkControlRef}
           />
         ) : (
           <Input
             onSend={chat.sendMessage}
             onCancel={chat.cancel}
             sending={chat.sending}
+            injectText={composerInject ?? undefined}
             disabled={chat.activeAgent ? false : !chat.model}
             placeholder={
               chat.activeAgent
@@ -339,41 +417,51 @@ export default function ChatLayout() {
 
 /**
  * Talk-mode "input": no textarea, no model picker — a single big circular
- * mic button. Enabled only when voice mode is on. Push-and-hold to record
- * (pointerdown → start, release → stop), the WAV is transcribed by OUR local
- * ASR server via /api/tts/transcribe, and the resulting text is sent as a
- * normal user message through `onTranscript` (= chat.sendMessage). The
- * assistant's reply then auto-speaks via the existing voice-mode TTS in
- * Messages.tsx — nothing to wire here for playback.
+ * mic button. Enabled only when voice mode is on. TOGGLE to record: first
+ * click starts the WavRecorder, second click stops → the WAV is transcribed
+ * by OUR local ASR server via /api/tts/transcribe, and the resulting text is
+ * sent as a normal user message through `onTranscript` (= chat.sendMessage).
+ * The assistant's reply then auto-speaks only if the user opted into
+ * `autoSpeakReplies` (a11y) — nothing to wire here for playback.
+ *
+ * The Space-bar shortcut also drives this same recorder from ChatLayout; this
+ * component exposes its start/stop via the `controlRef` so a single Space
+ * press toggles whichever phase we're in, matching the click toggle exactly.
  *
  * Fills the same vertical slot as the normal Input so the layout doesn't
  * shift when switching kinds.
  */
+type TalkControls = { toggle: () => void };
+
 function TalkInput({
   talkAvailable,
   onTranscript,
+  controlRef,
 }: {
   talkAvailable: boolean;
   onTranscript: (text: string) => void;
+  /** ChatLayout hands a ref the Space-bar handler calls to toggle recording,
+   *  so the keyboard path and the click path share one state machine. */
+  controlRef?: React.MutableRefObject<TalkControls | null>;
 }) {
   type Phase = "idle" | "recording" | "transcribing";
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const recorderRef = useRef<WavRecorder | null>(null);
-  const startedAtRef = useRef<number>(0);
-  // Guards against pointerup + pointerleave both firing a stop for one press.
-  const stoppingRef = useRef(false);
+  // Mirror of `phase` readable from the imperative toggle (avoids a stale
+  // closure when ChatLayout calls through the ref).
+  const phaseRef = useRef<Phase>("idle");
+  phaseRef.current = phase;
 
   // Release the mic if the component unmounts mid-recording (e.g. the user
-  // navigates away while holding).
+  // navigates away while recording).
   useEffect(() => {
     return () => recorderRef.current?.cancel();
   }, []);
 
-  async function beginRecording() {
-    if (!talkAvailable || phase !== "idle") return;
+  async function startRecording() {
+    if (!talkAvailable || phaseRef.current !== "idle") return;
     setError(null);
-    stoppingRef.current = false;
     const rec = new WavRecorder();
     recorderRef.current = rec;
     try {
@@ -384,33 +472,14 @@ function TalkInput({
       setPhase("idle");
       return;
     }
-    // If the user released before the mic actually opened, don't get stuck in
-    // a recording state with no way to stop.
-    if (stoppingRef.current) {
-      rec.cancel();
-      recorderRef.current = null;
-      setPhase("idle");
-      return;
-    }
-    startedAtRef.current = Date.now();
     setPhase("recording");
   }
 
-  async function endRecording() {
-    if (stoppingRef.current) return;
-    stoppingRef.current = true;
+  async function stopRecording() {
+    if (phaseRef.current !== "recording") return;
     const rec = recorderRef.current;
-    // The mic may still be opening (start() not resolved) — flag handled there.
-    if (!rec) return;
-    if (phase !== "recording") {
-      // start() is still in flight; it will cancel on seeing stoppingRef.
-      return;
-    }
     recorderRef.current = null;
-
-    // Ignore very short presses (accidental taps) — cancel without sending.
-    if (Date.now() - startedAtRef.current < 300) {
-      rec.cancel();
+    if (!rec) {
       setPhase("idle");
       return;
     }
@@ -431,40 +500,43 @@ function TalkInput({
 
     setPhase("transcribing");
     try {
-      const res = await fetch("/api/tts/transcribe?language=fr", {
-        method: "POST",
-        headers: { "Content-Type": "audio/wav" },
-        body: blob,
-      });
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({}));
-        setError(
-          (detail as { error?: string }).error
-            ? `Transcription failed (${(detail as { error?: string }).error}).`
-            : `Transcription failed (${res.status}).`,
-        );
-        setPhase("idle");
-        return;
-      }
-      const data = (await res.json()) as { text?: string };
-      const text = (data.text ?? "").trim();
+      const text = await transcribeWav(blob);
       setPhase("idle");
       if (text) onTranscript(text);
-    } catch {
-      setError("Could not reach the transcription service.");
+    } catch (e) {
+      setError((e as Error).message);
       setPhase("idle");
     }
   }
+
+  // First press records, second press stops+sends. Transcribing is busy → no-op.
+  function toggle() {
+    if (!talkAvailable) return;
+    if (phaseRef.current === "idle") void startRecording();
+    else if (phaseRef.current === "recording") void stopRecording();
+  }
+
+  // Expose the toggle to ChatLayout's Space-bar handler.
+  useEffect(() => {
+    if (!controlRef) return;
+    controlRef.current = { toggle };
+    return () => {
+      controlRef.current = null;
+    };
+    // `toggle` closes over stable refs + setState only, so a one-time wire is
+    // safe; re-running on every render would needlessly churn the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controlRef, talkAvailable]);
 
   const busy = phase === "transcribing";
   const recording = phase === "recording";
   const label = !talkAvailable
     ? "Voice mode is off"
     : recording
-      ? "Recording — release to send"
+      ? "Recording — click to send"
       : busy
         ? "Transcribing…"
-        : "Hold to talk";
+        : "Click to talk";
 
   return (
     <div className="flex shrink-0 flex-col items-center justify-center gap-2 border-t border-gray-200 bg-white px-4 py-6">
@@ -475,25 +547,12 @@ function TalkInput({
         aria-pressed={recording}
         title={
           talkAvailable
-            ? "Hold to talk"
+            ? recording
+              ? "Click to stop and send"
+              : "Click to talk"
             : "Turn voice mode on to talk"
         }
-        // Pointer events cover mouse + touch + pen. preventDefault stops the
-        // touch long-press / text-selection gestures from hijacking the hold.
-        onPointerDown={(e) => {
-          e.preventDefault();
-          void beginRecording();
-        }}
-        onPointerUp={(e) => {
-          e.preventDefault();
-          void endRecording();
-        }}
-        onPointerLeave={() => {
-          if (recording) void endRecording();
-        }}
-        onPointerCancel={() => {
-          if (recording) void endRecording();
-        }}
+        onClick={() => toggle()}
         className={`flex h-20 w-20 select-none items-center justify-center rounded-full text-white shadow-lg transition-all ${
           !talkAvailable
             ? "cursor-not-allowed bg-gray-300"

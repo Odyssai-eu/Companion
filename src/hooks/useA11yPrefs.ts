@@ -17,10 +17,13 @@ export type A11yPrefs = {
   reducedMotion: boolean;
   highContrast: boolean;
   dyslexiaFriendlyLineHeight: boolean;
-  /** Show the chat-input mic button + the TopBar voice-mode toggle. Off
-   *  by default so the controls don't clutter the UI for people who never
-   *  use voice. The "New talk" sidebar button is unaffected. */
-  voiceUiVisible: boolean;
+  /** Read every finished assistant reply aloud automatically. Off by
+   *  default — auto-reading every answer is rarely useful (e.g. asking for
+   *  code and hearing the whole block) and is decoupled from voice mode:
+   *  voice mode gates the mic (ASR input), this gates TTS auto-speak. Most
+   *  useful for low-vision users. The per-message "Listen" button is always
+   *  available regardless. */
+  autoSpeakReplies: boolean;
 };
 
 const DEFAULTS: A11yPrefs = {
@@ -30,7 +33,7 @@ const DEFAULTS: A11yPrefs = {
   reducedMotion: false,
   highContrast: false,
   dyslexiaFriendlyLineHeight: false,
-  voiceUiVisible: false,
+  autoSpeakReplies: false,
 };
 
 const STORAGE_KEY = "companion:accessibility";

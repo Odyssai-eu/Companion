@@ -8,7 +8,7 @@ type A11yPrefs = {
   reducedMotion: boolean;
   highContrast: boolean;
   dyslexiaFriendlyLineHeight: boolean;
-  voiceUiVisible: boolean;
+  autoSpeakReplies: boolean;
 };
 
 const DEFAULTS: A11yPrefs = {
@@ -18,7 +18,7 @@ const DEFAULTS: A11yPrefs = {
   reducedMotion: false,
   highContrast: false,
   dyslexiaFriendlyLineHeight: false,
-  voiceUiVisible: false,
+  autoSpeakReplies: false,
 };
 
 const STORAGE_KEY = "companion:accessibility";
@@ -112,10 +112,10 @@ export default function AccessibilityPage() {
             onChange={() => toggle("voiceModeDefault")}
           />
           <Setting
-            label="Show voice controls in chat"
-            description="Reveals the mic button in the chat input and the Voice toggle in the chat header. New Talk in the sidebar is always available regardless."
-            value={prefs.voiceUiVisible}
-            onChange={() => toggle("voiceUiVisible")}
+            label="Auto-speak assistant replies"
+            description="Reads every assistant reply aloud automatically. Off by default — most useful for low-vision users. You can always tap Listen on a message."
+            value={prefs.autoSpeakReplies}
+            onChange={() => toggle("autoSpeakReplies")}
           />
         </Group>
       </section>
