@@ -108,7 +108,7 @@ export function VoiceLivePanel() {
       </Field>
       <Field
         label="Voice"
-        hint="Describe the voice in natural language — e.g. « Une voix féminine française, douce et posée ». The same description always gives the same voice. Leave empty for the server's default voice."
+        hint="Speaker name (case-sensitive) — e.g. Sohee, Ono_Anna, Vivian, Serena, Ryan, Aiden, Uncle_Fu. Same speaker = same voice. Leave empty for the server default."
       >
         <input
           type="text"
