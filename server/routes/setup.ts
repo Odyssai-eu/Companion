@@ -17,10 +17,14 @@ import { createSessionToken } from "../auth/jwt";
 import { hashPassword } from "../auth/password";
 import { db } from "../db/index";
 import { logAuthEvent } from "../lib/auth-log";
+import { resolveCookieSecure } from "../lib/cookie-secure";
 import { users } from "../db/schema";
 import { SESSION_COOKIE } from "../middleware/auth";
 
-const COOKIE_SECURE = process.env.NODE_ENV === "production";
+// Same resolution as auth.ts — see server/lib/cookie-secure.ts. setup.ts
+// previously hard-coded NODE_ENV (no override at all), so a fresh install on
+// plain-HTTP LAN broke the operator's very first login.
+const COOKIE_SECURE = resolveCookieSecure();
 
 function setSessionCookie(c: Parameters<typeof setCookie>[0], token: string) {
   setCookie(c, SESSION_COOKIE, token, {
