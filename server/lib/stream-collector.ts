@@ -39,6 +39,10 @@ export async function pipeAndCollect(
   assistantContent: string;
   usage: { promptTokens: number; completionTokens: number } | null;
   chunkCount: number;
+  /** CoeOS router decision (OdyssAI-X local path adds this). */
+  routed: { routed_to?: string; category?: string; concrete?: string } | null;
+  /** The model id the response actually reported (employed model, all paths). */
+  responseModel: string | null;
 }> {
   const reader = upstream.body!.getReader();
   const decoder = new TextDecoder();
@@ -48,6 +52,8 @@ export async function pipeAndCollect(
   let assistantContent = "";
   let usage: { promptTokens: number; completionTokens: number } | null = null;
   let chunkCount = 0;
+  let routed: { routed_to?: string; category?: string; concrete?: string } | null = null;
+  let responseModel: string | null = null;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -73,6 +79,10 @@ export async function pipeAndCollect(
       if (!payload) continue;
       try {
         const parsed = JSON.parse(payload) as {
+          model?: string;
+          x_odyssai_routed?: {
+            router?: string; routed_to?: string; category?: string; concrete?: string;
+          };
           choices?: Array<{
             delta?: {
               content?: string | null;
@@ -99,6 +109,8 @@ export async function pipeAndCollect(
             output_tokens?: number;
           };
         };
+        if (parsed.x_odyssai_routed?.routed_to) routed = parsed.x_odyssai_routed;
+        if (parsed.model && !responseModel) responseModel = parsed.model;
         if (parsed.usage) {
           // mlx-vlm reports usage under input_tokens/output_tokens; LiteLLM
           // forwards both shapes but zeroes the OpenAI-style fields when
@@ -161,6 +173,8 @@ export async function pipeAndCollect(
     assistantContent,
     usage,
     chunkCount,
+    routed,
+    responseModel,
   };
 }
 
@@ -187,10 +201,16 @@ export async function collectNonStream(
   assistantContent: string;
   usage: { promptTokens: number; completionTokens: number } | null;
   chunkCount: number;
+  routed: { routed_to?: string; category?: string; concrete?: string } | null;
+  responseModel: string | null;
 }> {
   let chunkCountForReturn = 0;
   const text = await upstream.text();
   let parsed: {
+    model?: string;
+    x_odyssai_routed?: {
+      router?: string; routed_to?: string; category?: string; concrete?: string;
+    };
     choices?: Array<{
       message?: {
         content?: string | null;
@@ -219,9 +239,11 @@ export async function collectNonStream(
     await writer.write(
       encoder.encode(`data: ${JSON.stringify({ error: "invalid_json_from_upstream" })}\n\n`),
     ).catch(() => undefined);
-    return { toolCalls: [], finishReason: null, assistantContent: "", usage: null, chunkCount: 0 };
+    return { toolCalls: [], finishReason: null, assistantContent: "", usage: null, chunkCount: 0, routed: null, responseModel: null };
   }
 
+  const routed = parsed.x_odyssai_routed?.routed_to ? parsed.x_odyssai_routed : null;
+  const responseModel = parsed.model ?? null;
   const choice = parsed.choices?.[0];
   const assistantContent = choice?.message?.content ?? "";
   const finishReason = choice?.finish_reason ?? null;
@@ -340,6 +362,8 @@ export async function collectNonStream(
     assistantContent,
     usage,
     chunkCount: chunkCountForReturn,
+    routed,
+    responseModel,
   };
 }
 

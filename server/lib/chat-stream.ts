@@ -153,6 +153,10 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
     let totalCompletionTokens = 0;
     let totalChunkCount = 0;
     let sawUpstreamUsage = false;
+    // CoeOS routing decision + the model the response actually reported, so the
+    // StatsRow can show "CoeOS — <employed model>" instead of just "CoeOS".
+    let coeosRouted: { routed_to?: string; category?: string; concrete?: string } | null = null;
+    let responseModelSeen: string | null = null;
 
     // Stream/non-stream upstream policy:
     //
@@ -320,11 +324,13 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
         // undici's fetch returns its own Response type; structurally compatible
         // with the global Response that collectNonStream/pipeAndCollect expect.
         const upstreamResp = upstream as unknown as Response;
-        const { toolCalls, finishReason, assistantContent, usage, chunkCount } =
+        const { toolCalls, finishReason, assistantContent, usage, chunkCount, routed, responseModel } =
           useNonStream
             ? await collectNonStream(upstreamResp, writer, encoder, body.conversationId)
             : await pipeAndCollect(upstreamResp, writer, encoder, body.conversationId);
         totalChunkCount += chunkCount;
+        if (routed) coeosRouted = routed;
+        if (responseModel) responseModelSeen = responseModel;
         if (usage) {
           sawUpstreamUsage = true;
           totalPromptTokens += usage.promptTokens;
@@ -528,13 +534,26 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
         const convIdLocal = body.conversationId;
         // Resolve once before persistence — the cap cache is 60s TTL so this
         // is a Map.get in the steady state. Failure falls back to raw alias.
-        const modelLabel = body.model
+        let modelLabel = body.model
           ? await resolveModelLabel(
               body.model,
               target?.baseUrl ?? null,
               target?.apiKey ?? null,
             ).catch(() => body.model)
           : body.model;
+        // CoeOS routes to a concrete model per request; surface what it actually
+        // employed (from the response) instead of the bare router id. The
+        // OdyssAI-X local path sends x_odyssai_routed (routed_to + category);
+        // Telemak/cloud routes fall back to the response model id.
+        if ((body.model ?? "").toLowerCase() === "coeos") {
+          const raw = coeosRouted?.concrete || responseModelSeen || coeosRouted?.routed_to;
+          const employed = raw ? raw.split("/").pop() : null;
+          if (employed) {
+            modelLabel = coeosRouted?.category
+              ? `CoeOS · ${coeosRouted.category} — ${employed}`
+              : `CoeOS — ${employed}`;
+          }
+        }
         // #36 memory transparency — surface exactly what memory was injected
         // this turn so the user can see "ce qui part". memoryBlock = stable
         // per-conversation wiki/vault (system prompt); ragBlock = per-turn
