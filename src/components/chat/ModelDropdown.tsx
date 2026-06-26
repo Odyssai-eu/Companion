@@ -177,8 +177,8 @@ export default function ModelDropdown({
                 ? // Mobile: trigger sits on the left of the row (justify-between
                   // with a single child), so anchor the panel to the trigger's
                   // left edge and let it extend right, clamped to viewport.
-                  "left-0 w-[min(320px,calc(100vw-1.5rem))]"
-                : "right-0 w-[320px]"
+                  "left-0 w-[min(380px,calc(100vw-1.5rem))]"
+                : "right-0 w-[380px]"
           }`}
         >
           {models.length === 0 && (
@@ -268,17 +268,20 @@ function ModelRow({
         type="button"
         onClick={onPick}
         title={tooltip}
-        className="flex flex-1 min-w-0 items-start justify-between gap-2 text-left"
+        className="flex flex-1 min-w-0 flex-col gap-1 text-left"
       >
-        <span className="flex min-w-0 flex-col gap-0.5">
-          <span className="truncate font-mono">{modelDisplayName(model)}</span>
+        {/* Name on its own full-width line — never squeezed by the badges
+            (the cause of the unreadable "MI:Min…" / "or:deepse…" truncation).
+            Long ids wrap instead of clipping so the model is always legible. */}
+        <span className="break-words font-mono leading-snug">
+          {modelDisplayName(model)}
+        </span>
+        <span className="flex flex-wrap items-center gap-1.5">
           {subtitle && (
-            <span className="truncate font-mono text-[10px] text-gray-500">
+            <span className="font-mono text-[10px] text-gray-500">
               {subtitle}
             </span>
           )}
-        </span>
-        <span className="flex shrink-0 items-center gap-1">
           {o && <PoolBadge caps={o} />}
           {o && <LoadStateBadge caps={o} />}
           {model.capabilities.vision && (
