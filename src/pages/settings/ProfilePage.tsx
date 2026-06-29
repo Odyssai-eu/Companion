@@ -6,6 +6,10 @@ import {
   type ApiUserMemoryStats,
   type ApiUserMemorySettings,
 } from "~/lib/api";
+import {
+  getMemoryDefaultNewConv,
+  setMemoryDefaultNewConv,
+} from "~/lib/memory-prefs";
 
 export default function ProfilePage() {
   const { user, refresh } = useAuth();
@@ -88,8 +92,54 @@ export default function ProfilePage() {
 
       <ChangePasswordSection />
       <PersonaSection />
+      <MemoryDefaultSection />
       <MemoryVaultSection />
     </div>
+  );
+}
+
+// ─── Memory on new conversations (per-device) ────────────────────────────
+// Whether a brand-new *personal* conversation starts with memory enabled.
+// Stored in localStorage, so it is local to this browser/machine — Sophie
+// can have it ON on her MacBook and OFF on the workstation. In a project,
+// memory is managed by the project settings and this toggle is ignored.
+
+function MemoryDefaultSection() {
+  const [enabled, setEnabled] = useState<boolean>(() =>
+    getMemoryDefaultNewConv(),
+  );
+
+  function toggle(next: boolean) {
+    setEnabled(next);
+    setMemoryDefaultNewConv(next);
+  }
+
+  return (
+    <section className="flex flex-col gap-4">
+      <h2 className="font-display text-[20px] font-light text-navy">
+        Memory on new conversations
+      </h2>
+      <div className="rounded-xl border border-gray-200 bg-white px-5 py-4">
+        <label className="flex cursor-pointer items-start gap-3">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => toggle(e.target.checked)}
+            className="mt-1"
+          />
+          <span className="flex flex-col gap-1">
+            <span className="text-[14px] font-medium text-ink">
+              Enable memory on a new conversation
+            </span>
+            <span className="text-[12px] leading-[18px] text-gray-500">
+              Applies to new personal chats. In a project, memory is managed by
+              the project settings. This preference is local to this
+              workstation — your other devices keep their own choice.
+            </span>
+          </span>
+        </label>
+      </div>
+    </section>
   );
 }
 

@@ -9,6 +9,7 @@ import {
 } from "~/lib/api";
 import { type ChatMessage } from "~/lib/chat-stream";
 import { buildUserMessage, type Attachment } from "~/lib/file-attach";
+import { getMemoryDefaultNewConv } from "~/lib/memory-prefs";
 import { estimateCost as lookupCost } from "~/lib/model-pricing";
 import { StreamManager, type StreamEntry } from "~/lib/stream-manager";
 
@@ -1302,12 +1303,16 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
             // Persist the currently-picked model on the new conv so future
             // visits restore it (the picker is per-conversation now).
             ...(model ? { model } : {}),
-            // Honour the TopBar memory toggle if the user flipped it
-            // before sending the first message. Otherwise the server
-            // inherits from the project (or defaults to true).
+            // Memory default for a new conversation:
+            //  - an explicit TopBar flip (pendingMemoryEnabled) always wins;
+            //  - otherwise, for a PERSONAL chat, seed from the per-device
+            //    Settings → Profile toggle (local to this workstation);
+            //  - inside a project, omit it — the project settings govern.
             ...(pendingMemoryEnabled !== null
               ? { memoryEnabled: pendingMemoryEnabled }
-              : {}),
+              : project
+                ? {}
+                : { memoryEnabled: getMemoryDefaultNewConv() }),
             // #28 — same for the agent-mode (tools) toggle flipped on the
             // blank chat before the first message.
             ...(pendingAgentMode !== null
@@ -1486,7 +1491,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     // back to the project default (true). Persisted at conv creation
     // in sendMessage.
     if (!conversation) {
-      setPendingMemoryEnabled((prev) => !(prev ?? true));
+      // No row to PATCH yet — flip the pending flag. Baseline is the
+      // per-device default for a personal chat; project chats inherit the
+      // project's memory setting, so we keep a neutral false baseline there.
+      const baseline = project ? false : getMemoryDefaultNewConv();
+      setPendingMemoryEnabled((prev) => !(prev ?? baseline));
       return;
     }
     const next = !conversation.memoryEnabled;
@@ -1499,7 +1508,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       setConversation(conversation);
       setError((e as Error).message);
     }
-  }, [conversation]);
+  }, [conversation, project]);
 
   const toggleAgentMode = useCallback(async () => {
     // Pre-conversation: no row to PATCH yet — flip the pending flag (agent
@@ -1595,10 +1604,14 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
      *  every plain message in the composer routes to that agent's
      *  bridge instead of the LLM chat path. `/exit` clears it. */
     activeAgent: conversation?.activeAgent ?? null,
-    /** Effective memory toggle: persisted conv value when the conv
-     *  exists, else the pre-conversation pending override, else true. */
+    /** Effective memory toggle: persisted conv value when the conv exists,
+     *  else the pre-conversation pending override, else the per-device
+     *  default for a new personal chat (project chats fall back to false —
+     *  the project setting governs server-side). */
     memoryEnabled:
-      conversation?.memoryEnabled ?? pendingMemoryEnabled ?? false,
+      conversation?.memoryEnabled ??
+      pendingMemoryEnabled ??
+      (project ? false : getMemoryDefaultNewConv()),
     /** Effective agent-mode (tools) toggle: persisted conv value when the
      *  conv exists, else the pre-conversation pending override, else false.
      *  Lets the TopBar tools button reflect a pre-first-message flip. (#28) */
