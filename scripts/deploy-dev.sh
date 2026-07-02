@@ -35,6 +35,11 @@ PUSH_REMOTE=${COMPANION_PUSH_REMOTE:-internal}
 PULL_REMOTE=${COMPANION_HOST_PULL_REMOTE:-localmirror}
 SERVICE=${COMPANION_DEPLOY_SERVICE:-app}
 DOCKER=${COMPANION_DEPLOY_DOCKER:-/usr/local/bin/docker}  # not on the non-interactive ssh PATH
+# The LIVE containers on .39 run in the `desktop-linux` docker context, NOT the
+# default (colima). Without --context the build/up hit colima and build a
+# phantom that never serves — a silent stale-deploy (learned 2026-07-02, cost
+# a full chase). Always target the live context explicitly.
+CONTEXT=${COMPANION_DEPLOY_CONTEXT:-desktop-linux}
 VERIFY_URL=${COMPANION_DEPLOY_URL:-http://192.168.86.39:3100}
 
 cd "$(dirname "$0")/.."
@@ -87,8 +92,23 @@ git push "$PUSH_REMOTE" "$BRANCH"
 #     printed "deployed" while the container kept running the OLD image.
 #     pipefail on the remote shell + set -e here make the failure loud.
 REMOTE_PATH='/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin'
-ssh "$HOST" "set -o pipefail; export PATH=\"$REMOTE_PATH:\$PATH\"; cd $APP_DIR && git pull $PULL_REMOTE $BRANCH && $DOCKER compose up -d --build $SERVICE 2>&1 | tail -12 && $DOCKER ps --filter name=companion --format 'table {{.Names}}\t{{.Status}}'"
+ssh "$HOST" "set -o pipefail; export PATH=\"$REMOTE_PATH:\$PATH\"; cd $APP_DIR && git pull $PULL_REMOTE $BRANCH && $DOCKER --context $CONTEXT compose up -d --build $SERVICE 2>&1 | tail -12 && $DOCKER --context $CONTEXT ps --filter name=companion --format 'table {{.Names}}\t{{.Status}}'"
 
 echo ""
+# ── Blocking post-deploy verify ──────────────────────────────────────────
+# The deployed /health MUST report the version we just shipped. A mismatch
+# means the build never reached the live container (wrong docker context,
+# build cache, or a missed rebuild) — exactly the silent failure of
+# 2026-07-02. Fail loud instead of printing a false "deployed".
+if [ "$BUMP" != "skip" ] && [ -n "${NEW_VERSION:-}" ]; then
+  sleep 5
+  LIVE=$(curl -s "$VERIFY_URL/api/health" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+  if [ "$LIVE" != "$NEW_VERSION" ]; then
+    echo "✗ DEPLOY VERIFY FAILED — /health reports v${LIVE:-?}, expected v$NEW_VERSION."
+    echo "  The build did not reach the live container. Check docker context"
+    echo "  (should be '$CONTEXT') and that the app image was actually rebuilt."
+    exit 1
+  fi
+  echo "✓ verified live: v$LIVE"
+fi
 echo "→ deployed to $VERIFY_URL"
-echo "  verify: curl -s $VERIFY_URL/api/health"
