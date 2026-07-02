@@ -25,7 +25,10 @@ const parserRoute = new Hono<Env>();
 
 const ADDON_NAME = "Parser";
 
-export const DEFAULT_PARSER_URL = "http://192.168.86.44:8083/parse";
+// No hardcoded infra URL. The Docling endpoint is config-driven — the user
+// sets it in the add-on panel (empty until configured). See memory
+// no-hardcoded-urls: a baked LAN IP breaks portability / client install.
+export const DEFAULT_PARSER_URL = "";
 export const DEFAULT_MAX_UPLOAD_BYTES = 20_000_000;
 
 export type ParserAddonConfig = {
@@ -78,8 +81,11 @@ export async function loadParserConfigForUser(
     .limit(1);
   if (!row || !row.enabled) return null;
   const cfg = (row.config ?? {}) as ParserAddonConfig;
+  // Enabled but no Docling URL configured → treat as not configured so the
+  // send-path skips parsing (no hardcoded fallback).
+  if (!cfg.url) return null;
   return {
-    url: cfg.url || DEFAULT_PARSER_URL,
+    url: cfg.url,
     pdfMode: cfg.pdfMode === "vision" ? "vision" : "text",
     maxUploadBytes:
       typeof cfg.maxUploadBytes === "number" && cfg.maxUploadBytes > 0

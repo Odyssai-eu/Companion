@@ -119,7 +119,7 @@ export function ParserAddonPanel() {
           type="text"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="http://192.168.86.44:8083/parse"
+          placeholder="http://docling-host:8083/parse"
           className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
         />
         <p className="mt-2 text-[11px] text-gray-500">
