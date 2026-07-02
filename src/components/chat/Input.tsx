@@ -4,6 +4,7 @@ import type { ApiGlobalModel } from "~/lib/api";
 import {
   ACCEPT_ATTR,
   type Attachment,
+  type ParserConfig,
   formatBytes,
   processFile,
 } from "~/lib/file-attach";
@@ -28,6 +29,7 @@ export default function Input({
   inferenceMode = "expert",
   onToggleHidden,
   injectText,
+  parserConfig,
 }: {
   onSend: (text: string, attachments: Attachment[]) => void;
   onCancel: () => void;
@@ -56,6 +58,10 @@ export default function Input({
    *  appends `text` to the draft and focuses the textarea. `nonce` (not the
    *  text) is the trigger so repeating the same phrase still fires. */
   injectText?: { text: string; nonce: number };
+  /** Parser add-on state. When enabled, document attachments (and PDFs in
+   *  text mode) upload their raw bytes for server-side Docling parsing
+   *  instead of being rasterized / inlined. Defaults to disabled. */
+  parserConfig?: ParserConfig;
 }) {
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState<VoiceInputState>({ status: "idle" });
@@ -140,10 +146,15 @@ export default function Input({
     if (files.length === 0) return;
 
     for (const file of files) {
+      // A PDF only shows the pdf.js page-render spinner when it will
+      // actually be rasterized — i.e. NOT when the Parser add-on routes it
+      // to Docling (text mode), where it's just a quick data-URL read.
       const isPdf =
         file.type === "application/pdf" ||
         file.name.toLowerCase().endsWith(".pdf");
-      const placeholder: Attachment | null = isPdf
+      const willRasterize =
+        isPdf && !(parserConfig?.enabled && parserConfig.pdfMode === "text");
+      const placeholder: Attachment | null = willRasterize
         ? {
             kind: "pdf",
             id: `pdf-pending-${Date.now()}-${Math.random()
@@ -159,15 +170,19 @@ export default function Input({
         setAttachments((prev) => [...prev, placeholder]);
       }
       try {
-        const att = await processFile(file, (_id, processed, total) => {
-          setAttachments((prev) =>
-            prev.map((a) =>
-              a.kind === "pdf" && a.id === placeholder?.id
-                ? { ...a, progress: `${processed}/${total}` }
-                : a,
-            ),
-          );
-        });
+        const att = await processFile(
+          file,
+          (_id, processed, total) => {
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.kind === "pdf" && a.id === placeholder?.id
+                  ? { ...a, progress: `${processed}/${total}` }
+                  : a,
+              ),
+            );
+          },
+          parserConfig,
+        );
         if (placeholder) {
           // Replace pending placeholder
           setAttachments((prev) =>
@@ -551,6 +566,39 @@ function AttachmentChip({
       </div>
     );
   }
+  if (att.kind === "document") {
+    const tooLarge = att.tooLarge === true;
+    return (
+      <div
+        className={`group flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-mono text-[11px] ${
+          tooLarge
+            ? "border-amber-300 bg-amber-50 text-amber-700"
+            : "border-cyan/30 bg-cyan/10 text-cyan-700"
+        }`}
+        title={
+          tooLarge
+            ? `${att.name} is too large to parse (over 20 MB) — it will be skipped.`
+            : `${att.name} — parsed to text on send`
+        }
+      >
+        <DocIcon />
+        <span>{att.name}</span>
+        <span className={tooLarge ? "text-amber-700/70" : "text-cyan-700/60"}>
+          {tooLarge ? "too large" : `(${formatBytes(att.size)})`}
+        </span>
+        <button
+          type="button"
+          onClick={onRemove}
+          className={`ml-0.5 hover:text-rose-600 ${
+            tooLarge ? "text-amber-700/70" : "text-cyan-700/60"
+          }`}
+          aria-label="Remove"
+        >
+          ×
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="group flex items-center gap-1.5 rounded-lg border border-cyan/30 bg-cyan/10 px-2.5 py-1 font-mono text-[11px] text-cyan-700">
       <FileIcon />
@@ -565,6 +613,26 @@ function AttachmentChip({
         ×
       </button>
     </div>
+  );
+}
+
+function DocIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="9" y1="13" x2="15" y2="13" />
+      <line x1="9" y1="17" x2="15" y2="17" />
+    </svg>
   );
 }
 

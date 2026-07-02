@@ -8,7 +8,11 @@ import {
   type ApiProject,
 } from "~/lib/api";
 import { type ChatMessage } from "~/lib/chat-stream";
-import { buildUserMessage, type Attachment } from "~/lib/file-attach";
+import {
+  buildUserMessage,
+  type Attachment,
+  type ParserConfig,
+} from "~/lib/file-attach";
 import { getMemoryDefaultNewConv } from "~/lib/memory-prefs";
 import { estimateCost as lookupCost } from "~/lib/model-pricing";
 import { StreamManager, type StreamEntry } from "~/lib/stream-manager";
@@ -214,6 +218,13 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   // Hermes web dashboard), same as Pi. URL from the Hermes Agent add-on config.
   // When set, `/hermes` opens the iframe instead of the (retired) ACP bubble.
   const [hermesBridgeUrl, setHermesBridgeUrl] = useState<string>("");
+  // Parser add-on (Docling). Governs how document attachments are routed by
+  // the composer: when enabled, docs (and PDFs in text mode) upload their
+  // raw bytes for server-side parsing instead of being rasterized / inlined.
+  const [parserConfig, setParserConfig] = useState<ParserConfig>({
+    enabled: false,
+    pdfMode: "text",
+  });
   const [inferenceMode, setInferenceMode] = useState<
     "easy" | "advanced" | "expert"
   >("expert");
@@ -450,6 +461,20 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       })
       .catch(() => {
         /* not configured — leave hermesBridgeUrl empty (falls back to bubble) */
+      });
+    // Parser add-on — cheap, optional. When unconfigured we keep the default
+    // (disabled) so the composer falls back to the pdf.js / inline-text path.
+    api
+      .parserAddonInfo()
+      .then((info) => {
+        if (cancelled) return;
+        setParserConfig({
+          enabled: Boolean(info.enabled),
+          pdfMode: info.pdfMode === "vision" ? "vision" : "text",
+        });
+      })
+      .catch(() => {
+        /* not configured — leave parserConfig disabled */
       });
     return () => {
       cancelled = true;
@@ -1600,6 +1625,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     piReset,
     piBridgeUrl,
     hermesBridgeUrl,
+    /** Parser add-on state — passed to the composer so document attachments
+     *  route to the server-side Docling parser when enabled. */
+    parserConfig,
     /** Persistent agent mode for this conv ('hermes' | null). When set,
      *  every plain message in the composer routes to that agent's
      *  bridge instead of the LLM chat path. `/exit` clears it. */

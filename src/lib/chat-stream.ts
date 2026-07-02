@@ -1,6 +1,9 @@
 export type ContentPart =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
+  | { type: "image_url"; image_url: { url: string } }
+  // Raw-document part (Parser add-on). Carried to the server, which forwards
+  // the bytes to Docling and swaps in a text part before the engine call.
+  | { type: "document"; document: { name: string; url: string; mime?: string } };
 
 export type ChatMessage = {
   role: "user" | "assistant" | "system";

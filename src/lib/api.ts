@@ -1521,6 +1521,66 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // Parser add-on (Docling — parse documents to markdown before send)
+  parserAddonInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      url: string;
+      pdfMode: "text" | "vision";
+      maxUploadBytes: number;
+      configured: boolean;
+    }>("/api/addons/parser/info"),
+  parserAddonSetConfig: (body: {
+    enabled?: boolean;
+    url?: string;
+    pdfMode?: "text" | "vision";
+    maxUploadBytes?: number;
+  }) =>
+    request<{
+      ok: true;
+      enabled: boolean;
+      url: string;
+      pdfMode: "text" | "vision";
+      maxUploadBytes: number;
+      configured: boolean;
+    }>("/api/addons/parser/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  /** Upload a small file to the configured Docling endpoint to verify
+   *  connectivity. Raw fetch (multipart) — `request` forces JSON. */
+  async parserAddonTest(
+    file: File,
+  ): Promise<{
+    ok: boolean;
+    chars?: number;
+    pages?: number;
+    ms?: number;
+    status?: number;
+    error?: string;
+  }> {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const res = await fetch("/api/addons/parser/test", {
+      method: "POST",
+      body: form,
+      credentials: "same-origin",
+    });
+    try {
+      return (await res.json()) as {
+        ok: boolean;
+        chars?: number;
+        pages?: number;
+        ms?: number;
+        status?: number;
+        error?: string;
+      };
+    } catch {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+  },
+
   // Auto Router add-on (semantic routing via embeddings)
   routerInfo: () =>
     request<{

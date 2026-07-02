@@ -21,6 +21,7 @@ import {
   tagUserMessages,
 } from "./prompt-builder";
 import { buildSkillsIndex } from "./tools";
+import { parseDocumentParts } from "./parser";
 import type { ChatBody, ChatTurn } from "../routes/chat";
 
 export async function assembleMessages(args: {
@@ -40,11 +41,21 @@ export async function assembleMessages(args: {
     args;
 
   const tz = userRow.timezone || "UTC";
-  const taggedMessages = tagUserMessages(body.messages!, {
+  const tagged = tagUserMessages(body.messages!, {
     enabled: convMemoryEnabled,
     timezone: tz,
     nowFallback: now,
   });
+  // Document-parse hook (Parser add-on). For each raw-document content-part
+  // in an outgoing message, forward the bytes to Docling and swap in a text
+  // part with the extracted markdown so text-only models can read it. No-op
+  // (same reference back) when there are no document parts, so a normal turn
+  // pays zero overhead. Runs BEFORE the RAG-block prepend so the last user
+  // message still exposes a text part for the tag to land on.
+  const taggedMessages = (await parseDocumentParts(
+    tagged as ChatTurn[],
+    userId,
+  )) as typeof tagged;
   // Skills catalogue only matters in agent mode (the model loads a skill via the
   // skill_get tool, which exists only then). Off → don't pollute the prompt, so a
   // memory-off + agent-off conversation is a truly clean slate (e.g. benchmarks).

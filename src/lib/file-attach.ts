@@ -16,10 +16,43 @@ import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 export const ACCEPT_ATTR =
-  ".txt,.md,.json,.py,.js,.ts,.jsx,.tsx,.csv,.yaml,.yml,.toml,.sh,.html,.css,.xml,.log,.pdf,image/*,application/pdf";
+  ".txt,.md,.json,.py,.js,.ts,.jsx,.tsx,.csv,.yaml,.yml,.toml,.sh,.html,.css,.xml,.log,.pdf,.docx,.doc,.pptx,.xlsx,image/*,application/pdf";
 
 const MAX_PDF_PAGES = 20;
 const PDF_RENDER_SCALE = 1.5;
+
+// Suffixes routed to the server-side Docling parser (the Parser add-on),
+// when it is enabled. The raw bytes are uploaded as a `document`
+// content-part; the server swaps in the extracted markdown before the
+// engine call. csv/md/html are here too — Docling extracts cleaner tables
+// than a raw text read — but degrade gracefully to an inline text block
+// when the add-on is off. .pdf is handled separately (pdf.js rasterize vs
+// Docling) based on the add-on's pdfMode.
+const DOCLING_SUFFIXES = new Set([
+  "docx",
+  "doc",
+  "pptx",
+  "xlsx",
+  "csv",
+  "md",
+  "html",
+]);
+
+// Binary office suffixes that cannot be read as text — without the Parser
+// add-on there is nothing useful we can do with them client-side.
+const BINARY_DOC_SUFFIXES = new Set(["docx", "doc", "pptx", "xlsx"]);
+
+/** Cap on a single raw document upload. Kept in sync with the add-on's
+ *  default maxUploadBytes (20 MB) — the server re-checks against the
+ *  per-user config, this is just a client-side guard. */
+const MAX_DOCUMENT_BYTES = 20_000_000;
+
+/** Parser add-on state, passed into processFile/buildUserMessage so the
+ *  composer routes documents to the server-side Docling parser. */
+export type ParserConfig = {
+  enabled: boolean;
+  pdfMode: "text" | "vision";
+};
 
 export type TextAttachment = {
   kind: "text";
@@ -59,11 +92,33 @@ export type PdfAttachment = {
   thumbnail?: string;
 };
 
-export type Attachment = TextAttachment | ImageAttachment | PdfAttachment;
+/** A document routed to the server-side Docling parser. Carries the RAW
+ *  bytes as a data URL + the filename; the server decodes, calls Docling,
+ *  and swaps in the extracted markdown before the engine call. */
+export type DocumentAttachment = {
+  kind: "document";
+  id: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  dataUrl: string;
+  /** True when the file exceeds MAX_DOCUMENT_BYTES — kept in the chip so the
+   *  user sees why it won't be sent; excluded from the outgoing message. */
+  tooLarge?: boolean;
+};
+
+export type Attachment =
+  | TextAttachment
+  | ImageAttachment
+  | PdfAttachment
+  | DocumentAttachment;
 
 export type ContentPart =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
+  | { type: "image_url"; image_url: { url: string } }
+  // Raw-document part — stripped server-side (parseDocumentParts) into a
+  // text part with the Docling markdown. Never reaches the engine as-is.
+  | { type: "document"; document: { name: string; url: string; mime?: string } };
 
 function uid(prefix = "att") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -97,9 +152,28 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
+function suffixOf(name: string): string {
+  const i = name.lastIndexOf(".");
+  return i >= 0 ? name.slice(i + 1).toLowerCase() : "";
+}
+
+async function makeDocumentAttachment(file: File): Promise<DocumentAttachment> {
+  const dataUrl = await readAsDataUrl(file);
+  return {
+    kind: "document",
+    id: uid("doc"),
+    name: file.name,
+    size: file.size,
+    mimeType: file.type || "application/octet-stream",
+    dataUrl,
+    tooLarge: file.size > MAX_DOCUMENT_BYTES,
+  };
+}
+
 export async function processFile(
   file: File,
   onPdfProgress?: (id: string, processed: number, total: number) => void,
+  parserConfig?: ParserConfig,
 ): Promise<Attachment> {
   if (isImageMime(file)) {
     const dataUrl = await readAsDataUrl(file);
@@ -113,8 +187,30 @@ export async function processFile(
     };
   }
   if (isPdf(file)) {
+    // PDF routing is governed by the Parser add-on's pdfMode:
+    //   text (default) + enabled → server-side Docling (a `document` part).
+    //   vision / disabled         → existing pdf.js rasterize path.
+    if (parserConfig?.enabled && parserConfig.pdfMode === "text") {
+      return makeDocumentAttachment(file);
+    }
     const id = uid("pdf");
     return processPdfFile(file, id, onPdfProgress);
+  }
+  const suffix = suffixOf(file.name);
+  // Docling-supported document → route to the server-side parser when the
+  // add-on is enabled; else fall back to an inline text read (fine for
+  // csv/md/html, garbage for binary office files but that's pre-existing).
+  if (DOCLING_SUFFIXES.has(suffix)) {
+    if (parserConfig?.enabled) {
+      return makeDocumentAttachment(file);
+    }
+    if (BINARY_DOC_SUFFIXES.has(suffix)) {
+      // No parser + binary → we can't read it as text. Surface a doc chip
+      // flagged tooLarge=false but carry a note via the text path below is
+      // not possible; keep it as a document attachment so the user still
+      // sees the chip and the disabled-note fires server-side.
+      return makeDocumentAttachment(file);
+    }
   }
   const content = await readAsText(file);
   return {
@@ -211,6 +307,11 @@ export function buildUserMessage(
     (a): a is PdfAttachment =>
       a.kind === "pdf" && !a.error && !!a.pages?.length,
   );
+  // Documents routed to the server-side Docling parser. Oversized ones are
+  // dropped from the outgoing payload (chip still shows tooLarge).
+  const docAtt = attachments.filter(
+    (a): a is DocumentAttachment => a.kind === "document" && !a.tooLarge,
+  );
 
   // Text/code blocks always go inline as markdown.
   const textBlocks = textAtt
@@ -222,7 +323,8 @@ export function buildUserMessage(
 
   const inlineText = [textBlocks, text].filter(Boolean).join("\n\n");
 
-  const hasMultimodal = imageAtt.length > 0 || pdfAtt.length > 0;
+  const hasMultimodal =
+    imageAtt.length > 0 || pdfAtt.length > 0 || docAtt.length > 0;
 
   if (!hasMultimodal) {
     return {
@@ -236,6 +338,15 @@ export function buildUserMessage(
 
   for (const img of imageAtt) {
     parts.push({ type: "image_url", image_url: { url: img.dataUrl } });
+  }
+
+  // Raw-document parts — the server (parseDocumentParts) forwards each to
+  // Docling and swaps in the extracted markdown before the engine call.
+  for (const doc of docAtt) {
+    parts.push({
+      type: "document",
+      document: { name: doc.name, url: doc.dataUrl, mime: doc.mimeType },
+    });
   }
 
   for (const pdf of pdfAtt) {
@@ -260,6 +371,7 @@ export function buildUserMessage(
   for (const img of imageAtt) markers.push(`[Image: ${img.name}]`);
   for (const pdf of pdfAtt)
     markers.push(`[PDF: ${pdf.name} — ${pdf.processedPages}p]`);
+  for (const doc of docAtt) markers.push(`[Document: ${doc.name}]`);
   const persistText = [markers.join("\n"), text].filter(Boolean).join("\n\n");
 
   return { content: parts, persistText };

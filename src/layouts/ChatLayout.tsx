@@ -388,6 +388,7 @@ export default function ChatLayout() {
                   : "Pick a model first"
             }
             modelHasVision={chat.activeModelCapabilities.vision}
+            parserConfig={chat.parserConfig}
             model={chat.model}
             onModelChange={chat.setModel}
             models={visibleModelsForMode(
