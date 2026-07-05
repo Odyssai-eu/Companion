@@ -53,5 +53,6 @@
   },
   "overrides": {
     "pg-connection-string": "2.9.1"
-  }
+  },
+  "license": "AGPL-3.0-or-later"
 }
