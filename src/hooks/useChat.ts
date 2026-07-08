@@ -553,6 +553,12 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       setPendingMemoryEnabled(null);
       setPendingAgentMode(null);
       loadedIdRef.current = null;
+      // `sending` is shared across the whole hook instance (ChatLayout
+      // never remounts on navigation) but StreamManager tracks each
+      // conversation's stream independently — landing on "new chat"
+      // must never inherit a stale `true` left over from a still-running
+      // conversation, or sendMessage/regenerate/edit silently no-op.
+      setSending(false);
       return;
     }
     if (loadedIdRef.current === conversationId) return;
