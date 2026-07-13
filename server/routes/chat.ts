@@ -30,6 +30,8 @@ import {
 import { loadRouterConfigForUser } from "./addon-router";
 import { loadGuardConfigForUser } from "./addon-guard";
 import { classifyText, lastUserText, type GuardVerdict } from "../lib/guard";
+import { classifyOrigin } from "../lib/model-origin";
+import { fetchEngineOrigins } from "../lib/odyssai-capabilities";
 import { logAuthEvent } from "../lib/auth-log";
 import { resolveChatTools } from "../lib/chat-tools";
 import { buildUpstreamBody } from "../lib/upstream-request";
@@ -249,14 +251,17 @@ chatRoute.post("/completions", async (c) => {
   // ── 2b. Confidential Guard pre-hook ────────────────────────────────────
   // Classify the outgoing user message against the guard service (GLiNER2
   // PII sidecar) BEFORE it reaches the provider. Fail-soft: a guard error
-  // never blocks the turn. When the verdict is sensitive:
-  //   warn        → SSE `_event:"guard_warning"` frame (emitted in
-  //                 runChatStream) + audit log.
-  //   force-local → additionally re-route the turn onto the paired engine
-  //                 (body.model ← cfg.localModel, target ← engineUrl).
-  //                 Requires a paired engine AND a configured local model —
-  //                 otherwise we degrade to warn-only rather than break
-  //                 the turn or silently pretend.
+  // never blocks the turn. On a sensitive verdict, the action depends on
+  // where the TARGET model actually runs (owned_by-derived origin, NOT the
+  // provider mode — LiteLLM is never used so effectiveMode is always
+  // gateway; a gateway turn can still proxy a cloud model):
+  //   local  → nothing to force; informational banner ("stayed local").
+  //   cloud  → force-local policy re-routes to the configured local model;
+  //            warn policy just surfaces the banner and sends.
+  //   router → CoeOS full: it decides local/cloud downstream, so we CANNOT
+  //            guarantee local. Never auto-route (that breaks the router).
+  //            BLOCK the send and let the client prompt the user to switch
+  //            to a local engine.
   let guardVerdict: GuardVerdict | null = null;
   {
     const guardCfg = await loadGuardConfigForUser(userId);
@@ -266,43 +271,86 @@ chatRoute.post("/completions", async (c) => {
         guardVerdict = await classifyText(guardText.slice(0, 8_000), guardCfg);
         if (guardVerdict?.sensitive) {
           const categories = guardVerdict.findings.map((f) => f.category);
+          // Origin of the target model, from the engine's /v1/models
+          // (owned_by). Unknown / no engine → classifyOrigin fail-safes to
+          // cloud (except the coeos id), so we never treat unknown as local.
+          let origin = classifyOrigin({ id: body.model });
+          if (userRow.engineUrl) {
+            const origins = await fetchEngineOrigins(
+              userRow.engineUrl,
+              userRow.engineToken,
+            );
+            origin = origins.get(body.model.toLowerCase()) ?? origin;
+          }
           console.log(
-            "[chat] guard flagged message (severity=%s categories=%s) in %dms",
+            "[chat] guard flagged message (severity=%s categories=%s origin=%s) in %dms",
             guardVerdict.maxSeverity,
             categories.join(","),
+            origin,
             guardVerdict.ms,
           );
-          const alreadyLocal = effectiveMode === "gateway";
-          if (
-            guardCfg.action === "force-local" &&
-            !alreadyLocal &&
-            userRow.engineUrl &&
-            guardCfg.localModel
-          ) {
-            body.model = guardCfg.localModel;
-            target = {
-              baseUrl: userRow.engineUrl.replace(/\/+$/, ""),
-              apiKey: userRow.engineToken,
-            };
-            guardVerdict.forcedLocal = true;
-            guardVerdict.forcedModel = guardCfg.localModel;
-            console.log(
-              "[chat] guard forced local routing → %s",
-              guardCfg.localModel,
+
+          if (origin === "router") {
+            // CoeOS full — block. No assistant turn is produced; the client
+            // shows the switch-to-local prompt. Return a minimal SSE with a
+            // single guard_blocked frame (before opening any inference).
+            guardVerdict.blocked = true;
+            logAuthEvent({
+              userId,
+              event: "guard.blocked",
+              meta: {
+                severity: guardVerdict.maxSeverity,
+                categories,
+                model: body.model,
+                conversationId: body.conversationId ?? null,
+              },
+            });
+            c.header("Content-Type", "text/event-stream");
+            c.header("Cache-Control", "no-cache");
+            c.header("X-Accel-Buffering", "no");
+            return c.body(
+              `data: ${JSON.stringify({
+                _event: "guard_blocked",
+                severity: guardVerdict.maxSeverity,
+                findings: guardVerdict.findings,
+                model: body.model,
+              })}\n\ndata: [DONE]\n\n`,
             );
           }
-          // The turn lands on the local engine when the user is already in
-          // gateway mode OR force-local just re-routed it. This drives the
-          // banner wording — in gateway mode "sent to the selected provider"
-          // was misleading (the provider IS the local engine).
-          guardVerdict.destinationLocal =
-            alreadyLocal || Boolean(guardVerdict.forcedLocal);
+
+          if (origin === "cloud") {
+            if (
+              guardCfg.action === "force-local" &&
+              userRow.engineUrl &&
+              guardCfg.localModel
+            ) {
+              body.model = guardCfg.localModel;
+              target = {
+                baseUrl: userRow.engineUrl.replace(/\/+$/, ""),
+                apiKey: userRow.engineToken,
+              };
+              guardVerdict.forcedLocal = true;
+              guardVerdict.forcedModel = guardCfg.localModel;
+              guardVerdict.destinationLocal = true;
+              console.log(
+                "[chat] guard forced local routing → %s",
+                guardCfg.localModel,
+              );
+            } else {
+              guardVerdict.destinationLocal = false;
+            }
+          } else {
+            // local — data stays on the engine, nothing to force.
+            guardVerdict.destinationLocal = true;
+          }
+
           logAuthEvent({
             userId,
             event: guardVerdict.forcedLocal ? "guard.forced_local" : "guard.flagged",
             meta: {
               severity: guardVerdict.maxSeverity,
               categories,
+              origin,
               forcedModel: guardVerdict.forcedModel ?? null,
               conversationId: body.conversationId ?? null,
             },

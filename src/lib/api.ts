@@ -30,11 +30,17 @@ export type OdyssaiModelCapabilities = {
   kind?: string;
 };
 
+export type ApiModelOrigin = "local" | "cloud" | "router";
+
 export type ApiGlobalModel = {
   id: string;
   name: string;
   tags: string[];
   capabilities: { vision: boolean; tools: boolean };
+  /** Where the model runs — local pool, external cloud provider, or the
+   *  CoeOS router. Used by the Confidential Guard's local-only picker.
+   *  Optional for back-compat with older server responses. */
+  origin?: ApiModelOrigin;
   /** Rich per-model contract from an Odyssai-compatible engine. Present
    *  only when the user configured an engine URL AND the engine returned
    *  an `x_odyssai` block for this model id. */

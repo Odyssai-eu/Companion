@@ -22,6 +22,7 @@ import { db } from "../db/index";
 import { users } from "../db/schema";
 import { authHeaders, resolveLiteLLM } from "../lib/litellm";
 import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
+import { classifyOrigin, type ModelOrigin } from "../lib/model-origin";
 import type {
   OdyssaiModelCapabilities,
   OdyssaiModelList,
@@ -38,6 +39,10 @@ export type GlobalModel = {
     vision: boolean;
     tools: boolean;
   };
+  /** Where the model actually runs — local pool, external cloud provider,
+   *  or the CoeOS router (which decides downstream). Drives the Confidential
+   *  Guard's picker filter (local-only). See lib/model-origin. */
+  origin: ModelOrigin;
   odyssai?: OdyssaiModelCapabilities;
 };
 
@@ -157,6 +162,11 @@ modelsRoute.get("/", async (c) => {
           vision: visionFinal,
           tools: toolsFinal,
         },
+        // Legacy/hybrid (LiteLLM) entries carry no owned_by → classifyOrigin
+        // fail-safes to "cloud". This path is effectively dead (LiteLLM is
+        // only the Claude-Code bypass, never the chat rail) but stays
+        // type-correct and safe.
+        origin: classifyOrigin({ id }),
         ...(odyssai ? { odyssai } : {}),
       };
     })
@@ -233,6 +243,10 @@ async function listGateway(
         vision: caps?.supports_vision ?? false,
         tools: caps?.supports_tools ?? false,
       },
+      origin: classifyOrigin({
+        id: m.id,
+        owned_by: (m as { owned_by?: string | null }).owned_by,
+      }),
       ...(caps ? { odyssai: caps } : {}),
     };
   });

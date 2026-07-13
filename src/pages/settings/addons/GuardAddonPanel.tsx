@@ -56,9 +56,18 @@ export function GuardAddonPanel() {
     // uses (resolved per provider mode). Prevents typos like the bare
     // "dsparthagemma" that never matched a loaded pool. Empty list (no
     // engine paired) → the panel falls back to a free-text field.
+    // Only local models are valid force-local targets — filtering to
+    // origin==="local" makes a cloud id impossible to pick (the leak we're
+    // preventing). Older servers omit origin → fall back to the full list.
     api
       .listAllModels()
-      .then((r) => setModels(r.models.map((m) => m.id)))
+      .then((r) =>
+        setModels(
+          r.models
+            .filter((m) => m.origin === undefined || m.origin === "local")
+            .map((m) => m.id),
+        ),
+      )
       .catch(() => setModels([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

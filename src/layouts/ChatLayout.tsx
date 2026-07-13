@@ -326,6 +326,8 @@ export default function ChatLayout() {
           onRegenerate={chat.regenerate}
           onEdit={chat.editAndResend}
           showMetrics={chat.showMetrics}
+          localModels={chat.globalModels.filter((m) => m.origin === "local")}
+          onSwitchLocal={chat.resendOnLocalModel}
         />
         {/* Agent sub-thread (/hermes etc.) — terminal-style inline panel
          *  pinned below the message list. Renders only when there's a

@@ -43,7 +43,8 @@ export type AuthEvent =
   | "setup.init"        // first-run operator account created
   // Confidential Guard add-on
   | "guard.flagged"       // sensitive content detected in an outgoing message
-  | "guard.forced_local"; // sensitive turn re-routed to the local engine
+  | "guard.forced_local"  // sensitive turn re-routed to the local engine
+  | "guard.blocked";      // sensitive turn to CoeOS blocked (may reach cloud)
 
 export interface LogAuthEventInput {
   userId?: string | null;

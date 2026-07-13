@@ -39,6 +39,11 @@ export type StreamDelta =
       forcedLocal: boolean;
       forcedModel: string | null;
       destinationLocal: boolean;
+    }
+  | {
+      type: "guard_blocked";
+      severity: "low" | "medium" | "high";
+      findings: Array<{ category: string; severity: string; spans: string[] }>;
     };
 
 export type InferencePayload = {
@@ -222,6 +227,18 @@ export async function streamChat(
             forcedLocal: Boolean(g.forcedLocal),
             forcedModel: g.forcedModel ?? null,
             destinationLocal: Boolean(g.destinationLocal),
+          });
+          continue;
+        }
+        if (chunk._event === "guard_blocked") {
+          const g = chunk as unknown as {
+            severity?: string;
+            findings?: Array<{ category: string; severity: string; spans: string[] }>;
+          };
+          opts.onDelta({
+            type: "guard_blocked",
+            severity: (g.severity ?? "high") as "low" | "medium" | "high",
+            findings: Array.isArray(g.findings) ? g.findings : [],
           });
           continue;
         }

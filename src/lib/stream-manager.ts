@@ -44,6 +44,11 @@ export type GuardWarning = {
   destinationLocal: boolean;
 };
 
+export type GuardBlock = {
+  severity: "low" | "medium" | "high";
+  findings: Array<{ category: string; severity: string; spans: string[] }>;
+};
+
 export type StreamEntry = {
   conversationId: string;
   content: string;
@@ -51,6 +56,9 @@ export type StreamEntry = {
   toolCalls: StreamToolCall[];
   /** Confidential Guard verdict for this turn (null = clean / add-on off). */
   guard: GuardWarning | null;
+  /** Set when the send was blocked (CoeOS router + sensitive). The turn
+   *  produced no assistant reply; the UI shows a switch-to-local prompt. */
+  blocked: GuardBlock | null;
   /** True once the pump promise resolves (success OR error OR abort). */
   done: boolean;
   /** Set when the pump rejected with a non-abort error. */
@@ -96,6 +104,7 @@ class StreamManagerImpl {
       reasoning: "",
       toolCalls: [],
       guard: null,
+      blocked: null,
       done: false,
       error: null,
       stats: null,
@@ -142,6 +151,11 @@ class StreamManagerImpl {
           forcedLocal: delta.forcedLocal,
           forcedModel: delta.forcedModel,
           destinationLocal: delta.destinationLocal,
+        };
+      } else if (delta.type === "guard_blocked") {
+        entry.blocked = {
+          severity: delta.severity,
+          findings: delta.findings,
         };
       } else if (delta.type === "file_changed") {
         // Notify FilesPage / workspace listeners. Not part of the visible

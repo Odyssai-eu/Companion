@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { UIMessage } from "~/hooks/useChat";
+import type { ApiGlobalModel } from "~/lib/api";
+import ModelDropdown from "./ModelDropdown";
 import { useA11yPrefs } from "~/hooks/useA11yPrefs";
 import {
   downloadAllAsZip,
@@ -21,6 +23,8 @@ export default function Messages({
   onRegenerate,
   onEdit,
   showMetrics = false,
+  localModels = [],
+  onSwitchLocal,
 }: {
   messages: UIMessage[];
   error: string | null;
@@ -29,6 +33,12 @@ export default function Messages({
   /** Per-user toggle for the per-message stats box. Defaults off when
    *  parent doesn't pass — the box used to render unconditionally. */
   showMetrics?: boolean;
+  /** Local-only model list for the Confidential Guard block prompt (the
+   *  "switch to a local engine" picker). Empty when the guard is off. */
+  localModels?: ApiGlobalModel[];
+  /** Called when the user picks a local model from a blocked turn's prompt —
+   *  switches the model and re-sends the blocked message locally. */
+  onSwitchLocal?: (modelId: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -153,6 +163,8 @@ export default function Messages({
                 onRegenerate ? () => onRegenerate(m.id) : undefined
               }
               showMetrics={showMetrics}
+              localModels={localModels}
+              onSwitchLocal={onSwitchLocal}
             />
           ),
         )}
@@ -262,10 +274,14 @@ function AssistantMessage({
   message,
   onRegenerate,
   showMetrics = false,
+  localModels = [],
+  onSwitchLocal,
 }: {
   message: UIMessage;
   onRegenerate?: () => void;
   showMetrics?: boolean;
+  localModels?: ApiGlobalModel[];
+  onSwitchLocal?: (modelId: string) => void;
 }) {
   const thinking = !message.content && (message.streaming || !!message.reasoning);
 
@@ -318,6 +334,14 @@ function AssistantMessage({
             }
           />
         )}
+        {message.blocked && (
+          <GuardBlockPrompt
+            severity={message.blocked.severity}
+            categories={message.blocked.findings.map((f) => f.category)}
+            localModels={localModels}
+            onSwitchLocal={onSwitchLocal}
+          />
+        )}
         {message.reasoning && (
           <ReasoningBlock
             reasoning={message.reasoning}
@@ -327,29 +351,31 @@ function AssistantMessage({
         {message.toolCalls && message.toolCalls.length > 0 && (
           <ToolCallsBlock calls={message.toolCalls} />
         )}
-        <div className="text-[15px] leading-relaxed text-ink">
-          {message.attachments && message.attachments.length > 0 ? (
-            <>
-              <ComfyuiAttachments attachments={message.attachments} />
-              {message.content && (
-                <div className="mt-2">
-                  <MarkdownBody content={message.content} />
-                </div>
-              )}
-            </>
-          ) : message.content ? (
-            <MarkdownBody content={message.content} />
-          ) : (
-            !message.reasoning && (
-              <span className="inline-flex items-center gap-2 text-[14px] text-gray-400">
-                <SparkleIcon className="animate-breathe text-cyan" />
-              </span>
-            )
-          )}
-          {message.streaming && message.content && (
-            <span className="inline-block h-4 w-0.5 animate-pulse bg-cyan align-middle" />
-          )}
-        </div>
+        {!message.blocked && (
+          <div className="text-[15px] leading-relaxed text-ink">
+            {message.attachments && message.attachments.length > 0 ? (
+              <>
+                <ComfyuiAttachments attachments={message.attachments} />
+                {message.content && (
+                  <div className="mt-2">
+                    <MarkdownBody content={message.content} />
+                  </div>
+                )}
+              </>
+            ) : message.content ? (
+              <MarkdownBody content={message.content} />
+            ) : (
+              !message.reasoning && (
+                <span className="inline-flex items-center gap-2 text-[14px] text-gray-400">
+                  <SparkleIcon className="animate-breathe text-cyan" />
+                </span>
+              )
+            )}
+            {message.streaming && message.content && (
+              <span className="inline-block h-4 w-0.5 animate-pulse bg-cyan align-middle" />
+            )}
+          </div>
+        )}
         {/* Help chip — always visible when this message came from /help,
          *  regardless of showMetrics. The chip shows which wiki articles
          *  the answer was synthesised from, with links to the public docs. */}
@@ -808,6 +834,66 @@ function GuardBanner({
         )}
       </span>
       <span className="font-mono text-[11px] opacity-80">{destination}</span>
+    </div>
+  );
+}
+
+/**
+ * Confidential Guard BLOCK prompt — shown in place of an assistant reply
+ * when a sensitive message targeted CoeOS (the router, which may reach the
+ * cloud). The send was refused; the user picks a local model here and the
+ * message is re-sent locally. The picker is pre-filtered to local models.
+ */
+function GuardBlockPrompt({
+  severity,
+  categories,
+  localModels,
+  onSwitchLocal,
+}: {
+  severity: "low" | "medium" | "high";
+  categories: string[];
+  localModels: ApiGlobalModel[];
+  onSwitchLocal?: (modelId: string) => void;
+}) {
+  const tone =
+    severity === "high"
+      ? "border-red-200 bg-red-50 text-red-800"
+      : "border-amber-200 bg-amber-50 text-amber-800";
+  return (
+    <div
+      className={`flex flex-col gap-2.5 rounded-lg border px-4 py-3 text-[13px] ${tone}`}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-medium">
+          ⚠ Message not sent — sensitive content
+          {categories.length > 0 && (
+            <span className="font-normal">
+              {" — "}
+              {categories.join(", ")}
+            </span>
+          )}
+        </span>
+      </div>
+      <p className="text-[12px] leading-relaxed opacity-90">
+        CoeOS may route this to a cloud provider, so it wasn't sent. Switch to
+        a local engine for confidentiality:
+      </p>
+      <div className="flex items-center gap-2">
+        {onSwitchLocal && localModels.length > 0 ? (
+          <ModelDropdown
+            value=""
+            onChange={(id) => onSwitchLocal(id)}
+            models={localModels}
+            includeAuto={false}
+            placeholder="Switch to a local engine…"
+            triggerLabel="Switch to a local engine for confidentiality"
+          />
+        ) : (
+          <span className="font-mono text-[11px] opacity-80">
+            No local engine available — pair one in Settings → Inference.
+          </span>
+        )}
+      </div>
     </div>
   );
 }

@@ -31,10 +31,14 @@ export type GuardVerdict = {
   /** Model the turn was re-routed to (when forcedLocal). */
   forcedModel?: string;
   /** True when the turn's destination is the local engine — either because
-   *  the user is already in gateway mode, or because force-local re-routed
-   *  it. Drives the banner wording ("on your local engine" vs "sent to the
+   *  the target model runs locally, or because force-local re-routed it.
+   *  Drives the banner wording ("on your local engine" vs "sent to the
    *  selected provider"). */
   destinationLocal?: boolean;
+  /** True when the send was BLOCKED (CoeOS router + sensitive): CoeOS may
+   *  route to the cloud and we can't know pre-flight, so we don't forward
+   *  it — the client prompts the user to switch to a local engine. */
+  blocked?: boolean;
 };
 
 const GUARD_TIMEOUT_MS = 6_000;
