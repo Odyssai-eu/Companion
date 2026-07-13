@@ -1581,6 +1581,49 @@ export const api = {
     }
   },
 
+  // Confidential Guard add-on (PII/GDPR detection before send)
+  guardAddonInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      url: string;
+      action: "warn" | "force-local";
+      localModel: string;
+      threshold: number;
+      configured: boolean;
+    }>("/api/addons/guard/info"),
+  guardAddonSetConfig: (body: {
+    enabled?: boolean;
+    url?: string;
+    action?: "warn" | "force-local";
+    localModel?: string;
+    threshold?: number;
+  }) =>
+    request<{
+      ok: true;
+      enabled: boolean;
+      url: string;
+      action: "warn" | "force-local";
+      localModel: string;
+      threshold: number;
+      configured: boolean;
+    }>("/api/addons/guard/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  guardAddonTest: (text: string) =>
+    request<{
+      ok: boolean;
+      sensitive?: boolean;
+      maxSeverity?: string;
+      findings?: Array<{ category: string; severity: string; spans: string[] }>;
+      ms?: number;
+      error?: string;
+    }>("/api/addons/guard/test", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
+
   // Auto Router add-on (semantic routing via embeddings)
   routerInfo: () =>
     request<{

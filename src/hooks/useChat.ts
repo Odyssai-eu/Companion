@@ -15,7 +15,11 @@ import {
 } from "~/lib/file-attach";
 import { getMemoryDefaultNewConv } from "~/lib/memory-prefs";
 import { estimateCost as lookupCost } from "~/lib/model-pricing";
-import { StreamManager, type StreamEntry } from "~/lib/stream-manager";
+import {
+  StreamManager,
+  type StreamEntry,
+  type GuardWarning,
+} from "~/lib/stream-manager";
 
 /** Stable id for the in-flight assistant placeholder. The subscribe
  *  effect targets this id to patch content/reasoning/toolCalls as the
@@ -138,6 +142,9 @@ export type UIMessage = {
   model?: string;
   /** Tool invocations the assistant made during this turn (web_search, etc). */
   toolCalls?: ToolCallRecord[];
+  /** Confidential Guard verdict for the live turn (streaming only —
+   *  persisted messages carry it in stats.guard* instead). */
+  guard?: GuardWarning;
   stats?: {
     ttft?: string;
     tokens?: number;
@@ -167,6 +174,13 @@ export type UIMessage = {
     routedLabel?: string;
     routedScore?: number;
     routedMs?: number;
+    /** Confidential Guard verdict — persisted flavour of UIMessage.guard
+     *  so the banner survives a reload. */
+    guardFlagged?: boolean;
+    guardSeverity?: "low" | "medium" | "high";
+    guardCategories?: string[];
+    guardForcedLocal?: boolean;
+    guardForcedModel?: string | null;
     /** #36 memory transparency — what memory was actually injected this turn.
      *  Set only when something WAS injected (>0). `memoryInjected` is the
      *  inspectable text (stable wiki/vault + per-turn RAG, labelled). */
@@ -742,6 +756,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           reasoning: entry.reasoning || undefined,
           toolCalls:
             entry.toolCalls.length > 0 ? entry.toolCalls : undefined,
+          guard: entry.guard ?? undefined,
           streaming: !entry.done,
           model: model ?? undefined,
         };
@@ -1676,6 +1691,7 @@ function buildLivePlaceholder(
     content: entry.content,
     reasoning: entry.reasoning || undefined,
     toolCalls: entry.toolCalls.length > 0 ? entry.toolCalls : undefined,
+    guard: entry.guard ?? undefined,
     streaming: !entry.done,
     model: fallbackModel ?? undefined,
   };

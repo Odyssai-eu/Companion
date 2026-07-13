@@ -40,7 +40,10 @@ export type AuthEvent =
   | "memory.read"       // project memory injected into a conversation
   | "tool.invoke"       // MCP tool called
   | "decision.create"   // decision log entry created
-  | "setup.init";       // first-run operator account created
+  | "setup.init"        // first-run operator account created
+  // Confidential Guard add-on
+  | "guard.flagged"       // sensitive content detected in an outgoing message
+  | "guard.forced_local"; // sensitive turn re-routed to the local engine
 
 export interface LogAuthEventInput {
   userId?: string | null;

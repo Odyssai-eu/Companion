@@ -296,6 +296,23 @@ function AssistantMessage({
         }`}
       />
       <div className="flex min-w-0 flex-1 flex-col gap-3">
+        {(message.guard ||
+          message.stats?.guardFlagged) && (
+          <GuardBanner
+            severity={message.guard?.severity ?? message.stats?.guardSeverity ?? "medium"}
+            categories={
+              message.guard
+                ? message.guard.findings.map((f) => f.category)
+                : (message.stats?.guardCategories ?? [])
+            }
+            forcedLocal={
+              message.guard?.forcedLocal ?? message.stats?.guardForcedLocal ?? false
+            }
+            forcedModel={
+              message.guard?.forcedModel ?? message.stats?.guardForcedModel ?? null
+            }
+          />
+        )}
         {message.reasoning && (
           <ReasoningBlock
             reasoning={message.reasoning}
@@ -736,6 +753,53 @@ function StatsRow({
       >
         Copy
       </button>
+    </div>
+  );
+}
+
+/**
+ * Confidential Guard banner — shown above the assistant reply when the
+ * outgoing user message was flagged as sensitive (GDPR identifiers,
+ * health data, financials, credentials). States which categories were
+ * detected and whether the turn was kept on the local engine.
+ */
+function GuardBanner({
+  severity,
+  categories,
+  forcedLocal,
+  forcedModel,
+}: {
+  severity: "low" | "medium" | "high";
+  categories: string[];
+  forcedLocal: boolean;
+  forcedModel: string | null;
+}) {
+  const tone =
+    severity === "high"
+      ? "border-red-200 bg-red-50 text-red-800"
+      : "border-amber-200 bg-amber-50 text-amber-800";
+  return (
+    <div
+      className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-4 py-2.5 text-[12px] ${tone}`}
+    >
+      <span className="font-medium">
+        ⚠ Sensitive content detected
+        {categories.length > 0 && (
+          <span className="font-normal">
+            {" — "}
+            {categories.join(", ")}
+          </span>
+        )}
+      </span>
+      {forcedLocal ? (
+        <span className="font-mono text-[11px] opacity-80">
+          kept on local engine{forcedModel ? ` (${forcedModel})` : ""}
+        </span>
+      ) : (
+        <span className="font-mono text-[11px] opacity-80">
+          sent to the selected provider
+        </span>
+      )}
     </div>
   );
 }

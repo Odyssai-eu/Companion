@@ -31,7 +31,14 @@ export type StreamDelta =
         };
       }>;
     }
-  | { type: "file_changed"; path: string };
+  | { type: "file_changed"; path: string }
+  | {
+      type: "guard_warning";
+      severity: "low" | "medium" | "high";
+      findings: Array<{ category: string; severity: string; spans: string[] }>;
+      forcedLocal: boolean;
+      forcedModel: string | null;
+    };
 
 export type InferencePayload = {
   temperature?: number;
@@ -197,6 +204,22 @@ export async function streamChat(
         }
         if (chunk._event === "file_changed" && typeof chunk.path === "string") {
           opts.onDelta({ type: "file_changed", path: chunk.path });
+          continue;
+        }
+        if (chunk._event === "guard_warning") {
+          const g = chunk as unknown as {
+            severity?: string;
+            findings?: Array<{ category: string; severity: string; spans: string[] }>;
+            forcedLocal?: boolean;
+            forcedModel?: string | null;
+          };
+          opts.onDelta({
+            type: "guard_warning",
+            severity: (g.severity ?? "medium") as "low" | "medium" | "high",
+            findings: Array.isArray(g.findings) ? g.findings : [],
+            forcedLocal: Boolean(g.forcedLocal),
+            forcedModel: g.forcedModel ?? null,
+          });
           continue;
         }
         if (chunk.usage) {

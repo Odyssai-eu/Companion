@@ -28,6 +28,9 @@ import {
   EmbeddingServiceError,
 } from "../lib/semantic-router";
 import { loadRouterConfigForUser } from "./addon-router";
+import { loadGuardConfigForUser } from "./addon-guard";
+import { classifyText, lastUserText, type GuardVerdict } from "../lib/guard";
+import { logAuthEvent } from "../lib/auth-log";
 import { resolveChatTools } from "../lib/chat-tools";
 import { buildUpstreamBody } from "../lib/upstream-request";
 import { resolveConvContext } from "../lib/chat-context";
@@ -243,6 +246,66 @@ chatRoute.post("/completions", async (c) => {
           apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
         };
 
+  // ── 2b. Confidential Guard pre-hook ────────────────────────────────────
+  // Classify the outgoing user message against the guard service (GLiNER2
+  // PII sidecar) BEFORE it reaches the provider. Fail-soft: a guard error
+  // never blocks the turn. When the verdict is sensitive:
+  //   warn        → SSE `_event:"guard_warning"` frame (emitted in
+  //                 runChatStream) + audit log.
+  //   force-local → additionally re-route the turn onto the paired engine
+  //                 (body.model ← cfg.localModel, target ← engineUrl).
+  //                 Requires a paired engine AND a configured local model —
+  //                 otherwise we degrade to warn-only rather than break
+  //                 the turn or silently pretend.
+  let guardVerdict: GuardVerdict | null = null;
+  {
+    const guardCfg = await loadGuardConfigForUser(userId);
+    if (guardCfg) {
+      const guardText = lastUserText(body.messages);
+      if (guardText.trim()) {
+        guardVerdict = await classifyText(guardText.slice(0, 8_000), guardCfg);
+        if (guardVerdict?.sensitive) {
+          const categories = guardVerdict.findings.map((f) => f.category);
+          console.log(
+            "[chat] guard flagged message (severity=%s categories=%s) in %dms",
+            guardVerdict.maxSeverity,
+            categories.join(","),
+            guardVerdict.ms,
+          );
+          const alreadyLocal = effectiveMode === "gateway";
+          if (
+            guardCfg.action === "force-local" &&
+            !alreadyLocal &&
+            userRow.engineUrl &&
+            guardCfg.localModel
+          ) {
+            body.model = guardCfg.localModel;
+            target = {
+              baseUrl: userRow.engineUrl.replace(/\/+$/, ""),
+              apiKey: userRow.engineToken,
+            };
+            guardVerdict.forcedLocal = true;
+            guardVerdict.forcedModel = guardCfg.localModel;
+            console.log(
+              "[chat] guard forced local routing → %s",
+              guardCfg.localModel,
+            );
+          }
+          logAuthEvent({
+            userId,
+            event: guardVerdict.forcedLocal ? "guard.forced_local" : "guard.flagged",
+            meta: {
+              severity: guardVerdict.maxSeverity,
+              categories,
+              forcedModel: guardVerdict.forcedModel ?? null,
+              conversationId: body.conversationId ?? null,
+            },
+          });
+        }
+      }
+    }
+  }
+
   // ── 3. Resolve project + memory snapshot (frozen per-conversation) ────
   // The memory wiki is snapshot at conversation creation (or on explicit
   // "Remember now") and reused as-is on every turn. This keeps the system-
@@ -369,6 +432,7 @@ chatRoute.post("/completions", async (c) => {
     userRow,
     guest,
     routedDecision,
+    guardVerdict,
     convKind,
     convMemoryEnabled,
     projectGlobalReadOnly,

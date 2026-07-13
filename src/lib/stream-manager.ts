@@ -36,11 +36,20 @@ export type StreamToolCall = {
   };
 };
 
+export type GuardWarning = {
+  severity: "low" | "medium" | "high";
+  findings: Array<{ category: string; severity: string; spans: string[] }>;
+  forcedLocal: boolean;
+  forcedModel: string | null;
+};
+
 export type StreamEntry = {
   conversationId: string;
   content: string;
   reasoning: string;
   toolCalls: StreamToolCall[];
+  /** Confidential Guard verdict for this turn (null = clean / add-on off). */
+  guard: GuardWarning | null;
   /** True once the pump promise resolves (success OR error OR abort). */
   done: boolean;
   /** Set when the pump rejected with a non-abort error. */
@@ -85,6 +94,7 @@ class StreamManagerImpl {
       content: "",
       reasoning: "",
       toolCalls: [],
+      guard: null,
       done: false,
       error: null,
       stats: null,
@@ -124,6 +134,13 @@ class StreamManagerImpl {
           if (matchIdx < 0 || matchIdx >= delta.calls.length) return tc;
           return { ...tc, result: delta.calls[matchIdx].result };
         });
+      } else if (delta.type === "guard_warning") {
+        entry.guard = {
+          severity: delta.severity,
+          findings: delta.findings,
+          forcedLocal: delta.forcedLocal,
+          forcedModel: delta.forcedModel,
+        };
       } else if (delta.type === "file_changed") {
         // Notify FilesPage / workspace listeners. Not part of the visible
         // entry state so we don't bother calling notify() for this.
