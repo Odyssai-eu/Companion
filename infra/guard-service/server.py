@@ -11,25 +11,33 @@ from pydantic import BaseModel
 
 MODEL_ID = os.environ.get("GUARD_MODEL", "fastino/gliner2-privacy-filter-PII-multi")
 
-# category -> severity. high = identifiers that alone make a message sensitive,
-# medium = quasi-identifiers, sensitive mostly in combination.
-CATEGORIES = {
-    "social security number": "high",
-    "iban": "high",
-    "credit card number": "high",
-    "passport number": "high",
-    "medical condition": "high",
-    "health data": "high",
-    "salary": "high",
-    "password": "high",
-    "api key": "high",
-    "person name": "medium",
-    "email": "medium",
-    "phone number": "medium",
-    "physical address": "medium",
-    "date of birth": "medium",
-    "company name": "low",
+# GDPR-identification model. A quasi-identifier ATTRIBUTE (salary, a medical
+# term, …) alone is NOT confidential — "how do I negotiate my salary" is a
+# generic topic. It becomes personal data only when tied to an IDENTITY
+# (name / email / phone): "Marie's salary is 85k" identifies a person. Hard
+# identifiers (IBAN, SSN, card, passport) and secrets (API key, password) are
+# sensitive on their own.
+HARD_IDENTIFIERS = {
+    "iban",
+    "social security number",
+    "credit card number",
+    "passport number",
 }
+SECRETS = {"api key", "password"}
+IDENTITY = {"person name", "email", "phone number"}          # the "who"
+ATTRIBUTE = {                                                # the "what about them"
+    "salary",
+    "medical condition",
+    "health data",
+    "date of birth",
+    "physical address",
+}
+
+# Per-category severity — for the finding's display tone only. The sensitive
+# DECISION uses the tier logic in guard(), not this.
+CATEGORIES = {c: "high" for c in HARD_IDENTIFIERS | SECRETS}
+CATEGORIES.update({c: "medium" for c in IDENTITY | ATTRIBUTE})
+CATEGORIES["company name"] = "low"
 
 app = FastAPI(title="guard-service")
 _model = None
@@ -60,9 +68,6 @@ class GuardResponse(BaseModel):
     latency_ms: float
 
 
-SEV_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3}
-
-
 @app.get("/health")
 def health():
     return {
@@ -81,17 +86,21 @@ def guard(req: GuardRequest):
     model = get_model()
     result = model.extract_entities(req.text, list(CATEGORIES), threshold=req.threshold)
     findings = []
-    max_sev = "none"
+    present = set()
     for cat, spans in result.get("entities", {}).items():
         if not spans:
             continue
-        sev = CATEGORIES.get(cat, "low")
-        findings.append({"category": cat, "severity": sev, "spans": spans})
-        if SEV_ORDER[sev] > SEV_ORDER[max_sev]:
-            max_sev = sev
-    # sensitive = any high, or 2+ medium categories (name+address, email+dob, ...)
-    n_medium = sum(1 for f in findings if f["severity"] == "medium")
-    sensitive = max_sev == "high" or n_medium >= 2
+        findings.append({"category": cat, "severity": CATEGORIES.get(cat, "low"), "spans": spans})
+        present.add(cat)
+    # RGPD identification: a personal ATTRIBUTE tied to an IDENTITY. Hard
+    # identifiers and secrets are sensitive on their own. A quasi-identifier
+    # alone (a salary figure, a medical term in a generic question) is NOT.
+    sensitive = bool(
+        (present & HARD_IDENTIFIERS)
+        or (present & SECRETS)
+        or ((present & IDENTITY) and (present & ATTRIBUTE))
+    )
+    max_sev = "high" if sensitive else "none"
 
     # Stage 2 — contextual. Runs ONLY when asked AND stage 1 is clean: no point
     # paying the LLM latency once the PII pass already flagged the message.
