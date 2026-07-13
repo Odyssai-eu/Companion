@@ -27,6 +27,7 @@ _VALID_CATS = {
 }
 
 _program = None
+_lm = None
 _lock = threading.Lock()
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
@@ -72,9 +73,9 @@ def _build_signature():
 
 
 def load_program():
-    """Lazy-load the DSPy program (thread-safe, once). Returns None when the
-    stage is disabled (no GUARD_LLM_BASE) — the caller then skips stage 2."""
-    global _program
+    """Lazy-load the DSPy program + its LM (thread-safe, once). Returns None
+    when the stage is disabled (no GUARD_LLM_BASE) — caller skips stage 2."""
+    global _program, _lm
     with _lock:
         if _program is not None:
             return _program
@@ -83,13 +84,13 @@ def load_program():
             return None
         import dspy
 
-        dspy.configure(lm=lm)
         prog = dspy.Predict(_build_signature())
         if os.path.exists(_COMPILED):
             try:
                 prog.load(_COMPILED)
             except Exception:  # noqa: BLE001 — fall back to the un-optimised module
                 pass
+        _lm = lm
         _program = prog
         return _program
 
@@ -100,10 +101,18 @@ def classify(text: str):
     Fail-open by contract: the guard must never break a chat because the
     contextual LLM hiccuped."""
     try:
+        import dspy
+
         prog = load_program()
         if prog is None:
             return None
-        pred = prog(message=text)
+        # dspy.configure() sets the LM on the calling thread only. server.py's
+        # sync FastAPI endpoint runs in a threadpool, so a global configure set
+        # on one worker doesn't reach the others — the LM comes back unset and
+        # the prediction silently fails (fail-open → stage 2 dropped). Bind the
+        # LM per call with dspy.context so it holds in whatever thread runs.
+        with dspy.context(lm=_lm):
+            pred = prog(message=text)
         sensitive = bool(getattr(pred, "sensitive", False))
         if not sensitive:
             return {"sensitive": False, "category": "none", "spans": []}
