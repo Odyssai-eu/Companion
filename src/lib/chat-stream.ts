@@ -38,6 +38,7 @@ export type StreamDelta =
       findings: Array<{ category: string; severity: string; spans: string[] }>;
       forcedLocal: boolean;
       forcedModel: string | null;
+      destinationLocal: boolean;
     };
 
 export type InferencePayload = {
@@ -212,6 +213,7 @@ export async function streamChat(
             findings?: Array<{ category: string; severity: string; spans: string[] }>;
             forcedLocal?: boolean;
             forcedModel?: string | null;
+            destinationLocal?: boolean;
           };
           opts.onDelta({
             type: "guard_warning",
@@ -219,6 +221,7 @@ export async function streamChat(
             findings: Array.isArray(g.findings) ? g.findings : [],
             forcedLocal: Boolean(g.forcedLocal),
             forcedModel: g.forcedModel ?? null,
+            destinationLocal: Boolean(g.destinationLocal),
           });
           continue;
         }

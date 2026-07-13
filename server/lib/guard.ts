@@ -30,6 +30,11 @@ export type GuardVerdict = {
   forcedLocal?: boolean;
   /** Model the turn was re-routed to (when forcedLocal). */
   forcedModel?: string;
+  /** True when the turn's destination is the local engine — either because
+   *  the user is already in gateway mode, or because force-local re-routed
+   *  it. Drives the banner wording ("on your local engine" vs "sent to the
+   *  selected provider"). */
+  destinationLocal?: boolean;
 };
 
 const GUARD_TIMEOUT_MS = 6_000;

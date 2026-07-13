@@ -181,6 +181,7 @@ export type UIMessage = {
     guardCategories?: string[];
     guardForcedLocal?: boolean;
     guardForcedModel?: string | null;
+    guardDestinationLocal?: boolean;
     /** #36 memory transparency — what memory was actually injected this turn.
      *  Set only when something WAS injected (>0). `memoryInjected` is the
      *  inspectable text (stable wiki/vault + per-turn RAG, labelled). */

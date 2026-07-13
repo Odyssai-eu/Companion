@@ -27,6 +27,7 @@ export function GuardAddonPanel() {
   const [url, setUrl] = useState("");
   const [action, setAction] = useState<"warn" | "force-local">("warn");
   const [localModel, setLocalModel] = useState("");
+  const [models, setModels] = useState<string[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -51,6 +52,14 @@ export function GuardAddonPanel() {
 
   useEffect(() => {
     refresh();
+    // Populate the local-model picker from the same list the model picker
+    // uses (resolved per provider mode). Prevents typos like the bare
+    // "dsparthagemma" that never matched a loaded pool. Empty list (no
+    // engine paired) → the panel falls back to a free-text field.
+    api
+      .listAllModels()
+      .then((r) => setModels(r.models.map((m) => m.id)))
+      .catch(() => setModels([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -155,16 +164,39 @@ export function GuardAddonPanel() {
 
       {action === "force-local" && (
         <Field label="Local model">
-          <input
-            type="text"
-            value={localModel}
-            onChange={(e) => setLocalModel(e.target.value)}
-            placeholder="argo:qwen3.5-122b"
-            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-          />
+          {models && models.length > 0 ? (
+            <select
+              value={models.includes(localModel) ? localModel : ""}
+              onChange={(e) => setLocalModel(e.target.value)}
+              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            >
+              <option value="" disabled>
+                Select a model served by your engine…
+              </option>
+              {models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={localModel}
+              onChange={(e) => setLocalModel(e.target.value)}
+              placeholder="argo:qwen3.5-122b"
+              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+            />
+          )}
           <p className="mt-2 text-[11px] text-gray-500">
             Model id served by your local engine that flagged turns are
-            re-routed to.
+            re-routed to.{" "}
+            {models && models.length === 0 && (
+              <span className="text-amber-700">
+                No engine models found — pair an engine or type the id
+                manually.
+              </span>
+            )}
           </p>
         </Field>
       )}

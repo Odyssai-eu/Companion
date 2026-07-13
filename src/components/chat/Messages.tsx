@@ -311,6 +311,11 @@ function AssistantMessage({
             forcedModel={
               message.guard?.forcedModel ?? message.stats?.guardForcedModel ?? null
             }
+            destinationLocal={
+              message.guard?.destinationLocal ??
+              message.stats?.guardDestinationLocal ??
+              false
+            }
           />
         )}
         {message.reasoning && (
@@ -768,16 +773,27 @@ function GuardBanner({
   categories,
   forcedLocal,
   forcedModel,
+  destinationLocal,
 }: {
   severity: "low" | "medium" | "high";
   categories: string[];
   forcedLocal: boolean;
   forcedModel: string | null;
+  destinationLocal: boolean;
 }) {
   const tone =
     severity === "high"
       ? "border-red-200 bg-red-50 text-red-800"
       : "border-amber-200 bg-amber-50 text-amber-800";
+  // Three destinations: force-local re-routed the turn; the turn was
+  // already local (gateway mode); or it went to the selected (cloud)
+  // provider. "sent to the selected provider" is only truthful in the
+  // last case — in gateway mode the provider IS the local engine.
+  const destination = forcedLocal
+    ? `kept on local engine${forcedModel ? ` (${forcedModel})` : ""}`
+    : destinationLocal
+      ? "stayed on your local engine"
+      : "sent to the selected provider";
   return (
     <div
       className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-4 py-2.5 text-[12px] ${tone}`}
@@ -791,15 +807,7 @@ function GuardBanner({
           </span>
         )}
       </span>
-      {forcedLocal ? (
-        <span className="font-mono text-[11px] opacity-80">
-          kept on local engine{forcedModel ? ` (${forcedModel})` : ""}
-        </span>
-      ) : (
-        <span className="font-mono text-[11px] opacity-80">
-          sent to the selected provider
-        </span>
-      )}
+      <span className="font-mono text-[11px] opacity-80">{destination}</span>
     </div>
   );
 }

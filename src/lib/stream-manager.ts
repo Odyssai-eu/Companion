@@ -41,6 +41,7 @@ export type GuardWarning = {
   findings: Array<{ category: string; severity: string; spans: string[] }>;
   forcedLocal: boolean;
   forcedModel: string | null;
+  destinationLocal: boolean;
 };
 
 export type StreamEntry = {
@@ -140,6 +141,7 @@ class StreamManagerImpl {
           findings: delta.findings,
           forcedLocal: delta.forcedLocal,
           forcedModel: delta.forcedModel,
+          destinationLocal: delta.destinationLocal,
         };
       } else if (delta.type === "file_changed") {
         // Notify FilesPage / workspace listeners. Not part of the visible

@@ -291,6 +291,12 @@ chatRoute.post("/completions", async (c) => {
               guardCfg.localModel,
             );
           }
+          // The turn lands on the local engine when the user is already in
+          // gateway mode OR force-local just re-routed it. This drives the
+          // banner wording — in gateway mode "sent to the selected provider"
+          // was misleading (the provider IS the local engine).
+          guardVerdict.destinationLocal =
+            alreadyLocal || Boolean(guardVerdict.forcedLocal);
           logAuthEvent({
             userId,
             event: guardVerdict.forcedLocal ? "guard.forced_local" : "guard.flagged",

@@ -156,6 +156,7 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
           findings: guardVerdict.findings,
           forcedLocal: guardVerdict.forcedLocal ?? false,
           forcedModel: guardVerdict.forcedModel ?? null,
+          destinationLocal: guardVerdict.destinationLocal ?? false,
         })}\n\n`,
       ),
     );
@@ -674,6 +675,7 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
                 guardCategories: guardVerdict.findings.map((f) => f.category),
                 guardForcedLocal: guardVerdict.forcedLocal ?? false,
                 guardForcedModel: guardVerdict.forcedModel ?? null,
+                guardDestinationLocal: guardVerdict.destinationLocal ?? false,
               }
             : statsWithRouting;
           try {
