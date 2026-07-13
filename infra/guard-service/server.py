@@ -48,6 +48,9 @@ def get_model():
 class GuardRequest(BaseModel):
     text: str
     threshold: float = 0.5
+    # Stage 2 — contextual confidential detection (DSPy + LLM). Off by default
+    # so the V0 contract is byte-identical; the caller opts in per request.
+    contextual: bool = False
 
 
 class GuardResponse(BaseModel):
@@ -62,7 +65,14 @@ SEV_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3}
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "guard", "model": MODEL_ID, "loaded": _model is not None}
+    return {
+        "status": "ok",
+        "service": "guard",
+        "model": MODEL_ID,
+        "loaded": _model is not None,
+        # True when the stage-2 contextual endpoint is configured (GUARD_LLM_BASE).
+        "contextual_ready": bool(os.environ.get("GUARD_LLM_BASE", "")),
+    }
 
 
 @app.post("/guard", response_model=GuardResponse)
@@ -82,6 +92,24 @@ def guard(req: GuardRequest):
     # sensitive = any high, or 2+ medium categories (name+address, email+dob, ...)
     n_medium = sum(1 for f in findings if f["severity"] == "medium")
     sensitive = max_sev == "high" or n_medium >= 2
+
+    # Stage 2 — contextual. Runs ONLY when asked AND stage 1 is clean: no point
+    # paying the LLM latency once the PII pass already flagged the message.
+    # Fully fail-open: classify() returns None on any error (LLM down, parse
+    # failure, stage disabled) and we keep the stage-1 verdict untouched.
+    if req.contextual and not sensitive:
+        from contextual import classify
+
+        ctx = classify(req.text)
+        if ctx and ctx.get("sensitive"):
+            findings.append({
+                "category": ctx["category"],
+                "severity": "high",
+                "spans": ctx.get("spans", []),
+            })
+            max_sev = "high"
+            sensitive = True
+
     return GuardResponse(
         sensitive=sensitive,
         max_severity=max_sev,

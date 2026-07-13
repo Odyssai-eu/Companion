@@ -1,0 +1,38 @@
+{
+  "traces": [],
+  "train": [],
+  "demos": [],
+  "signature": {
+    "instructions": "Juge si un message contient de l'information CONFIDENTIELLE\ncontextuelle — secret d'affaires, santé narrative, RH nominatif,\njuridique confidentiel, stratégie interne — au-delà du PII structurel\n(noms, IBAN, emails) déjà couvert ailleurs. Un sujet traité de façon\ngénérale ou informative n'est PAS confidentiel. Réponds en français.",
+    "fields": [
+      {
+        "prefix": "Message:",
+        "description": "${message}"
+      },
+      {
+        "prefix": "Sensitive:",
+        "description": "true si confidentiel contextuel"
+      },
+      {
+        "prefix": "Category:",
+        "description": "business_secret|health_narrative|hr_personal|legal_confidential|strategy_internal|none"
+      },
+      {
+        "prefix": "Spans:",
+        "description": "extraits exacts qui justifient, [] si clean"
+      },
+      {
+        "prefix": "Why:",
+        "description": "raison courte"
+      }
+    ]
+  },
+  "lm": null,
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.11",
+      "dspy": "3.2.1",
+      "cloudpickle": "3.1"
+    }
+  }
+}
