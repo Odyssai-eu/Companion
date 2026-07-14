@@ -42,23 +42,41 @@ export type GuardVerdict = {
 };
 
 const GUARD_TIMEOUT_MS = 6_000;
+const CONTEXTUAL_TIMEOUT_MS = 25_000;
 
 /** Classify one user message against the guard service. Returns null on
  *  any failure (service down, timeout, bad payload) — fail-soft. */
 export async function classifyText(
   text: string,
-  cfg: Pick<GuardAddonConfig, "url" | "threshold">,
+  cfg: Pick<
+    GuardAddonConfig,
+    "url" | "threshold" | "contextualLlmUrl" | "contextualLlmModel"
+  >,
 ): Promise<GuardVerdict | null> {
   const t0 = Date.now();
   try {
+    // Stage 2 (contextual) is enabled by configuring a contextual LLM
+    // endpoint in the add-on. We relay it to Guardian per request — Guardian
+    // stores no URL (no hardcoded IP; the add-on is the single config surface).
+    const contextual = Boolean(cfg.contextualLlmUrl);
     const res = await fetch(cfg.url as string, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         text,
         threshold: typeof cfg.threshold === "number" ? cfg.threshold : 0.5,
+        contextual,
+        ...(contextual
+          ? {
+              llm_base: cfg.contextualLlmUrl,
+              llm_model: cfg.contextualLlmModel || "dsparkqwen",
+            }
+          : {}),
       }),
-      signal: AbortSignal.timeout(GUARD_TIMEOUT_MS),
+      // Stage 2 (LLM) can take several seconds; stage 1 alone is ~40 ms.
+      signal: AbortSignal.timeout(
+        contextual ? CONTEXTUAL_TIMEOUT_MS : GUARD_TIMEOUT_MS,
+      ),
     });
     if (!res.ok) {
       console.warn(`[guard] service returned HTTP ${res.status} — skipping`);

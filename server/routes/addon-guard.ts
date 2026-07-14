@@ -42,6 +42,12 @@ export type GuardAddonConfig = {
   localModel?: string;
   /** GLiNER2 span threshold (0..1). */
   threshold?: number;
+  /** Stage-2 contextual detection LLM endpoint (OpenAI-compatible), relayed to
+   *  Guardian per request. Empty = stage 2 off. No hardcoded URL — this field
+   *  is the single config surface for the guard's LLM dependency. */
+  contextualLlmUrl?: string;
+  /** Model id served at contextualLlmUrl (e.g. "dsparkqwen"). */
+  contextualLlmModel?: string;
 };
 
 export async function findOrInitGuardAddon(userId: string) {
@@ -80,6 +86,8 @@ export async function loadGuardConfigForUser(
       action: "warn" | "force-local";
       localModel: string;
       threshold: number;
+      contextualLlmUrl: string;
+      contextualLlmModel: string;
       addonId: string;
     }
   | null
@@ -102,6 +110,8 @@ export async function loadGuardConfigForUser(
       typeof cfg.threshold === "number" && cfg.threshold > 0 && cfg.threshold <= 1
         ? cfg.threshold
         : 0.5,
+    contextualLlmUrl: cfg.contextualLlmUrl ?? "",
+    contextualLlmModel: cfg.contextualLlmModel || "dsparkqwen",
     addonId: row.id,
   };
 }
@@ -121,6 +131,8 @@ guardRoute.get("/info", async (c) => {
       typeof cfg.threshold === "number" && cfg.threshold > 0 && cfg.threshold <= 1
         ? cfg.threshold
         : 0.5,
+    contextualLlmUrl: cfg.contextualLlmUrl ?? "",
+    contextualLlmModel: cfg.contextualLlmModel || "dsparkqwen",
     configured: Boolean(url),
   });
 });
@@ -131,6 +143,8 @@ const configSchema = z.object({
   action: z.enum(["warn", "force-local"]).optional(),
   localModel: z.string().max(200).optional(),
   threshold: z.number().gt(0).max(1).optional(),
+  contextualLlmUrl: z.string().url().max(500).or(z.literal("")).optional(),
+  contextualLlmModel: z.string().max(200).optional(),
 });
 
 guardRoute.put("/config", zValidator("json", configSchema), async (c) => {
@@ -142,6 +156,8 @@ guardRoute.put("/config", zValidator("json", configSchema), async (c) => {
   if (data.action !== undefined) cfg.action = data.action;
   if (data.localModel !== undefined) cfg.localModel = data.localModel;
   if (data.threshold !== undefined) cfg.threshold = data.threshold;
+  if (data.contextualLlmUrl !== undefined) cfg.contextualLlmUrl = data.contextualLlmUrl;
+  if (data.contextualLlmModel !== undefined) cfg.contextualLlmModel = data.contextualLlmModel;
   const patch: {
     config: Record<string, unknown>;
     updatedAt: Date;
@@ -168,6 +184,8 @@ guardRoute.put("/config", zValidator("json", configSchema), async (c) => {
       typeof out.threshold === "number" && out.threshold > 0 && out.threshold <= 1
         ? out.threshold
         : 0.5,
+    contextualLlmUrl: out.contextualLlmUrl ?? "",
+    contextualLlmModel: out.contextualLlmModel || "dsparkqwen",
     configured: Boolean(out.url || DEFAULT_GUARD_URL),
   });
 });
@@ -188,6 +206,8 @@ guardRoute.post("/test", zValidator("json", testSchema), async (c) => {
   const verdict = await classifyText(text, {
     url,
     threshold: cfg.threshold,
+    contextualLlmUrl: cfg.contextualLlmUrl,
+    contextualLlmModel: cfg.contextualLlmModel,
   });
   if (!verdict) {
     return c.json({ ok: false, error: "guard_service_unreachable" }, 502);

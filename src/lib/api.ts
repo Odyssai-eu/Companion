@@ -1596,6 +1596,8 @@ export const api = {
       action: "warn" | "force-local";
       localModel: string;
       threshold: number;
+      contextualLlmUrl: string;
+      contextualLlmModel: string;
       configured: boolean;
     }>("/api/addons/guard/info"),
   guardAddonSetConfig: (body: {
@@ -1604,6 +1606,8 @@ export const api = {
     action?: "warn" | "force-local";
     localModel?: string;
     threshold?: number;
+    contextualLlmUrl?: string;
+    contextualLlmModel?: string;
   }) =>
     request<{
       ok: true;
@@ -1612,6 +1616,8 @@ export const api = {
       action: "warn" | "force-local";
       localModel: string;
       threshold: number;
+      contextualLlmUrl: string;
+      contextualLlmModel: string;
       configured: boolean;
     }>("/api/addons/guard/config", {
       method: "PUT",

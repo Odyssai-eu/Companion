@@ -22,11 +22,15 @@ export function GuardAddonPanel() {
     action: "warn" | "force-local";
     localModel: string;
     threshold: number;
+    contextualLlmUrl: string;
+    contextualLlmModel: string;
     configured: boolean;
   } | null>(null);
   const [url, setUrl] = useState("");
   const [action, setAction] = useState<"warn" | "force-local">("warn");
   const [localModel, setLocalModel] = useState("");
+  const [contextualLlmUrl, setContextualLlmUrl] = useState("");
+  const [contextualLlmModel, setContextualLlmModel] = useState("");
   const [models, setModels] = useState<string[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -45,6 +49,8 @@ export function GuardAddonPanel() {
       setUrl(r.url ?? "");
       setAction(r.action === "force-local" ? "force-local" : "warn");
       setLocalModel(r.localModel ?? "");
+      setContextualLlmUrl(r.contextualLlmUrl ?? "");
+      setContextualLlmModel(r.contextualLlmModel ?? "");
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -80,6 +86,8 @@ export function GuardAddonPanel() {
         url: url.trim(),
         action,
         localModel: localModel.trim(),
+        contextualLlmUrl: contextualLlmUrl.trim(),
+        contextualLlmModel: contextualLlmModel.trim(),
       });
       setSaved(true);
       await refresh();
@@ -209,6 +217,30 @@ export function GuardAddonPanel() {
           </p>
         </Field>
       )}
+
+      <Field label="Contextual detection (optional)">
+        <input
+          type="text"
+          value={contextualLlmUrl}
+          onChange={(e) => setContextualLlmUrl(e.target.value)}
+          placeholder="http://your-engine:8000/v1  (empty = stage 2 off)"
+          className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+        />
+        <input
+          type="text"
+          value={contextualLlmModel}
+          onChange={(e) => setContextualLlmModel(e.target.value)}
+          placeholder="dsparkqwen"
+          className="mt-2 w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+        />
+        <p className="mt-2 text-[11px] text-gray-500">
+          A small instruct LLM (OpenAI-compatible) for stage 2 — catches
+          contextual confidential content (business secrets, health narrative,
+          HR, legal) that the PII pass misses. Relayed to the guard service per
+          request; leave empty to run PII detection only. Adds ~1&nbsp;s of
+          latency to messages that pass the PII stage.
+        </p>
+      </Field>
 
       <Field label="Test">
         <textarea
