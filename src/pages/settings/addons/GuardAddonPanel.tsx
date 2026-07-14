@@ -230,7 +230,7 @@ export function GuardAddonPanel() {
           type="text"
           value={contextualLlmModel}
           onChange={(e) => setContextualLlmModel(e.target.value)}
-          placeholder="dsparkqwen"
+          placeholder="tele-fast"
           className="mt-2 w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
         />
         <p className="mt-2 text-[11px] text-gray-500">

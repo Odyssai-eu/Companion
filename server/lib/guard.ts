@@ -69,7 +69,7 @@ export async function classifyText(
         ...(contextual
           ? {
               llm_base: cfg.contextualLlmUrl,
-              llm_model: cfg.contextualLlmModel || "dsparkqwen",
+              llm_model: cfg.contextualLlmModel || "tele-fast",
             }
           : {}),
       }),

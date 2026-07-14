@@ -46,7 +46,7 @@ export type GuardAddonConfig = {
    *  Guardian per request. Empty = stage 2 off. No hardcoded URL — this field
    *  is the single config surface for the guard's LLM dependency. */
   contextualLlmUrl?: string;
-  /** Model id served at contextualLlmUrl (e.g. "dsparkqwen"). */
+  /** Model id served at contextualLlmUrl (e.g. "tele-fast"). */
   contextualLlmModel?: string;
 };
 
@@ -111,7 +111,7 @@ export async function loadGuardConfigForUser(
         ? cfg.threshold
         : 0.5,
     contextualLlmUrl: cfg.contextualLlmUrl ?? "",
-    contextualLlmModel: cfg.contextualLlmModel || "dsparkqwen",
+    contextualLlmModel: cfg.contextualLlmModel || "tele-fast",
     addonId: row.id,
   };
 }
@@ -132,7 +132,7 @@ guardRoute.get("/info", async (c) => {
         ? cfg.threshold
         : 0.5,
     contextualLlmUrl: cfg.contextualLlmUrl ?? "",
-    contextualLlmModel: cfg.contextualLlmModel || "dsparkqwen",
+    contextualLlmModel: cfg.contextualLlmModel || "tele-fast",
     configured: Boolean(url),
   });
 });
@@ -185,7 +185,7 @@ guardRoute.put("/config", zValidator("json", configSchema), async (c) => {
         ? out.threshold
         : 0.5,
     contextualLlmUrl: out.contextualLlmUrl ?? "",
-    contextualLlmModel: out.contextualLlmModel || "dsparkqwen",
+    contextualLlmModel: out.contextualLlmModel || "tele-fast",
     configured: Boolean(out.url || DEFAULT_GUARD_URL),
   });
 });
