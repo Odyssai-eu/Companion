@@ -20,6 +20,7 @@ import {
   type ApiAdminUser,
   type ApiAuditEntry,
   type ApiGuestToken,
+  type ApiInstanceSettings,
   type ApiTeam,
   type ApiTeamMember,
   type AuthRole,
@@ -69,6 +70,7 @@ export default function AdminPage() {
       <UsersSection selfId={auth.user.id} />
       <TeamsSection />
       <GuestsSection />
+      {role === "admin" && <InstanceSettingsSection />}
       {role === "admin" && <CompanyMemorySection />}
       <AuditLogSection />
     </div>
@@ -935,6 +937,273 @@ function XIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
       <path d="M18 6 6 18M6 6l12 12" />
     </svg>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Instance settings (global, admin-only) — 0059
+//
+// The gateway / LiteLLM / default-model config every account INHERITS. It
+// used to live only on the `users` row, which meant a new account landed on
+// an empty app until someone paired it by hand against the very engine
+// everyone else was already using. Edited once here, it applies to every
+// user who hasn't set a personal override.
+// ─────────────────────────────────────────────────────────────────────────
+
+function InstanceSettingsSection() {
+  const [loaded, setLoaded] = useState<ApiInstanceSettings | null>(null);
+  const [engineUrl, setEngineUrl] = useState("");
+  const [engineMode, setEngineMode] =
+    useState<"gateway" | "hybrid" | "legacy">("legacy");
+  const [litellmUrl, setLitellmUrl] = useState("");
+  const [litellmDisabled, setLitellmDisabled] = useState(false);
+  const [defaultModel, setDefaultModel] = useState("");
+  // Secrets are never returned, so the inputs start blank and only travel
+  // when the admin actually types (or explicitly clears).
+  const [engineToken, setEngineToken] = useState("");
+  const [engineTokenDirty, setEngineTokenDirty] = useState(false);
+  const [litellmKey, setLitellmKey] = useState("");
+  const [litellmKeyDirty, setLitellmKeyDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const apply = useCallback((s: ApiInstanceSettings) => {
+    setLoaded(s);
+    setEngineUrl(s.engineUrl ?? "");
+    setEngineMode(s.engineMode);
+    setLitellmUrl(s.litellmUrl ?? "");
+    setLitellmDisabled(s.litellmDisabled);
+    setDefaultModel(s.defaultModel ?? "");
+    setEngineToken("");
+    setEngineTokenDirty(false);
+    setLitellmKey("");
+    setLitellmKeyDirty(false);
+  }, []);
+
+  useEffect(() => {
+    api
+      .getInstanceSettings()
+      .then(apply)
+      .catch((e) => setError((e as Error).message));
+  }, [apply]);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      const body: Parameters<typeof api.updateInstanceSettings>[0] = {
+        engineUrl: engineUrl.trim() || null,
+        engineMode,
+        litellmUrl: litellmUrl.trim() || null,
+        litellmDisabled,
+        defaultModel: defaultModel.trim() || null,
+      };
+      if (engineTokenDirty) body.engineToken = engineToken.trim() || null;
+      if (litellmKeyDirty) body.litellmApiKey = litellmKey.trim() || null;
+      apply(await api.updateInstanceSettings(body));
+      setSaved("Saved");
+      setTimeout(() => setSaved(null), 1800);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function publish() {
+    if (
+      !confirm(
+        "Publish your own inference settings (engine, token, mode, LiteLLM, " +
+          "default model) as the instance defaults? Every user who hasn't set " +
+          "their own will start using them.",
+      )
+    )
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      apply(await api.publishInstanceSettings());
+      setSaved("Published");
+      setTimeout(() => setSaved(null), 2400);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!loaded) {
+    return (
+      <section className="flex flex-col gap-4">
+        <SectionHeader title="Instance settings" />
+        <p className="font-mono text-[11px] text-gray-400">Loading…</p>
+        {error && <ErrorBanner error={error} />}
+      </section>
+    );
+  }
+
+  return (
+    <section className="flex flex-col gap-4">
+      <SectionHeader
+        title="Instance settings"
+        subtitle="The connection every account inherits."
+        action={
+          <button
+            type="button"
+            onClick={() => void publish()}
+            disabled={busy}
+            className="flex h-9 items-center rounded-md border border-gray-200 bg-white px-3.5 text-[13px] text-gray-700 hover:border-cyan hover:text-navy disabled:opacity-50"
+          >
+            Publish my settings as instance settings
+          </button>
+        }
+      />
+
+      <p className="max-w-[640px] text-[13px] text-gray-500">
+        A Companion install talks to <strong className="font-medium text-navy">one</strong>{" "}
+        engine, so its address, token and default model belong to the
+        deployment rather than to each person. Set them here and every user
+        gets a working app on first login — no pairing, no copy. Anyone who
+        needs a different engine still overrides it in their own{" "}
+        <em>Settings → Inference</em>, and can drop back to these values at
+        any time.
+      </p>
+
+      <div className="flex flex-col gap-4 rounded-xl border border-gray-200 bg-white p-5">
+        <Field
+          label="Engine URL (OdyssAI-X gateway)"
+          hint="Empty = no shared engine; users fall back to LiteLLM or pair their own."
+        >
+          <input
+            type="url"
+            value={engineUrl}
+            onChange={(e) => setEngineUrl(e.target.value)}
+            placeholder="http://engine-host:8000"
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+        </Field>
+
+        <Field
+          label="Engine token (crew token)"
+          hint={
+            loaded.hasEngineToken
+              ? "A token is set. Leave blank to keep it; type a new one to replace, or clear the field and save to remove."
+              : "Only needed if the engine enforces auth."
+          }
+        >
+          <input
+            type="password"
+            value={engineToken}
+            onChange={(e) => {
+              setEngineToken(e.target.value);
+              setEngineTokenDirty(true);
+            }}
+            placeholder={loaded.hasEngineToken ? "•••• (set)" : "token…"}
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+        </Field>
+
+        <Field
+          label="Engine mode"
+          hint="gateway = everything through the engine · hybrid = LiteLLM for inference, engine for capabilities · legacy = LiteLLM only."
+        >
+          <select
+            value={engineMode}
+            onChange={(e) =>
+              setEngineMode(
+                e.target.value as "gateway" | "hybrid" | "legacy",
+              )
+            }
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          >
+            <option value="gateway">gateway</option>
+            <option value="hybrid">hybrid</option>
+            <option value="legacy">legacy</option>
+          </select>
+        </Field>
+
+        <Field
+          label="Default model"
+          hint="Pre-fills the picker on a fresh chat for anyone who hasn't chosen one."
+        >
+          <input
+            type="text"
+            value={defaultModel}
+            onChange={(e) => setDefaultModel(e.target.value)}
+            placeholder="(none — pick first available)"
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+        </Field>
+
+        <Field
+          label="LiteLLM URL"
+          hint="Optional fallback rail. Empty falls through to the LITELLM_URL env var, if the deployment sets one."
+        >
+          <input
+            type="url"
+            value={litellmUrl}
+            onChange={(e) => setLitellmUrl(e.target.value)}
+            placeholder="http://litellm-host:4000"
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+        </Field>
+
+        <Field
+          label="LiteLLM API key"
+          hint={
+            loaded.hasLitellmApiKey
+              ? "A key is set. Leave blank to keep it; type a new one to replace, or clear the field and save to remove."
+              : "Only needed if the proxy enforces a key."
+          }
+        >
+          <input
+            type="password"
+            value={litellmKey}
+            onChange={(e) => {
+              setLitellmKey(e.target.value);
+              setLitellmKeyDirty(true);
+            }}
+            placeholder={loaded.hasLitellmApiKey ? "•••• (set)" : "sk-…"}
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+        </Field>
+
+        <label className="flex cursor-pointer items-start gap-3 text-[13px]">
+          <input
+            type="checkbox"
+            checked={litellmDisabled}
+            onChange={(e) => setLitellmDisabled(e.target.checked)}
+            className="mt-0.5"
+          />
+          <div className="flex flex-col gap-0.5">
+            <span className="font-medium text-ink">Disable LiteLLM</span>
+            <span className="text-[12px] text-gray-500">
+              Pure-gateway deployments. Everything routes through the engine;
+              no fallback if it's down.
+            </span>
+          </div>
+        </label>
+
+        <div className="flex items-center gap-3 pt-1">
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={busy}
+            className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+          {saved && (
+            <span className="font-mono text-[12px] text-emerald-600">
+              ✓ {saved}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {error && <ErrorBanner error={error} />}
+    </section>
   );
 }
 

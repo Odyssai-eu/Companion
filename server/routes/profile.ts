@@ -31,7 +31,8 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
-import { memoryArticles, users } from "../db/schema";
+import { memoryArticles } from "../db/schema";
+import { resolveUserSettingsById } from "../lib/global-settings";
 import { authHeaders } from "../lib/litellm";
 
 type Env = { Variables: { userId: string } };
@@ -279,21 +280,13 @@ profileRoute.post(
     const userId = c.get("userId");
     const { text, model, dryRun } = c.req.valid("json");
 
-    const [u] = await db
-      .select({
-        litellmUrl: users.litellmUrl,
-        litellmApiKey: users.litellmApiKey,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
+    // Effective LiteLLM target: user override ?? instance ?? env (0059).
+    const u = await resolveUserSettingsById(userId);
     if (!u) return c.json({ error: "user_not_found" }, 404);
 
     const target = {
-      baseUrl: (
-        u.litellmUrl ?? process.env.LITELLM_URL ?? ""
-      ).replace(/\/+$/, ""),
-      apiKey: u.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+      baseUrl: u.litellmUrl ?? "",
+      apiKey: u.litellmApiKey,
     };
 
     const upstreamBody = {
@@ -504,14 +497,8 @@ profileRoute.post(
     const userId = c.get("userId");
     const { messages, model } = c.req.valid("json");
 
-    const [u] = await db
-      .select({
-        litellmUrl: users.litellmUrl,
-        litellmApiKey: users.litellmApiKey,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
+    // Effective LiteLLM target: user override ?? instance ?? env (0059).
+    const u = await resolveUserSettingsById(userId);
     if (!u) return c.json({ error: "user_not_found" }, 404);
 
     // Snapshot current persona so the model knows what's already filled.
@@ -542,10 +529,8 @@ profileRoute.post(
     }).join("\n");
 
     const target = {
-      baseUrl: (
-        u.litellmUrl ?? process.env.LITELLM_URL ?? ""
-      ).replace(/\/+$/, ""),
-      apiKey: u.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
+      baseUrl: u.litellmUrl ?? "",
+      apiKey: u.litellmApiKey,
     };
 
     type Msg = {

@@ -9,6 +9,13 @@ import {
   getInferenceStatus,
   listActiveForUser,
 } from "../lib/inference-state";
+import {
+  CONNECTION_COLUMNS,
+  effectiveProviderMode,
+  hasNoProvider,
+  providerTarget,
+  resolveUserSettings,
+} from "../lib/global-settings";
 import { authHeaders } from "../lib/litellm";
 import { compileNow, getMemoryContext, isNemoAvailable } from "../lib/memory";
 import { buildTag } from "../lib/timetag";
@@ -642,17 +649,16 @@ conversationsRoute.post(
     const [user] = await db
       .select({
         timezone: users.timezone,
-        litellmUrl: users.litellmUrl,
-        litellmApiKey: users.litellmApiKey,
-        engineUrl: users.engineUrl,
-        engineToken: users.engineToken,
-        engineMode: users.engineMode,
-        litellmDisabled: users.litellmDisabled,
+        ...CONNECTION_COLUMNS,
       })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
     if (!user) return c.json({ error: "user_not_found" }, 404);
+    // Connection columns are per-user OVERRIDES (0059) — resolve against the
+    // instance settings before deciding where to send the prewarm, otherwise
+    // an inheriting user prewarms nothing.
+    const conn = await resolveUserSettings(user);
 
     // Memory in the SYSTEM prompt must mirror chat.ts (#30): when the RAG
     // serves (nemo deployed), chat puts NOTHING in the system — the per-turn
@@ -735,14 +741,8 @@ conversationsRoute.post(
 
     // Target the same rail chat.ts uses: gateway → engine, otherwise
     // LiteLLM. (Hybrid uses LiteLLM for inference, engine only for caps.)
-    const prewarmMode: "gateway" | "hybrid" | "legacy" =
-      user.litellmDisabled && user.engineUrl
-        ? "gateway"
-        : ((user.engineMode ?? "legacy") as
-            | "gateway"
-            | "hybrid"
-            | "legacy");
-    if (prewarmMode === "legacy" && user.litellmDisabled) {
+    const prewarmMode = effectiveProviderMode(conn);
+    if (hasNoProvider(conn)) {
       // No rail available — skip prewarm rather than 503'ing the UI.
       return c.json({ ok: false, reason: "no_provider" });
     }
@@ -760,20 +760,7 @@ conversationsRoute.post(
     //
     // If divergence shows up again, the runner's new fine-grained labels
     // (fp16·cold|model-changed|divergent|hit-truncated) will pinpoint it.
-    const target =
-      prewarmMode === "gateway" && user.engineUrl
-        ? {
-            baseUrl: user.engineUrl.replace(/\/+$/, ""),
-            apiKey: user.engineToken,
-          }
-        : {
-            baseUrl: (
-              user.litellmUrl ??
-              process.env.LITELLM_URL ??
-              ""
-            ).replace(/\/+$/, ""),
-            apiKey: user.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-          };
+    const target = providerTarget(conn, prewarmMode);
 
     // In gateway mode we can send assistant-last (OdyssAI-X templates with
     // add_generation_prompt=True). In hybrid/legacy we must end with user

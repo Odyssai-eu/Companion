@@ -2,6 +2,19 @@
 
 Where you tell Companion what's behind the chat window. Pair once, the catalog and routing flow from there.
 
+## Instance settings vs. your own
+
+A Companion deployment normally talks to **one** engine, so the connection is configured at the level of the *instance*, not per person:
+
+- An administrator fills in **Settings → Admin → Instance settings** (engine URL, crew token, mode, default model, optional LiteLLM rail) — or pairs an engine from their own Settings page and clicks **Publish my settings as instance settings**.
+- Every account **inherits** those values. A brand-new user logs in to a working app: models in the picker, chat ready, nothing to configure.
+- Anyone can still **override** any of them for their own account by pairing a different engine — the gateway card then loses its `instance` badge.
+- **Reset to instance settings** (Settings → Inference, and Settings → Add-ons for the LiteLLM fields) removes the override and puts the account back on the shared config.
+
+This is inheritance, not a copy: nothing is duplicated onto your account when you're inheriting. When the administrator repoints the instance engine, every inheritor follows automatically — no re-pairing, and no stale URL left behind on individual accounts.
+
+Two things only an administrator can do, because they affect everybody: **Disconnect** and **Reload config** are hidden on an inherited engine.
+
 ## The three modes
 
 Companion supports three engine modes, auto-derived at pair time:
@@ -41,7 +54,7 @@ The mode is **auto-set** during the pairing handshake. You can override it manua
    - `cloud-passthrough` absent → `hybrid` mode, `litellm_disabled = false`.
    - No engine reachable → `legacy` mode, `litellm_url` must be set.
 
-The mode is stored in `users.engine_mode`. Visible (and editable) in *Settings → Inference*.
+The mode is stored in `global_settings.engine_mode` for the instance, and in `users.engine_mode` for anyone who overrides it. Visible in *Settings → Inference*; editable instance-wide in *Settings → Admin → Instance settings*.
 
 ## LiteLLM (fallback rail)
 
@@ -82,15 +95,19 @@ On the roadmap: per-project engine override (route a coding project to a fast lo
 
 ## What gets stored
 
-In `users` table:
+The same eight fields exist in two places. `global_settings` (a single row) holds the **instance** values; the `users` table holds a per-account **override** that is `NULL` whenever you inherit. Every read resolves `user value ?? instance value`, then the deployment's `LITELLM_URL` / `LITELLM_API_KEY` env vars as a last resort for the LiteLLM pair.
 
 - `engine_url` — the URL (e.g. `http://<engine-host>:8000`).
-- `engine_token` — bearer for admin endpoints (encrypted).
-- `engine_meta` — cached `.well-known` body.
+- `engine_token` — bearer for admin endpoints. Never returned by the API in clear: reads only report whether one is set.
+- `engine_meta` — cached `.well-known` body, always the one belonging to whichever engine won.
 - `engine_mode` — `gateway` / `hybrid` / `legacy`.
 - `litellm_url` — LiteLLM URL (for hybrid/legacy paths).
-- `litellm_api_key` — LiteLLM key.
+- `litellm_api_key` — LiteLLM key. Masked like the crew token.
 - `litellm_disabled` — kill switch.
+
+Plus `default_model`, which follows the same rule.
+
+Clearing a field in the UI stores `NULL`, i.e. "inherit" — it does not store a blank. That's what makes **Reset to instance settings** a one-click action rather than a re-typing exercise.
 
 ## Pairing failures
 
@@ -112,11 +129,15 @@ OD discovery uses mDNS on UDP 5353. Some networks (corporate WiFi, public router
 
 ## Switching engines
 
-To repoint to a different engine:
+For the whole deployment (administrator): *Settings → Admin → Instance settings* → edit the engine URL / token / mode → **Save**. Every inheriting account moves with it on their next request. Alternatively, pair the new engine from your own Settings page, confirm it works, then **Publish my settings as instance settings**.
+
+For your account only:
 
 1. *Settings → Infrastructure → Engine* → **Unpair**.
 2. **Pair** again with the new URL.
 3. Mode re-derives on the new handshake.
+
+Unpairing a personal engine drops you back to the instance one rather than to an empty app.
 
 Conversations stay — they're not engine-bound at the row level. The conversation's `model` field is a string (alias), and the new engine should also publish that alias for continuity.
 

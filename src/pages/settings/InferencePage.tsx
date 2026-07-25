@@ -26,15 +26,17 @@ export default function InferencePage() {
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Local edits
-  const [litellmUrl, setLitellmUrl] = useState("");
-  const [litellmDisabled, setLitellmDisabled] = useState(false);
+  // Local edits.
+  //
+  // `defaultModel` binds to the user's OVERRIDE (settings.overrides), not to
+  // the effective value: seeding it from the effective value would re-save
+  // the instance's model as a personal override the next time the user
+  // touches anything on this page, silently snapshotting the shared config.
+  // Empty string = "inherit from the instance".
   const [showMetrics, setShowMetrics] = useState(false);
   const [debugVerbose, setDebugVerbose] = useState(false);
   const [defaultModel, setDefaultModel] = useState("");
   const [timezone, setTimezone] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [keyDirty, setKeyDirty] = useState(false);
   const [inferenceMode, setInferenceMode] =
     useState<ApiInferenceMode>("expert");
 
@@ -51,11 +53,9 @@ export default function InferencePage() {
     ]);
     setSettings(s);
     setModels(ms.models);
-    setLitellmUrl(s.litellmUrl ?? "");
-    setLitellmDisabled(s.litellmDisabled);
     setShowMetrics(s.showMetrics);
     setDebugVerbose(s.debugVerbose);
-    setDefaultModel(s.defaultModel ?? "");
+    setDefaultModel(s.overrides.defaultModel ?? "");
     setTimezone(s.timezone);
     setInferenceMode(s.inferenceMode);
   }
@@ -70,23 +70,26 @@ export default function InferencePage() {
     setSaved(null);
     try {
       const patch: Parameters<typeof api.updateInferenceSettings>[0] = {
-        litellmUrl: litellmUrl.trim() || null,
-        litellmDisabled,
         showMetrics,
         debugVerbose,
+        // "" → null = drop the override and inherit the instance model.
         defaultModel: defaultModel.trim() || null,
         timezone,
         // easyModel / namedModels are deliberately NOT sent anymore (0058
         // retired the modes that used them). Omitting them leaves the
         // columns untouched rather than nulling data the migration may
         // still need if the change is rolled back.
+        //
+        // litellmUrl / litellmApiKey / litellmDisabled are NOT sent either:
+        // their UI moved to Settings → Add-ons in 2026-05-19 and this page
+        // was still shipping its (invisible, stale) copy on every save. Since
+        // 0059 that is actively harmful — it would write the inherited value
+        // back as a personal override every time the user toggled "Show
+        // metrics". Whoever owns the field sends the field.
         inferenceMode,
       };
-      if (keyDirty) patch.litellmApiKey = apiKey.trim() || null;
       await api.updateInferenceSettings(patch);
       setSaved("Saved");
-      setKeyDirty(false);
-      setApiKey("");
       await reload();
       setTimeout(() => setSaved(null), 2000);
     } catch (e) {
@@ -118,6 +121,44 @@ export default function InferencePage() {
     setBusy(true);
     try {
       await api.disconnectOdyssai();
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Drop the personal default-model override; inherit the instance's. */
+  async function resetDefaultModelToInstance() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.resetInferenceToInstance("defaultModel");
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Drop the personal engine override and go back to the instance engine.
+   * Distinct from Disconnect: this doesn't revoke anything on the engine
+   * side, it just stops pinning a private one.
+   */
+  async function resetEngineToInstance() {
+    if (
+      !confirm(
+        "Reset to the instance engine? Your personal pairing (URL, token, mode) is removed and you'll use whatever the administrator configured.",
+      )
+    )
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.resetInferenceToInstance("engine");
       await reload();
     } catch (e) {
       setError((e as Error).message);
@@ -167,8 +208,14 @@ export default function InferencePage() {
     );
   }
 
+  // `paired` reads the EFFECTIVE engine (0059): a user who inherits the
+  // instance gateway is paired — they just didn't do it themselves. Reading
+  // the raw override here is what made a fresh account show "no engine" while
+  // the chat happily talked to one.
   const paired = !!settings.engineUrl;
+  const engineInherited = settings.inherited.engineUrl;
   const engineMeta = settings.engineMeta ?? {};
+  const instanceHasEngine = !!settings.instance.engineUrl;
 
   return (
     <div className="flex flex-col gap-10">
@@ -197,8 +244,11 @@ export default function InferencePage() {
             url={settings.engineUrl ?? ""}
             mode={settings.engineMode}
             meta={engineMeta}
+            inherited={engineInherited}
+            canResetToInstance={!engineInherited && instanceHasEngine}
             onReload={reloadProvider}
             onDisconnect={disconnect}
+            onResetToInstance={resetEngineToInstance}
             busy={busy}
           />
         ) : (
@@ -206,12 +256,16 @@ export default function InferencePage() {
         )}
         <details className="flex flex-col gap-2 text-[12px] text-gray-500">
           <summary className="cursor-pointer text-[12px] text-gray-600 hover:text-ink">
-            Manual engine URL (fallback)
+            {engineInherited
+              ? "Use my own engine instead"
+              : "Manual engine URL (fallback)"}
           </summary>
           <p>
             If the LAN scan didn't find your engine (unusual subnet, port, or
             Cloudflare-tunnelled), enter the URL directly. Auth is handled
             via the engine's discovery gate just like a scan-based join.
+            {engineInherited &&
+              " Pairing here replaces the instance engine for your account only."}
           </p>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
@@ -224,7 +278,9 @@ export default function InferencePage() {
             <button
               type="button"
               onClick={manualJoin}
-              disabled={manualBusy || !manualUrl.trim() || paired}
+              // Blocked only by the user's OWN pairing — inheriting the
+              // instance engine must not stop them pairing a personal one.
+              disabled={manualBusy || !manualUrl.trim() || (paired && !engineInherited)}
               className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
               {manualBusy ? "Joining…" : "Join via URL"}
@@ -304,18 +360,45 @@ export default function InferencePage() {
           The model that pre-fills the picker on a fresh chat in Expert mode.
           Ignored in Auto mode — the router chooses there.
         </p>
+        {/* Bound to the OVERRIDE, so "" genuinely means "inherit" rather
+            than "pin the instance value onto my row". */}
         <select
           value={defaultModel}
           onChange={(e) => setDefaultModel(e.target.value)}
           className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
         >
-          <option value="">(none — pick first available)</option>
+          <option value="">
+            {settings.instance.defaultModel
+              ? `Inherit from the instance (${settings.instance.defaultModel})`
+              : "(none — pick first available)"}
+          </option>
           {models.map((m) => (
             <option key={m.id} value={m.id}>
               {m.name}
             </option>
           ))}
         </select>
+        {settings.inherited.defaultModel && settings.instance.defaultModel && (
+          <p className="text-[12px] text-gray-500">
+            Inherited from the instance:{" "}
+            <span className="font-mono text-navy">
+              {settings.instance.defaultModel}
+            </span>
+            . Pick a model above to override it for your account only.
+          </p>
+        )}
+        {!settings.inherited.defaultModel && (
+          <div>
+            <button
+              type="button"
+              onClick={() => void resetDefaultModelToInstance()}
+              disabled={busy}
+              className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-600 hover:border-cyan hover:text-navy disabled:opacity-50"
+            >
+              Reset to instance settings
+            </button>
+          </div>
+        )}
         <div className="flex items-center gap-3">
           <p className="font-mono text-[11px] text-gray-400">
             {models.length} model{models.length === 1 ? "" : "s"} available.
@@ -452,15 +535,23 @@ function PairedCard({
   url,
   mode,
   meta,
+  inherited,
+  canResetToInstance,
   onReload,
   onDisconnect,
+  onResetToInstance,
   busy,
 }: {
   url: string;
   mode: "gateway" | "hybrid" | "legacy";
   meta: Record<string, unknown>;
+  /** True when this engine comes from the instance, not a personal pairing. */
+  inherited: boolean;
+  /** True when the user has their own engine AND an instance one exists. */
+  canResetToInstance: boolean;
   onReload: () => void;
   onDisconnect: () => void;
+  onResetToInstance: () => void;
   busy: boolean;
 }) {
   const name = (meta.name as string) ?? "OdyssAI-X";
@@ -483,36 +574,66 @@ function PairedCard({
             vendor {vendor} · v{version} · mode {mode}
           </span>
         </div>
-        <span
-          className={`rounded-md px-2 py-1 font-mono text-[10px] uppercase tracking-wider ${
-            mode === "gateway"
-              ? "bg-emerald-100 text-emerald-800"
-              : mode === "hybrid"
-                ? "bg-amber-100 text-amber-800"
-                : "bg-gray-100 text-gray-600"
-          }`}
-        >
-          {mode}
+        <div className="flex flex-shrink-0 items-center gap-2">
+          {inherited && (
+            <span className="rounded-md bg-[rgba(79,179,217,0.14)] px-2 py-1 font-mono text-[10px] tracking-wider text-navy uppercase">
+              instance
+            </span>
+          )}
+          <span
+            className={`rounded-md px-2 py-1 font-mono text-[10px] uppercase tracking-wider ${
+              mode === "gateway"
+                ? "bg-emerald-100 text-emerald-800"
+                : mode === "hybrid"
+                  ? "bg-amber-100 text-amber-800"
+                  : "bg-gray-100 text-gray-600"
+            }`}
+          >
+            {mode}
+          </span>
+        </div>
+      </div>
+
+      {inherited ? (
+        // Nothing to disconnect or reload: the pairing belongs to the
+        // deployment. Those actions would either revoke the shared crew
+        // token for everyone (disconnect) or mint a half-override pinned to
+        // today's instance engine (reload) — so the server refuses them and
+        // the UI doesn't offer them.
+        <span className="text-[12px] text-gray-600">
+          Inherited from the instance settings — your administrator manages
+          this engine. Pair your own below if you need a different one.
         </span>
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onReload}
-          disabled={busy}
-          className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-        >
-          Reload config
-        </button>
-        <button
-          type="button"
-          onClick={onDisconnect}
-          disabled={busy}
-          className="rounded-md border border-rose-200 bg-white px-3 py-1.5 text-[12px] text-rose-700 hover:bg-rose-50 disabled:opacity-50"
-        >
-          Disconnect
-        </button>
-      </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onReload}
+            disabled={busy}
+            className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Reload config
+          </button>
+          {canResetToInstance && (
+            <button
+              type="button"
+              onClick={onResetToInstance}
+              disabled={busy}
+              className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Reset to instance settings
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onDisconnect}
+            disabled={busy}
+            className="rounded-md border border-rose-200 bg-white px-3 py-1.5 text-[12px] text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+          >
+            Disconnect
+          </button>
+        </div>
+      )}
     </div>
   );
 }

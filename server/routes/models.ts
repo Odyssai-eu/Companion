@@ -16,11 +16,13 @@
  * engine is paired, otherwise we return an empty list with an error.
  */
 
-import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { db } from "../db/index";
-import { users } from "../db/schema";
-import { authHeaders, resolveLiteLLM } from "../lib/litellm";
+import {
+  effectiveProviderMode,
+  hasNoProvider,
+  resolveUserSettingsById,
+} from "../lib/global-settings";
+import { authHeaders, type LiteLLMTarget } from "../lib/litellm";
 import { fetchEngineCapabilities } from "../lib/odyssai-capabilities";
 import type {
   OdyssaiModelCapabilities,
@@ -44,25 +46,16 @@ export type GlobalModel = {
 modelsRoute.get("/", async (c) => {
   const userId = c.get("userId");
 
-  const [me] = await db
-    .select({
-      engineUrl: users.engineUrl,
-      engineToken: users.engineToken,
-      engineMode: users.engineMode,
-      litellmDisabled: users.litellmDisabled,
-    })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
+  // EFFECTIVE settings: whatever the user hasn't overridden comes from the
+  // instance (0059). This is what makes a brand-new account list the
+  // deployment's models instead of an empty catalog.
+  const me = await resolveUserSettingsById(userId);
   if (!me) return c.json({ error: "user_not_found", models: [] }, 404);
 
-  const effectiveMode: "gateway" | "hybrid" | "legacy" = (() => {
-    // If LiteLLM is off and we have an engine, force gateway-style
-    // listing regardless of whether the engine declared
-    // cloud-passthrough. The user explicitly said "go direct".
-    if (me.litellmDisabled && me.engineUrl) return "gateway";
-    return (me.engineMode ?? "legacy") as "gateway" | "hybrid" | "legacy";
-  })();
+  // If LiteLLM is off and we have an engine, gateway-style listing is forced
+  // regardless of whether the engine declared cloud-passthrough — "go
+  // direct" was an explicit choice. See effectiveProviderMode().
+  const effectiveMode = effectiveProviderMode(me);
 
   if (effectiveMode === "gateway") {
     if (!me.engineUrl) {
@@ -74,7 +67,7 @@ modelsRoute.get("/", async (c) => {
     return c.json({ models: await listGateway(me.engineUrl, me.engineToken) });
   }
 
-  if (effectiveMode === "legacy" && me.litellmDisabled) {
+  if (hasNoProvider(me)) {
     return c.json(
       {
         error: "no_provider",
@@ -88,7 +81,10 @@ modelsRoute.get("/", async (c) => {
 
   // Hybrid + legacy both go through LiteLLM. Hybrid layers Odyssai
   // capabilities on top when an engine_url is set.
-  const target = await resolveLiteLLM(userId);
+  const target: LiteLLMTarget = {
+    baseUrl: me.litellmUrl ?? "",
+    apiKey: me.litellmApiKey,
+  };
   const odyssaiCaps =
     effectiveMode === "hybrid" && me.engineUrl
       ? await fetchEngineCapabilities(me.engineUrl, me.engineToken)

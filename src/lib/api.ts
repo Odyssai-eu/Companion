@@ -73,33 +73,99 @@ export type ApiNamedModels = {
   expert?: string;
 };
 
-export type ApiInferenceSettings = {
+/**
+ * The connection block as the user's OWN override — null everywhere they
+ * inherit the instance value. Settings FORMS bind to this, never to the
+ * effective values at the top level of ApiInferenceSettings: a form seeded
+ * from the effective value re-saves it as a personal override on the next
+ * click, quietly snapshotting the instance config and breaking inheritance.
+ */
+export type ApiConnectionOverrides = {
   defaultModel: string | null;
   litellmUrl: string | null;
-  timezone: string;
   hasApiKey: boolean;
+  litellmDisabled: boolean | null;
+  engineUrl: string | null;
+  hasEngineToken: boolean;
+  engineMode: "gateway" | "hybrid" | "legacy" | null;
+};
+
+/** The shared instance defaults. Used for placeholders and hints. */
+export type ApiInstanceConnection = {
+  defaultModel: string | null;
+  litellmUrl: string | null;
+  hasApiKey: boolean;
+  litellmDisabled: boolean;
+  engineUrl: string | null;
+  hasEngineToken: boolean;
+  engineMode: "gateway" | "hybrid" | "legacy";
+};
+
+/**
+ * Admin view of the instance connection block (`GET/PUT
+ * /api/admin/instance-settings`). Secrets are exposed as booleans only.
+ */
+export type ApiInstanceSettings = {
+  engineUrl: string | null;
+  hasEngineToken: boolean;
+  engineMode: "gateway" | "hybrid" | "legacy";
+  engineMeta: Record<string, unknown> | null;
+  litellmUrl: string | null;
+  hasLitellmApiKey: boolean;
+  litellmDisabled: boolean;
+  defaultModel: string | null;
+};
+
+/** Per field: true when the effective value came from the instance. */
+export type ApiInheritedFlags = {
+  defaultModel: boolean;
+  litellmUrl: boolean;
+  litellmApiKey: boolean;
+  litellmDisabled: boolean;
+  engineUrl: boolean;
+  engineToken: boolean;
+  engineMode: boolean;
+  engineMeta: boolean;
+};
+
+export type ApiInferenceSettings = {
+  /** EFFECTIVE default model — the user's override, else the instance's. */
+  defaultModel: string | null;
+  /** EFFECTIVE LiteLLM URL (override ?? instance ?? env). */
+  litellmUrl: string | null;
+  timezone: string;
+  /** True when a LiteLLM key resolves — the user's or the instance's. */
+  hasApiKey: boolean;
+  /** Deployment env fallback (LITELLM_URL), last link of the chain. */
   envDefaultUrl: string;
   inferenceMode: ApiInferenceMode;
+  /** The caller's own values, null where inherited. Forms bind here. */
+  overrides: ApiConnectionOverrides;
+  /** Which effective values came from the instance. */
+  inherited: ApiInheritedFlags;
+  /** The shared defaults behind the inheritance. */
+  instance: ApiInstanceConnection;
   /** @deprecated 0058 — the easy-mode single model. Its role moved to the
    *  Auto Router's `fallbackModel`; still returned by the API so the
    *  migration stays reversible, but no UI reads it. */
   easyModel: string | null;
   /** @deprecated 0058 — the advanced-mode slots. Nothing reads them. */
   namedModels: ApiNamedModels;
-  /** Direct URL to an Odyssai-compatible engine for capability discovery
-   *  (distinct from litellmUrl which routes inference). */
+  /** EFFECTIVE URL of the Odyssai-compatible engine used for capability
+   *  discovery and (in gateway mode) inference — the user's own if they
+   *  paired one, otherwise the instance's. Distinct from litellmUrl. */
   engineUrl: string | null;
-  /** True when an engine bearer token is on file (its value is never
+  /** True when an engine bearer token resolves (its value is never
    *  returned, only its presence). */
   hasEngineToken: boolean;
   /** Cached `.well-known/inference-engine.json` body from the last
-   *  successful probe. Lets the UI render version/features without an
-   *  extra round-trip. */
+   *  successful probe of whichever engine won. Lets the UI render
+   *  version/features without an extra round-trip. */
   engineMeta: Record<string, unknown> | null;
-  /** Provider mode — auto-derived from features.cloud-passthrough at pair
-   *  time. Drives chat routing + model listing. */
+  /** EFFECTIVE provider mode — auto-derived from features.cloud-passthrough
+   *  at pair time. Drives chat routing + model listing. */
   engineMode: "gateway" | "hybrid" | "legacy";
-  /** Master switch to turn LiteLLM off. When true, /api/models and
+  /** EFFECTIVE master switch for LiteLLM. When true, /api/models and
    *  /api/chat refuse to use litellmUrl even if set. */
   litellmDisabled: boolean;
   /** Per-user toggle for the per-assistant-message stats box. Off by
@@ -604,8 +670,10 @@ export const api = {
       namedModels: ApiNamedModels | null;
       engineUrl: string | null;
       engineToken: string | null;
-      engineMode: "gateway" | "hybrid" | "legacy";
-      litellmDisabled: boolean;
+      // null on these three = "clear my override, inherit the instance
+      // value" (0059).
+      engineMode: "gateway" | "hybrid" | "legacy" | null;
+      litellmDisabled: boolean | null;
       showMetrics: boolean;
       debugVerbose: boolean;
       hiddenModels: string[] | null;
@@ -614,6 +682,18 @@ export const api = {
     request<{ ok: true }>("/api/inference/settings", {
       method: "PATCH",
       body: JSON.stringify(body),
+    }),
+  /**
+   * Drop the caller's overrides for one group of settings and fall back to
+   * the instance values. Prefer this over PATCHing nulls: it also clears
+   * engine_meta, which the PATCH surface doesn't expose.
+   */
+  resetInferenceToInstance: (
+    scope: "engine" | "litellm" | "defaultModel" | "all",
+  ) =>
+    request<{ ok: true; scope: string }>("/api/inference/reset-to-instance", {
+      method: "POST",
+      body: JSON.stringify({ scope }),
     }),
   inferenceStatus: () =>
     request<ApiInferenceStatus>("/api/inference/status"),
@@ -1766,6 +1846,36 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+
+  // ── Instance connection settings (0059, admin only) ────────────────────
+  // The shared gateway / LiteLLM / default-model config every user inherits.
+  getInstanceSettings: () =>
+    request<ApiInstanceSettings>("/api/admin/instance-settings"),
+  /**
+   * Full replacement of the editable fields. Secrets are write-only: omit
+   * `engineToken` / `litellmApiKey` to keep what's stored, pass null to
+   * clear, pass a string to replace. (They're never returned, so there is
+   * nothing to round-trip.)
+   */
+  updateInstanceSettings: (body: {
+    engineUrl: string | null;
+    engineMode: "gateway" | "hybrid" | "legacy";
+    litellmUrl: string | null;
+    litellmDisabled: boolean;
+    defaultModel: string | null;
+    engineToken?: string | null;
+    litellmApiKey?: string | null;
+  }) =>
+    request<{ ok: true } & ApiInstanceSettings>(
+      "/api/admin/instance-settings",
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+  /** Lift the calling admin's own effective config onto the instance. */
+  publishInstanceSettings: () =>
+    request<{ ok: true } & ApiInstanceSettings>(
+      "/api/admin/instance-settings/publish",
+      { method: "POST" },
+    ),
   createAdminUser: (body: {
     email: string;
     name?: string;

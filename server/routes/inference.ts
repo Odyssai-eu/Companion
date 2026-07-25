@@ -1,9 +1,29 @@
 /**
  * Inference settings + last-interaction read.
  *
- * GET  /api/inference/settings  → litellmUrl, defaultModel, timezone, hasKey
- * PATCH /api/inference/settings → update any subset
- * GET  /api/inference/status     → last_interaction_at + server time
+ * GET   /api/inference/settings           → effective values + overrides + instance
+ * PATCH /api/inference/settings           → update any subset of the user's own
+ * POST  /api/inference/reset-to-instance  → drop overrides, fall back to shared
+ * GET   /api/inference/status             → last_interaction_at + server time
+ *
+ * THREE VIEWS OF THE SAME SETTINGS (0059)
+ * The connection fields are per-user overrides on top of `global_settings`,
+ * so this endpoint answers three different questions and must not conflate
+ * them:
+ *
+ *   top level  → EFFECTIVE. What the chat will actually use. Everything that
+ *                just wants to work (useChat picking a default model, the
+ *                LiteLLM on/off pill) reads these.
+ *   overrides  → the user's OWN row, null where they inherit. The settings
+ *                FORMS bind to these — binding a form to the effective value
+ *                would re-save the inherited value as a personal override on
+ *                the next click and silently snapshot the instance config,
+ *                which is exactly the drift inheritance exists to avoid.
+ *   instance   → the shared defaults, for "inherited from the instance: X"
+ *                hints and placeholders.
+ *
+ * Secrets are never returned in clear in any of the three — only
+ * `has…Token` / `has…Key` booleans, same as before 0059.
  */
 
 import { eq } from "drizzle-orm";
@@ -12,6 +32,11 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { users } from "../db/schema";
+import {
+  CONNECTION_COLUMNS,
+  getInstanceSettings,
+  resolveUserSettings,
+} from "../lib/global-settings";
 import { invalidateEngineCache } from "../lib/odyssai-capabilities";
 import { probeEngine } from "../lib/odyssai-probe";
 
@@ -53,18 +78,11 @@ inferenceRoute.get("/settings", async (c) => {
   const userId = c.get("userId");
   const [u] = await db
     .select({
-      defaultModel: users.defaultModel,
-      litellmUrl: users.litellmUrl,
-      hasApiKey: users.litellmApiKey,
+      ...CONNECTION_COLUMNS,
       timezone: users.timezone,
       inferenceMode: users.inferenceMode,
       easyModel: users.easyModel,
       namedModels: users.namedModels,
-      engineUrl: users.engineUrl,
-      engineToken: users.engineToken,
-      engineMeta: users.engineMeta,
-      engineMode: users.engineMode,
-      litellmDisabled: users.litellmDisabled,
       showMetrics: users.showMetrics,
       debugVerbose: users.debugVerbose,
       hiddenModels: users.hiddenModels,
@@ -73,25 +91,62 @@ inferenceRoute.get("/settings", async (c) => {
     .where(eq(users.id, userId))
     .limit(1);
   if (!u) return c.json({ error: "user_not_found" }, 404);
+
+  const eff = await resolveUserSettings(u);
+  const inst = await getInstanceSettings();
+
   return c.json({
-    defaultModel: u.defaultModel,
-    litellmUrl: u.litellmUrl,
+    // ── EFFECTIVE (what the chat uses) ────────────────────────────────
+    defaultModel: eff.defaultModel,
+    litellmUrl: eff.litellmUrl,
+    hasApiKey: Boolean(eff.litellmApiKey),
+    engineUrl: eff.engineUrl,
+    hasEngineToken: Boolean(eff.engineToken),
+    engineMeta: eff.engineMeta,
+    engineMode: eff.engineMode,
+    litellmDisabled: eff.litellmDisabled,
+
+    // ── Per-user, non-inherited ───────────────────────────────────────
     timezone: u.timezone,
-    hasApiKey: Boolean(u.hasApiKey),
-    envDefaultUrl: process.env.LITELLM_URL ?? "",
     inferenceMode: normalizeInferenceMode(u.inferenceMode),
+    showMetrics: u.showMetrics,
+    debugVerbose: u.debugVerbose,
+    hiddenModels: u.hiddenModels ?? [],
+
+    // ── The user's OWN overrides — what the forms edit ────────────────
+    // null / false = "inherited". A form seeded from here and saved back
+    // leaves the inheritance intact.
+    overrides: {
+      defaultModel: u.defaultModel,
+      litellmUrl: u.litellmUrl,
+      hasApiKey: Boolean(u.litellmApiKey),
+      litellmDisabled: u.litellmDisabled,
+      engineUrl: u.engineUrl,
+      hasEngineToken: Boolean(u.engineToken),
+      engineMode: u.engineMode as "gateway" | "hybrid" | "legacy" | null,
+    },
+    /** Per field: true when the effective value came from the instance. */
+    inherited: eff.inherited,
+
+    // ── The instance defaults — placeholders / "inherited: X" hints ───
+    instance: {
+      defaultModel: inst.defaultModel,
+      litellmUrl: inst.litellmUrl,
+      hasApiKey: Boolean(inst.litellmApiKey),
+      litellmDisabled: inst.litellmDisabled,
+      engineUrl: inst.engineUrl,
+      hasEngineToken: Boolean(inst.engineToken),
+      engineMode: inst.engineMode,
+    },
+
+    // Deployment env fallback, last link of the chain. Kept for the
+    // LiteLLM add-on's "Default: …" hint.
+    envDefaultUrl: process.env.LITELLM_URL ?? "",
+
     // DEPRECATED (0058) — no UI reads these. Still returned so a client
     // bundle cached from before the deploy doesn't choke on missing keys.
     easyModel: u.easyModel,
     namedModels: u.namedModels ?? {},
-    engineUrl: u.engineUrl,
-    hasEngineToken: Boolean(u.engineToken),
-    engineMeta: u.engineMeta,
-    engineMode: u.engineMode as "gateway" | "hybrid" | "legacy",
-    litellmDisabled: u.litellmDisabled,
-    showMetrics: u.showMetrics,
-    debugVerbose: u.debugVerbose,
-    hiddenModels: u.hiddenModels ?? [],
   });
 });
 
@@ -126,8 +181,12 @@ const patchSchema = z.object({
   namedModels: namedModelsSchema,
   engineUrl: z.string().url().max(400).nullish(),
   engineToken: z.string().max(400).nullish(),
-  engineMode: z.enum(["gateway", "hybrid", "legacy"]).optional(),
-  litellmDisabled: z.boolean().optional(),
+  // 0059: both accept null now — null is "clear my override, inherit the
+  // instance value" and is what the "Reset to instance settings" controls
+  // send. Before 0059 they were non-nullable columns, so `.optional()` was
+  // the only shape that made sense.
+  engineMode: z.enum(["gateway", "hybrid", "legacy"]).nullish(),
+  litellmDisabled: z.boolean().nullish(),
   showMetrics: z.boolean().optional(),
   debugVerbose: z.boolean().optional(),
   // Picker hide list — full replacement on PATCH. Null clears it.
@@ -155,10 +214,10 @@ inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => 
     patch.engineToken = data.engineToken ?? null;
   }
   if (data.engineMode !== undefined) {
-    patch.engineMode = data.engineMode;
+    patch.engineMode = data.engineMode ?? null;
   }
   if (data.litellmDisabled !== undefined) {
-    patch.litellmDisabled = data.litellmDisabled;
+    patch.litellmDisabled = data.litellmDisabled ?? null;
   }
   if (data.showMetrics !== undefined) {
     patch.showMetrics = data.showMetrics;
@@ -176,8 +235,65 @@ inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => 
     return c.json({ error: "no_fields_to_update" }, 400);
   }
   await db.update(users).set(patch).where(eq(users.id, userId));
+  // No cache to invalidate: only the INSTANCE row is memoised
+  // (server/lib/global-settings.ts). User rows are read fresh on every
+  // resolution, so this write is visible immediately.
   return c.json({ ok: true });
 });
+
+/**
+ * POST /api/inference/reset-to-instance — "Reset to instance settings".
+ *
+ * Drops the user's overrides so the shared instance values take over again.
+ * Scoped, because the three groups are independent in the UI:
+ *
+ *   engine       → engineUrl / engineToken / engineMode / engineMeta. Nulled
+ *                  as a set: those four describe ONE engine, and keeping any
+ *                  of them (a token for an engine you no longer point at, a
+ *                  mode derived from its feature list) is how you get a
+ *                  half-configured account that fails in a confusing way.
+ *   litellm      → litellmUrl / litellmApiKey / litellmDisabled.
+ *   defaultModel → just that.
+ *
+ * This is a distinct endpoint rather than a PATCH of nulls because
+ * engine_meta is not part of the PATCH surface (it's a probe cache, never
+ * user-editable) and would otherwise be left behind, describing an engine
+ * the user no longer uses.
+ */
+const resetSchema = z.object({
+  scope: z.enum(["engine", "litellm", "defaultModel", "all"]),
+});
+
+inferenceRoute.post(
+  "/reset-to-instance",
+  zValidator("json", resetSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const { scope } = c.req.valid("json");
+    const patch: Record<string, unknown> = {};
+
+    if (scope === "engine" || scope === "all") {
+      patch.engineUrl = null;
+      patch.engineToken = null;
+      patch.engineMode = null;
+      patch.engineMeta = null;
+    }
+    if (scope === "litellm" || scope === "all") {
+      patch.litellmUrl = null;
+      patch.litellmApiKey = null;
+      patch.litellmDisabled = null;
+    }
+    if (scope === "defaultModel" || scope === "all") {
+      patch.defaultModel = null;
+    }
+
+    await db.update(users).set(patch).where(eq(users.id, userId));
+    // The caps cache is keyed by engine URL; the user is moving to a
+    // different one, so drop it wholesale.
+    invalidateEngineCache();
+    return c.json({ ok: true, scope });
+  },
+);
 
 /**
  * Probe an engine URL on demand. Drives the "Test" button in Settings →

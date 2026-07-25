@@ -8,9 +8,11 @@ Companion is account-scoped. Your conversations, projects, skills, MCP servers, 
 
 If you don't have an account yet, ask the workspace admin to mint you one. Companion doesn't self-serve user creation — that's a deliberate trade-off for sovereignty over the user list.
 
-## 2. Pair an inference engine
+## 2. Check the engine (usually already done)
 
-Open **Settings → Infrastructure → Engine**. You need at least one server reachable from Companion. Three shapes:
+Most accounts skip this step entirely. The engine, its token and the default model are **instance settings**: your administrator sets them once for the whole deployment and every account inherits them. Open **Settings → Inference** — if the gateway card is green and carries an `instance` badge, you're connected and can jump to step 3.
+
+Pair your own only when you need a *different* engine from everyone else's. Open **Settings → Infrastructure → Engine**. You need at least one server reachable from Companion. Three shapes:
 
 - **Local OdyssAI-X** (recommended) — open-source distributed MLX engine. Host + port + bearer token. Companion runs a discovery probe over LAN and a manual entry as fallback.
 - **Other local engine** (Ollama, LM Studio, vLLM, MLX bare) — same shape, manual entry. As long as it speaks OpenAI / Anthropic, it pairs.
@@ -23,6 +25,8 @@ Three engine modes derived from the probe:
 - **`gateway`** — engine reports `features.cloud-passthrough`. 100% via the engine, no LiteLLM at all.
 - **`hybrid`** — engine doesn't pass through cloud. Caps come from engine, inference goes through LiteLLM (deployed alongside if you keep that rail).
 - **`legacy`** — no engine paired. LiteLLM only.
+
+A personal pairing overrides the instance one for your account only, and *Settings → Inference* keeps a **Reset to instance settings** button to hand it back.
 
 See *Engine pairing* (16) for the deeper guide.
 

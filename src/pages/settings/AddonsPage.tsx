@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useIsMobile } from "~/hooks/useIsMobile";
 import {
   api,
@@ -318,6 +318,13 @@ function PackageIcon() {
 // Backed by `users.litellm{Url,ApiKey,Disabled}` so flipping the toggle
 // persists across logins. When off, all sub-fields are hidden (the user's
 // 'en off, on n'affiche pas les info comme actuellement').
+//
+// 0059: those three columns are OVERRIDES on top of the instance settings.
+// The pill and the toggle show the EFFECTIVE state (what the chat actually
+// does), while the URL / key inputs bind to the user's own override so a
+// blank field means "inherit" instead of "blank it out for me". The
+// inherited value is shown as the placeholder, the way `envDefaultUrl`
+// already worked for the env fallback.
 function LiteLLMAddon() {
   const [s, setS] = useState<ApiInferenceSettings | null>(null);
   const [pending, setPending] = useState(false);
@@ -326,26 +333,42 @@ function LiteLLMAddon() {
   const [keyDraft, setKeyDraft] = useState("");
   const [keyDirty, setKeyDirty] = useState(false);
 
-  useEffect(() => {
-    api.inferenceSettings()
-      .then((data) => {
-        setS(data);
-        setUrlDraft(data.litellmUrl ?? "");
-      })
-      .catch((e: Error) => setErr(e.message));
+  const load = useCallback(async () => {
+    const data = await api.inferenceSettings();
+    setS(data);
+    setUrlDraft(data.overrides.litellmUrl ?? "");
+    setKeyDraft("");
+    setKeyDirty(false);
   }, []);
+
+  useEffect(() => {
+    load().catch((e: Error) => setErr(e.message));
+  }, [load]);
 
   if (!s) return null;
 
   // Enabled = NOT disabled. The DB stores litellmDisabled (true means OFF).
+  // Effective value: an instance running pure-gateway shows OFF to everyone
+  // who hasn't said otherwise.
   const enabled = !s.litellmDisabled;
+  // What the placeholder should suggest: the instance value first, then the
+  // deployment env var — the same order the server resolves.
+  const inheritedUrl = s.instance.litellmUrl ?? s.envDefaultUrl;
+  const usesInstance =
+    s.inherited.litellmUrl ||
+    s.inherited.litellmApiKey ||
+    s.inherited.litellmDisabled;
 
   async function toggle(next: boolean) {
     setPending(true);
     setErr(null);
     try {
       await api.updateInferenceSettings({ litellmDisabled: !next });
-      setS((prev) => (prev ? { ...prev, litellmDisabled: !next } : prev));
+      // Re-read for the same reason saveFields() does: the toggle writes an
+      // OVERRIDE, so `inherited.litellmDisabled` flips server-side. Patching
+      // only the effective value locally left the "Reset to instance
+      // settings" button hidden until the next full page load.
+      await load();
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -361,17 +384,29 @@ function LiteLLMAddon() {
         litellmUrl?: string | null;
         litellmApiKey?: string | null;
       } = {
+        // "" → null: clearing the field drops the override and falls back to
+        // the instance URL, it does not store an empty one.
         litellmUrl: urlDraft.trim() || null,
       };
       if (keyDirty) patch.litellmApiKey = keyDraft.trim() || null;
       await api.updateInferenceSettings(patch);
-      setS((prev) =>
-        prev
-          ? { ...prev, litellmUrl: patch.litellmUrl ?? null, hasApiKey: keyDirty ? Boolean(patch.litellmApiKey) : prev.hasApiKey }
-          : prev,
-      );
-      setKeyDraft("");
-      setKeyDirty(false);
+      // Re-read rather than patch state locally: the effective values (and
+      // the inherited flags) depend on the instance, so only the server can
+      // say what the result is.
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function resetToInstance() {
+    setPending(true);
+    setErr(null);
+    try {
+      await api.resetInferenceToInstance("litellm");
+      await load();
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -419,11 +454,15 @@ function LiteLLMAddon() {
               type="url"
               value={urlDraft}
               onChange={(e) => setUrlDraft(e.target.value)}
-              placeholder={s.envDefaultUrl}
+              placeholder={inheritedUrl || "http://litellm-host:4000"}
               className="rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
             />
             <span className="font-mono text-[10px] text-gray-400">
-              Default: {s.envDefaultUrl}
+              {s.inherited.litellmUrl
+                ? inheritedUrl
+                  ? `Inherited from the instance: ${inheritedUrl}`
+                  : "Nothing configured on this instance."
+                : `Your own setting. Instance default: ${inheritedUrl || "none"}`}
             </span>
           </div>
           <div className="flex flex-col gap-1">
@@ -441,9 +480,11 @@ function LiteLLMAddon() {
               className="rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
             />
             <span className="font-mono text-[10px] text-gray-400">
-              {s.hasApiKey
-                ? "A key is set. Leave blank to keep; type a new one to replace."
-                : "Only needed if the proxy enforces an API key."}
+              {s.inherited.litellmApiKey
+                ? s.hasApiKey
+                  ? "Using the instance key. Type one to use your own instead."
+                  : "Only needed if the proxy enforces an API key."
+                : "Your own key is set. Leave blank to keep; type a new one to replace."}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -455,9 +496,19 @@ function LiteLLMAddon() {
             >
               {pending ? "Saving…" : "Save"}
             </button>
+            {!usesInstance && (
+              <button
+                type="button"
+                onClick={resetToInstance}
+                disabled={pending}
+                className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-700 hover:bg-gray-50 hover:text-ink disabled:opacity-50"
+              >
+                Reset to instance settings
+              </button>
+            )}
             <a
               href={
-                (urlDraft || s.envDefaultUrl).replace(/\/+$/, "") + "/ui"
+                (urlDraft || inheritedUrl).replace(/\/+$/, "") + "/ui"
               }
               target="_blank"
               rel="noopener noreferrer"

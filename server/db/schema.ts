@@ -20,8 +20,19 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   name: text("name"),
   passwordHash: text("password_hash"),
-  // Inference settings — LiteLLM proxy is the single inference layer.
-  // Falls back to env LITELLM_URL when null.
+  // ── Connection settings — PER-USER OVERRIDES (0059) ────────────────────
+  // The eight columns below (defaultModel, litellmUrl, litellmApiKey,
+  // engineUrl, engineToken, engineMeta, engineMode, litellmDisabled) are no
+  // longer the source of truth. Since 0059 the INSTANCE holds the shared
+  // values on `global_settings` (same column names) and these are nullable
+  // OVERRIDES on top: NULL — or "" for the text ones — means "inherit".
+  //
+  // NEVER read them raw. Every read goes through
+  // `resolveUserSettings()` / `resolveUserSettingsById()` in
+  // server/lib/global-settings.ts, which applies `user.X ?? instance.X`
+  // (then the LITELLM_* env vars as a last resort). Reading the raw column
+  // is how a new account ends up on an empty app — the bug 0059 fixed.
+  // Writing NULL back is the supported "reset to instance settings".
   defaultModel: text("default_model"),
   litellmUrl: text("litellm_url"),
   litellmApiKey: text("litellm_api_key"),
@@ -39,11 +50,14 @@ export const users = pgTable("users", {
   //   'hybrid'  → inference via litellm_url, caps via engine_url
   //   'legacy'  → LiteLLM only (no OdyssAI-X paired)
   // Auto-set by the pair flow based on engine features.cloud-passthrough.
-  engineMode: text("engine_mode").notNull().default("legacy"),
+  // Nullable since 0059: NOT NULL DEFAULT 'legacy' made every fresh row
+  // carry an override that shadowed the instance mode. NULL = inherit.
+  engineMode: text("engine_mode"),
   // Master switch to turn LiteLLM off entirely. When true, models listing
   // and chat routing both refuse to use litellm_url even if set. Used by
   // pure-gateway setups that want to drop LiteLLM from the chain.
-  litellmDisabled: boolean("litellm_disabled").notNull().default(false),
+  // Nullable since 0059 for the same reason as engineMode. NULL = inherit.
+  litellmDisabled: boolean("litellm_disabled"),
   // Per-user toggle for the per-message metrics box (TTFT, tok/s, …).
   // Off by default — the bar feels like clutter once you've stopped
   // tuning latency. Power users flip it on in Settings.
@@ -1127,6 +1141,38 @@ export const globalSettings = pgTable("global_settings", {
   // service). Org-wide, hence here rather than the per-user RAG add-on.
   // Editable in Admin → Memory backend; empty disables the tier.
   companyRagUrl: text("company_rag_url").notNull().default(""),
+
+  // ── Instance connection settings (0059) ────────────────────────────────
+  // The gateway / proxy / default-model config every user INHERITS. These
+  // are the same eight names as on `users`, and that is the whole point:
+  // `users` holds nullable overrides, this row holds the shared value, and
+  // resolveUserSettings() below merges them as `user.X ?? instance.X`.
+  //
+  // Rationale: a Companion deployment has ONE engine. Storing its address
+  // per user meant every new account started empty and had to be paired by
+  // hand against the same machine. Editable in Admin → Instance settings,
+  // or filled in one click from the admin's own working config with
+  // "Publish my settings as instance settings".
+  engineUrl: text("engine_url"),
+  // Shared crew token. Inherited like everything else — a user only needs
+  // their own when they point at their own engine. Never returned in clear
+  // by any read API (the routes expose a `hasEngineToken` boolean).
+  engineToken: text("engine_token"),
+  // Always a real mode — the resolution chain must terminate on one of the
+  // three values, never on NULL. Hence NOT NULL here while the `users`
+  // column is nullable.
+  engineMode: text("engine_mode").notNull().default("legacy"),
+  // Cached `.well-known/inference-engine.json` for the instance engine.
+  // Written by the publish action / an admin PUT, read by the UI to render
+  // vendor + version without re-probing.
+  engineMeta: jsonb("engine_meta").$type<Record<string, unknown>>(),
+  litellmUrl: text("litellm_url"),
+  litellmApiKey: text("litellm_api_key"),
+  // NOT NULL for the same reason as engineMode: the chain has to end on a
+  // real boolean.
+  litellmDisabled: boolean("litellm_disabled").notNull().default(false),
+  defaultModel: text("default_model"),
+
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .default(sql`now()`),

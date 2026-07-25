@@ -64,7 +64,14 @@ function toolFnName(t: unknown): string {
 }
 
 export async function resolveChatTools(args: {
-  userRow: { engineUrl: string | null; engineToken: string | null };
+  /**
+   * EFFECTIVE engine address for this user — i.e. the output of
+   * resolveUserSettings(), not the raw `users` row. Since 0059 the columns
+   * are per-user overrides on top of the instance settings, so passing the
+   * row straight in would silently drop the caps probe for every user who
+   * inherits the instance engine (which is most of them).
+   */
+  conn: { engineUrl: string | null; engineToken: string | null };
   body: ChatBody;
   convAgentMode: boolean;
   guest: GuestTokenContext | undefined;
@@ -80,7 +87,7 @@ export async function resolveChatTools(args: {
   agentToolsEnabled: boolean;
   headers: Record<string, string>;
 }> {
-  const { userRow, body, convAgentMode, guest, userId, effectiveMode, baseBody, target } = args;
+  const { conn, body, convAgentMode, guest, userId, effectiveMode, baseBody, target } = args;
 
   // Tool add-ons: when enabled (and the model is tool-capable), the chat
   // route forwards tools so the model can decide when to call them. Each
@@ -97,8 +104,8 @@ export async function resolveChatTools(args: {
   // supports_tools (gating tool resolution) AND backend/pool (gating
   // the stream vs. non-stream upstream decision below).
   const modelCaps = await getModelCaps(
-    userRow.engineUrl,
-    userRow.engineToken,
+    conn.engineUrl,
+    conn.engineToken,
     body.model!,
   );
   const supportsTools = modelCaps

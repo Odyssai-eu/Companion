@@ -25,6 +25,7 @@ import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { users } from "../db/schema";
 import { scanForEngines } from "../lib/discovery/odyssai-scan";
+import { getInstanceSettings } from "../lib/global-settings";
 import { assertFetchTargetAllowed } from "../lib/net-guard";
 import { invalidateEngineCache } from "../lib/odyssai-capabilities";
 import type { OdyssaiEngineMeta } from "../lib/odyssai-contract";
@@ -143,6 +144,10 @@ providersRoute.post(
       pairResp.engine.features?.includes("cloud-passthrough") ?? false;
     const engineMode = supportsGateway ? "gateway" : "hybrid";
 
+    // Writes the caller's PERSONAL override (0059). Pairing from Settings is
+    // an individual act; an admin who wants the whole instance on this
+    // engine follows it with Admin → "Publish my settings as instance
+    // settings", which lifts these same values onto global_settings.
     await db
       .update(users)
       .set({
@@ -196,6 +201,13 @@ providersRoute.post(
 
 providersRoute.post("/disconnect", async (c) => {
   const userId = c.get("userId");
+  // Deliberately the RAW override, not the resolved value (0059). Only the
+  // user's OWN pairing can be disconnected from here — the instance engine
+  // belongs to the deployment and is unpaired by an admin in
+  // Admin → Instance settings. Without this distinction, "Disconnect" would
+  // read the inherited URL, DELETE the shared crew token on the engine, and
+  // then write NULLs that change nothing locally: every other user broken,
+  // this one still "connected".
   const [u] = await db
     .select({
       engineUrl: users.engineUrl,
@@ -205,6 +217,17 @@ providersRoute.post("/disconnect", async (c) => {
     .where(eq(users.id, userId))
     .limit(1);
   if (!u?.engineUrl) {
+    const inst = await getInstanceSettings();
+    if (inst.engineUrl) {
+      return c.json(
+        {
+          error: "engine_inherited",
+          hint:
+            "This engine comes from the instance settings. Ask an admin to change it, or pair your own engine first.",
+        },
+        400,
+      );
+    }
     return c.json({ error: "no_engine" }, 400);
   }
 
@@ -222,13 +245,19 @@ providersRoute.post("/disconnect", async (c) => {
     // ignore — local wipe still proceeds
   }
 
+  // Clear the override. NULL means "inherit" now (0059), so a user who
+  // disconnects their personal engine lands back on the instance one rather
+  // than on an empty app — which is the whole point of the inheritance.
+  // engineMode goes to NULL as well: pinning it to 'legacy' would override
+  // the instance mode and leave the user on LiteLLM while inheriting a
+  // gateway URL.
   await db
     .update(users)
     .set({
       engineUrl: null,
       engineToken: null,
       engineMeta: null,
-      engineMode: "legacy",
+      engineMode: null,
     })
     .where(eq(users.id, userId));
 
@@ -241,6 +270,10 @@ providersRoute.post("/disconnect", async (c) => {
 
 providersRoute.post("/reload", async (c) => {
   const userId = c.get("userId");
+  // RAW override again (0059): re-probing writes engine_meta + engine_mode,
+  // and writing those for a user who inherits would mint a half-override
+  // pinned to today's instance engine. Admins refresh the instance engine
+  // from Admin → Instance settings instead.
   const [u] = await db
     .select({
       engineUrl: users.engineUrl,
@@ -250,6 +283,17 @@ providersRoute.post("/reload", async (c) => {
     .where(eq(users.id, userId))
     .limit(1);
   if (!u?.engineUrl) {
+    const inst = await getInstanceSettings();
+    if (inst.engineUrl) {
+      return c.json(
+        {
+          error: "engine_inherited",
+          hint:
+            "This engine comes from the instance settings — an admin refreshes it in Admin → Instance settings.",
+        },
+        400,
+      );
+    }
     return c.json({ error: "no_engine" }, 400);
   }
 

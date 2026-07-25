@@ -28,6 +28,13 @@ import {
   EmbeddingServiceError,
 } from "../lib/semantic-router";
 import { loadRouterAddonForUser } from "./addon-router";
+import {
+  CONNECTION_COLUMNS,
+  effectiveProviderMode,
+  hasNoProvider,
+  providerTarget,
+  resolveUserSettings,
+} from "../lib/global-settings";
 import { resolveChatTools } from "../lib/chat-tools";
 import { buildUpstreamBody } from "../lib/upstream-request";
 import { resolveConvContext } from "../lib/chat-context";
@@ -255,12 +262,7 @@ chatRoute.post("/completions", async (c) => {
       .select({
         timezone: users.timezone,
         lastInteractionAt: users.lastInteractionAt,
-        litellmUrl: users.litellmUrl,
-        litellmApiKey: users.litellmApiKey,
-        engineUrl: users.engineUrl,
-        engineToken: users.engineToken,
-        engineMode: users.engineMode,
-        litellmDisabled: users.litellmDisabled,
+        ...CONNECTION_COLUMNS,
         debugVerbose: users.debugVerbose,
         memoryMode: users.memoryMode,
       })
@@ -282,15 +284,14 @@ chatRoute.post("/completions", async (c) => {
   //   legacy   → LiteLLM only. If litellm_disabled, we 503 — the user
   //              turned off the only rail and didn't pair an engine.
   //
-  const effectiveMode: "gateway" | "hybrid" | "legacy" =
-    userRow.litellmDisabled && userRow.engineUrl
-      ? "gateway"
-      : ((userRow.engineMode ?? "legacy") as
-          | "gateway"
-          | "hybrid"
-          | "legacy");
+  // The eight connection columns selected above are OVERRIDES (0059):
+  // whatever is NULL falls back to the instance settings. Resolution reads
+  // a 30 s-cached singleton, so the hot path pays no extra query per
+  // message — see server/lib/global-settings.ts.
+  const conn = await resolveUserSettings(userRow);
+  const effectiveMode = effectiveProviderMode(conn);
 
-  if (effectiveMode === "legacy" && userRow.litellmDisabled) {
+  if (hasNoProvider(conn)) {
     return c.json(
       {
         error: "no_provider",
@@ -301,20 +302,7 @@ chatRoute.post("/completions", async (c) => {
     );
   }
 
-  let target =
-    effectiveMode === "gateway" && userRow.engineUrl
-      ? {
-          baseUrl: userRow.engineUrl.replace(/\/+$/, ""),
-          apiKey: userRow.engineToken,
-        }
-      : {
-          baseUrl: (
-            userRow.litellmUrl ??
-            process.env.LITELLM_URL ??
-            ""
-          ).replace(/\/+$/, ""),
-          apiKey: userRow.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-        };
+  let target = providerTarget(conn, effectiveMode);
 
   // ── 3. Resolve project + memory snapshot (frozen per-conversation) ────
   // The memory wiki is snapshot at conversation creation (or on explicit
@@ -383,7 +371,7 @@ chatRoute.post("/completions", async (c) => {
   // ── 6. Build upstream body (without `messages` — set per iteration below)
   const baseBody = buildUpstreamBody(body);
 
-  const { modelCaps, tools, toolsEnabled, agentToolsEnabled, headers } = await resolveChatTools({ userRow, body, convAgentMode, guest, userId, effectiveMode, baseBody, target });
+  const { modelCaps, tools, toolsEnabled, agentToolsEnabled, headers } = await resolveChatTools({ conn, body, convAgentMode, guest, userId, effectiveMode, baseBody, target });
 
   // ── 7. Stream with a heartbeat keep-alive ──────────────────────────────
   //

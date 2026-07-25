@@ -29,6 +29,7 @@ import { promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
 import { and, asc, eq, gte } from "drizzle-orm";
 import { db } from "../db/index";
+import { resolveUserSettingsById } from "./global-settings";
 import { nemoIngest } from "./memory";
 import {
   conversations,
@@ -46,7 +47,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  *
  * Primary order:
  *   1. env PROJECT_COMPILE_MODEL (deploy-wide override)
- *   2. users.default_model (whatever the user picked in Settings)
+ *   2. the user's EFFECTIVE default model — their own override if they set
+ *      one, otherwise the instance default (0059)
  *   3. 'agent-fast' (Qwen3.6-35B-A3B-MLX-8bit local on the cluster)
  *
  * Cloud fallback: 'Qwen3.6-flash' (routes to OpenRouter via LiteLLM
@@ -202,16 +204,11 @@ async function summarize(
   p: EligibleProject,
   msgs: Array<{ role: string; content: string }>,
 ): Promise<string> {
-  const [user] = await db
-    .select({
-      litellmUrl: users.litellmUrl,
-      litellmApiKey: users.litellmApiKey,
-      defaultModel: users.defaultModel,
-    })
-    .from(users)
-    .where(eq(users.id, p.userId))
-    .limit(1);
-  const baseUrl = (user?.litellmUrl ?? DEFAULT_LITELLM).replace(/\/+$/, "");
+  // Effective settings (0059): user overrides ?? instance ?? env. The
+  // compile loop runs unattended for every project owner, so it has to work
+  // for users who never configured anything of their own.
+  const user = await resolveUserSettingsById(p.userId);
+  const baseUrl = user?.litellmUrl ?? DEFAULT_LITELLM;
   const apiKey = user?.litellmApiKey ?? DEFAULT_KEY;
   const primaryModel =
     process.env.PROJECT_COMPILE_MODEL ??

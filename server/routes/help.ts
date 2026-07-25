@@ -30,7 +30,11 @@ import { zValidator } from "@hono/zod-validator";
 import { eq } from "drizzle-orm";
 import { Agent, fetch as undiciFetch } from "undici";
 import { db } from "../db/index";
-import { conversations, messages, users } from "../db/schema";
+import { conversations, messages } from "../db/schema";
+import {
+  providerTarget,
+  resolveUserSettingsById,
+} from "../lib/global-settings";
 import { authHeaders } from "../lib/litellm";
 import { searchCorpus, corpusInfo, type HelpHit } from "../lib/help-search";
 import { loadRouterConfigForUser } from "./addon-router";
@@ -92,19 +96,9 @@ async function resolveHelpModel(userId: string): Promise<{
   // 1. Prefer the user's Auto Router chat-bucket model. That's the
   //    most "this is a question, give me a fast answer" model.
   const routerCfg = await loadRouterConfigForUser(userId);
-  const [u] = await db
-    .select({
-      defaultModel: users.defaultModel,
-      litellmUrl: users.litellmUrl,
-      litellmApiKey: users.litellmApiKey,
-      engineUrl: users.engineUrl,
-      engineToken: users.engineToken,
-      engineMode: users.engineMode,
-      litellmDisabled: users.litellmDisabled,
-    })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
+  // Effective settings — user overrides on top of the instance defaults
+  // (0059). Help must work for a user who has configured nothing.
+  const u = await resolveUserSettingsById(userId);
   if (!u) throw new Error("user_not_found");
 
   const model =
@@ -115,23 +109,8 @@ async function resolveHelpModel(userId: string): Promise<{
 
   // Route through the same target the chat route uses: engine when
   // gateway mode, else LiteLLM.
-  if (u.engineUrl && u.engineMode === "gateway") {
-    return {
-      model,
-      baseUrl: u.engineUrl.replace(/\/+$/, ""),
-      apiKey: u.engineToken ?? null,
-    };
-  }
-  const baseUrl = (
-    u.litellmUrl ??
-    process.env.LITELLM_URL ??
-    ""
-  ).replace(/\/+$/, "");
-  return {
-    model,
-    baseUrl,
-    apiKey: u.litellmApiKey ?? process.env.LITELLM_API_KEY ?? null,
-  };
+  const target = providerTarget(u);
+  return { model, baseUrl: target.baseUrl, apiKey: target.apiKey };
 }
 
 // ── Route ─────────────────────────────────────────────────────────────────
