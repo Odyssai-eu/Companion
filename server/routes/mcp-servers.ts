@@ -12,14 +12,38 @@
  * Slugs are lowercased ascii without underscores so the
  * `mcp_<slug>_<tool>` tool-name convention can be parsed unambiguously
  * by splitting on the first underscore (see parseMcpToolName).
+ *
+ * SINCE 0060 A CARD IS NOT A ROW. A server may be the caller's own or an
+ * INSTANCE row (`user_id IS NULL`) that every account inherits, paired by
+ * slug. Reads go through `resolveMcpServersForUser` /
+ * `resolveMcpServerById`; writes go through `materializeUserMcpServer`, so
+ * a user editing an inherited card gets a partial override of their own
+ * and never mutates the shared row.
+ *
+ * AND THE OAUTH DANCE WRITES ON THE CALLER'S ROW, ALWAYS. /oauth/start
+ * materialises the ghost first and points the pending row at it, so the
+ * public callback — which has no session and resolves the server straight
+ * from `pending.server_id` — can only ever land tokens on a user row. The
+ * callback re-checks that anyway (`server.user_id === pending.user_id`),
+ * because that invariant is the difference between "user B sees a shared
+ * Notion server" and "user B is logged into user A's Notion account".
  */
 
-import { and, asc, eq, lt } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { mcpOauthPending, mcpServers } from "../db/schema";
+import {
+  invalidateInstanceMcpServers,
+  materializeUserMcpServer,
+  mcpStateTargetId,
+  publicMcpView,
+  resolveMcpServerById,
+  resolveMcpServerBySlug,
+  resolveMcpServersForUser,
+} from "../lib/instance-rows";
 import { fetchTools as fetchMcpTools } from "../lib/mcp-client";
 import {
   buildAuthorizationUrl,
@@ -65,33 +89,12 @@ const updateSchema = createSchema
 
 mcpServersRoute.get("/", async (c) => {
   const userId = c.get("userId");
-  const rows = await db
-    .select()
-    .from(mcpServers)
-    .where(eq(mcpServers.userId, userId))
-    .orderBy(asc(mcpServers.name));
-  // Mask the auth header in the list response — we only need to tell
-  // the UI whether one is set, not its value.
-  return c.json({
-    servers: rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      slug: r.slug,
-      transport: r.transport,
-      url: r.url,
-      authKind: r.authKind,
-      hasAuthHeader: Boolean(r.authHeader),
-      oauthConnected: Boolean(r.oauthAccessToken),
-      oauthExpiresAt: r.oauthExpiresAt,
-      oauthScopes: r.oauthScopes,
-      enabled: r.enabled,
-      toolsCount: Array.isArray(r.toolsCache) ? r.toolsCache.length : 0,
-      toolsCacheAt: r.toolsCacheAt,
-      lastError: r.lastError,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    })),
-  });
+  // Instance rows overridden by the caller's own, by slug. Secrets are
+  // masked to booleans by publicMcpView, exactly as this handler always
+  // did — and now that a row can be the shared one, that masking is what
+  // stops the deployment's bearer token being echoed to every account.
+  const rows = await resolveMcpServersForUser(userId);
+  return c.json({ servers: rows.map(publicMcpView) });
 });
 
 mcpServersRoute.post("/", zValidator("json", createSchema), async (c) => {
@@ -102,30 +105,21 @@ mcpServersRoute.post("/", zValidator("json", createSchema), async (c) => {
     return c.json({ error: "invalid_slug", detail: "Slug must be lowercase ascii letters/digits and dashes." }, 400);
   }
   try {
-    const [row] = await db
-      .insert(mcpServers)
-      .values({
-        userId,
-        name: data.name,
-        slug,
-        transport: data.transport,
-        url: data.url,
-        authKind: data.authKind ?? "bearer",
-        authHeader: data.authHeader ?? null,
-        enabled: data.enabled ?? true,
-      })
-      .returning();
-    return c.json({
-      server: {
-        ...row,
-        authHeader: undefined,
-        oauthAccessToken: undefined,
-        oauthRefreshToken: undefined,
-        oauthClientSecret: undefined,
-        hasAuthHeader: Boolean(row.authHeader),
-        oauthConnected: Boolean(row.oauthAccessToken),
-      },
+    await db.insert(mcpServers).values({
+      userId,
+      name: data.name,
+      slug,
+      transport: data.transport,
+      url: data.url,
+      authKind: data.authKind ?? "bearer",
+      authHeader: data.authHeader ?? null,
+      enabled: data.enabled ?? true,
     });
+    // Re-resolve rather than return the raw row: if this slug matches an
+    // instance server, what the caller just created is an OVERRIDE of it,
+    // and the card has to render as such.
+    const resolved = await resolveMcpServerBySlug(userId, slug);
+    return c.json({ server: resolved ? publicMcpView(resolved) : null });
   } catch (e) {
     // Unique constraint on (user_id, slug)
     if (/unique/i.test((e as Error).message)) {
@@ -142,18 +136,57 @@ mcpServersRoute.patch(
     const userId = c.get("userId");
     const id = c.req.param("id");
     const data = c.req.valid("json");
+    const target = await resolveMcpServerById(userId, id);
+    if (!target) return c.json({ error: "not_found" }, 404);
+    // Copy-on-write. An instance row id reaches here whenever the caller
+    // edits an inherited card; the patch has to land on a row of their
+    // own, or one user toggling a shared server would toggle it for the
+    // whole deployment through a route guarded only by requireUser.
+    const ownId = await materializeUserMcpServer(userId, target.slug);
+
+    // SUBMITTING THE VALUE YOU ALREADY HAVE IS NOT AN EDIT.
+    //
+    // The edit modal loads the EFFECTIVE server and posts every field back,
+    // so opening an inherited card and pressing Save arrives here with
+    // `url` and `transport` set to the instance's own values. Recording
+    // them verbatim would snapshot the shared address onto the caller's
+    // row — the copy the whole 0060 design refuses (see the header of
+    // server/lib/instance-rows.ts): the day the operator repoints the
+    // instance server, that account alone keeps hammering the dead one,
+    // and `sameTarget()` stops matching so it loses the shared bearer
+    // header too. Comparing against the resolved value keeps a genuine
+    // move a move and a no-op a no-op.
+    //
+    // The same comparison gates the wipe below, which is why it is
+    // computed before the patch is built rather than inline.
+    const urlChanged = data.url !== undefined && data.url !== target.url;
+    const transportChanged =
+      data.transport !== undefined && data.transport !== target.transport;
+
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (data.name !== undefined) patch.name = data.name;
-    if (data.transport !== undefined) patch.transport = data.transport;
-    if (data.url !== undefined) patch.url = data.url;
+    if (transportChanged) patch.transport = data.transport;
+    if (urlChanged) patch.url = data.url;
     if (data.authKind !== undefined) patch.authKind = data.authKind;
     if (data.authHeader !== undefined) patch.authHeader = data.authHeader ?? null;
     if (data.enabled !== undefined) patch.enabled = data.enabled;
-    // Bust the cache when the URL/transport/auth kind changes — a
+    // Bust the cache when the URL/transport/auth kind ACTUALLY changes — a
     // different backend OR a different auth model means the cached
     // tools list is meaningless. Also clear OAuth credentials when the
     // URL changes (they only make sense paired with the URL).
-    if (data.url !== undefined || data.transport !== undefined) {
+    //
+    // `!== undefined` was the wrong test: it fired on the unchanged `url`
+    // every Save posts, so re-saving an OAuth server with nothing edited
+    // silently destroyed the caller's access and refresh tokens and left
+    // them re-authorizing a server they never touched.
+    //
+    // Only the caller's own columns are cleared. The shared row is
+    // untouched, and it does not need clearing on their behalf: the
+    // resolver already withholds the instance's auth header and cached
+    // metadata from anyone who has overridden `url` (`canInheritHostBound`
+    // in instance-rows.ts), which is the same protection this wipe
+    // provides, applied at read time and to every user at once.
+    if (urlChanged || transportChanged) {
       patch.toolsCache = null;
       patch.toolsCacheAt = null;
       patch.lastError = null;
@@ -165,29 +198,29 @@ mcpServersRoute.patch(
       patch.oauthExpiresAt = null;
       patch.oauthScopes = null;
     }
-    const [row] = await db
-      .update(mcpServers)
-      .set(patch)
-      .where(and(eq(mcpServers.id, id), eq(mcpServers.userId, userId)))
-      .returning();
-    if (!row) return c.json({ error: "not_found" }, 404);
-    return c.json({
-      server: {
-        ...row,
-        authHeader: undefined,
-        oauthAccessToken: undefined,
-        oauthRefreshToken: undefined,
-        oauthClientSecret: undefined,
-        hasAuthHeader: Boolean(row.authHeader),
-        oauthConnected: Boolean(row.oauthAccessToken),
-      },
-    });
+    await db.update(mcpServers).set(patch).where(eq(mcpServers.id, ownId));
+    const updated = await resolveMcpServerBySlug(userId, target.slug);
+    return c.json({ server: updated ? publicMcpView(updated) : null });
   },
 );
 
 mcpServersRoute.delete("/:id", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");
+  const [row] = await db
+    .select({ userId: mcpServers.userId })
+    .from(mcpServers)
+    .where(eq(mcpServers.id, id))
+    .limit(1);
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.userId === null) {
+    // Removing the instance row would remove the server for every account
+    // on the deployment, from a route any authenticated user can reach.
+    // "Remove this card" for a user means dropping their own override
+    // (DELETE of their row below) or switching it off; removing it for
+    // everyone is an admin action on /api/admin/instance-mcp-servers.
+    return c.json({ error: "instance_row_readonly" }, 403);
+  }
   const r = await db
     .delete(mcpServers)
     .where(and(eq(mcpServers.id, id), eq(mcpServers.userId, userId)))
@@ -205,24 +238,33 @@ mcpServersRoute.delete("/:id", async (c) => {
 mcpServersRoute.post("/:id/refresh", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");
-  const [row] = await db
-    .select()
-    .from(mcpServers)
-    .where(and(eq(mcpServers.id, id), eq(mcpServers.userId, userId)))
-    .limit(1);
+  const row = await resolveMcpServerById(userId, id);
   if (!row) return c.json({ error: "not_found" }, 404);
+  // Not `id`: the cache belongs to the (server, credential) pair. A shared
+  // bearer server caches on the instance row so every inheritor benefits;
+  // an OAuth server caches on the caller's own row, because the tools list
+  // a provider returns is scoped to the account that authorized. null =
+  // an OAuth server this user has not connected, so there is nothing to
+  // persist and nowhere honest to persist it.
+  const stateId = mcpStateTargetId(row);
   try {
     const tools = await fetchMcpTools(row);
-    await db
-      .update(mcpServers)
-      .set({ toolsCache: tools, toolsCacheAt: new Date(), lastError: null })
-      .where(eq(mcpServers.id, id));
+    if (stateId) {
+      await db
+        .update(mcpServers)
+        .set({ toolsCache: tools, toolsCacheAt: new Date(), lastError: null })
+        .where(eq(mcpServers.id, stateId));
+      if (stateId === row.instanceRowId) invalidateInstanceMcpServers();
+    }
     return c.json({ ok: true, tools });
   } catch (e) {
-    await db
-      .update(mcpServers)
-      .set({ lastError: (e as Error).message })
-      .where(eq(mcpServers.id, id));
+    if (stateId) {
+      await db
+        .update(mcpServers)
+        .set({ lastError: (e as Error).message })
+        .where(eq(mcpServers.id, stateId));
+      if (stateId === row.instanceRowId) invalidateInstanceMcpServers();
+    }
     return c.json({ error: "refresh_failed", detail: (e as Error).message }, 502);
   }
 });
@@ -260,6 +302,11 @@ mcpServersRoute.post(
         lastError: null,
         createdAt: new Date(),
         updatedAt: new Date(),
+        // In-memory only, nothing is persisted, so there is no row of
+        // either kind behind this probe.
+        ownRowId: null,
+        instanceRowId: null,
+        inherited: false,
       });
       return c.json({ ok: true, toolsCount: tools.length, tools: tools.slice(0, 50) });
     } catch (e) {
@@ -299,12 +346,20 @@ function buildRedirectUri(c: {
 mcpServersRoute.post("/:id/oauth/start", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");
-  const [row] = await db
-    .select()
-    .from(mcpServers)
-    .where(and(eq(mcpServers.id, id), eq(mcpServers.userId, userId)))
-    .limit(1);
+  const row = await resolveMcpServerById(userId, id);
   if (!row) return c.json({ error: "not_found" }, 404);
+
+  // THE GHOST. An instance row may declare an OAuth server; the
+  // authorization is personal, so before a single OAuth column is written
+  // we materialise the caller's own row and address THAT from here on.
+  // Everything downstream — the pending row, the client registration, the
+  // tokens the public callback writes — targets `ownId`.
+  //
+  // The ghost is empty: name / url / transport / auth_kind stay NULL and
+  // keep resolving from the instance row. Copying them would leave a live
+  // token pointed at a dead address the day the operator repoints the
+  // shared server.
+  const ownId = await materializeUserMcpServer(userId, row.slug);
 
   // Garbage-collect stale pending rows for this server (10-min TTL)
   // before creating a new one — otherwise the table grows on every
@@ -313,7 +368,7 @@ mcpServersRoute.post("/:id/oauth/start", async (c) => {
     .delete(mcpOauthPending)
     .where(
       and(
-        eq(mcpOauthPending.serverId, id),
+        eq(mcpOauthPending.serverId, ownId),
         lt(mcpOauthPending.createdAt, new Date(Date.now() - 10 * 60 * 1000)),
       ),
     );
@@ -342,10 +397,13 @@ mcpServersRoute.post("/:id/oauth/start", async (c) => {
     const { codeVerifier, codeChallenge } = generatePkce();
     const state = generateState();
 
-    // 4. Persist pending row + cache metadata/client on the server row.
+    // 4. Persist pending row + cache metadata/client on the GHOST row.
+    //    `serverId: ownId`, never `id`: the callback resolves the server
+    //    from this field with no session of its own, so pointing it at the
+    //    instance row is exactly how tokens would end up shared.
     await db.insert(mcpOauthPending).values({
       userId,
-      serverId: id,
+      serverId: ownId,
       state,
       codeVerifier,
       redirectUri,
@@ -359,7 +417,7 @@ mcpServersRoute.post("/:id/oauth/start", async (c) => {
         oauthClientId: clientId,
         oauthClientSecret: clientSecret,
       })
-      .where(eq(mcpServers.id, id));
+      .where(eq(mcpServers.id, ownId));
 
     // 5. Return the URL — frontend opens this in a popup.
     const authorizationUrl = buildAuthorizationUrl({
@@ -428,6 +486,20 @@ export const handleOauthCallback = async (c: Context) => {
   if (!server || !server.oauthMetadata || !server.oauthClientId) {
     return c.html(callbackHtml({ ok: false, message: "Server state corrupt — try again" }));
   }
+  // BELT AND BRACES on the 0060 boundary. /oauth/start already points
+  // `pending.server_id` at the caller's ghost row, so this can only fail if
+  // some future caller forgets — but this handler is PUBLIC (the provider's
+  // redirect arrives with no session cookie) and the next statement writes
+  // an access token and a refresh token. If that ever landed on an instance
+  // row, every account inheriting the server would be authenticated as
+  // whoever happened to authorize last. `pending.user_id` was carried in
+  // the table since 0031 and never read; it is read now.
+  if (server.userId === null || server.userId !== pending.userId) {
+    await db.delete(mcpOauthPending).where(eq(mcpOauthPending.id, pending.id));
+    return c.html(
+      callbackHtml({ ok: false, message: "Authorization target mismatch — try again" }),
+    );
+  }
 
   try {
     const tokens = await exchangeCode({
@@ -452,7 +524,11 @@ export const handleOauthCallback = async (c: Context) => {
       })
       .where(eq(mcpServers.id, server.id));
     await db.delete(mcpOauthPending).where(eq(mcpOauthPending.id, pending.id));
-    return c.html(callbackHtml({ ok: true, message: `Connected ${server.name}` }));
+    // `server.name` is NULL on a ghost — it inherits the instance row's.
+    // The slug is always present and is what the user typed anyway.
+    return c.html(
+      callbackHtml({ ok: true, message: `Connected ${server.name ?? server.slug}` }),
+    );
   } catch (e) {
     return c.html(callbackHtml({ ok: false, message: (e as Error).message }));
   }
@@ -466,6 +542,13 @@ export const handleOauthCallback = async (c: Context) => {
 mcpServersRoute.post("/:id/oauth/disconnect", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");
+  const target = await resolveMcpServerById(userId, id);
+  if (!target) return c.json({ error: "not_found" }, 404);
+  // Tokens only ever live on the caller's own row, so this is a no-op when
+  // they never authorized — and it must never fall back to the instance
+  // row, which would disconnect everybody.
+  const ownId = target.ownRowId;
+  if (!ownId) return c.json({ ok: true });
   const r = await db
     .update(mcpServers)
     .set({
@@ -474,9 +557,34 @@ mcpServersRoute.post("/:id/oauth/disconnect", async (c) => {
       oauthExpiresAt: null,
       oauthScopes: null,
     })
-    .where(and(eq(mcpServers.id, id), eq(mcpServers.userId, userId)))
-    .returning({ id: mcpServers.id });
+    .where(and(eq(mcpServers.id, ownId), eq(mcpServers.userId, userId)))
+    .returning({
+      id: mcpServers.id,
+      name: mcpServers.name,
+      url: mcpServers.url,
+      transport: mcpServers.transport,
+      enabled: mcpServers.enabled,
+      authHeader: mcpServers.authHeader,
+      oauthClientId: mcpServers.oauthClientId,
+    });
   if (r.length === 0) return c.json({ error: "not_found" }, 404);
+  // A ghost that carried nothing but OAuth state is now an empty override
+  // that shadows nothing and shows up as "not inherited" in the UI for no
+  // reason. Drop it so the card goes back to being a plain inherited one.
+  // (`oauth_client_id` and `oauth_metadata` are deliberately kept by this
+  // endpoint for re-use — so a ghost that still holds a client id is NOT
+  // empty and stays.)
+  const g = r[0];
+  const emptyGhost =
+    g.name === null &&
+    g.url === null &&
+    g.transport === null &&
+    g.enabled === null &&
+    g.authHeader === null &&
+    g.oauthClientId === null;
+  if (emptyGhost) {
+    await db.delete(mcpServers).where(eq(mcpServers.id, ownId));
+  }
   return c.json({ ok: true });
 });
 

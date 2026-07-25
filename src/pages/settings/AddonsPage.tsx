@@ -43,25 +43,22 @@ export default function AddonsPage() {
   }
 
   useEffect(() => {
-    // Ensure all "lazy-init" add-ons have their DB row before listing. Each
-    // `*Info()` call hits a route whose handler calls findOrInit, so the
-    // row gets created on first visit. This is a no-op once the rows exist.
-    // Add new add-on info-pings here whenever you ship one.
-    (async () => {
-      try {
-        await Promise.all([
-          api.routerInfo().catch(() => undefined),
-          api.voiceLiveInfo().catch(() => undefined),
-          api.hermesAddonInfo().catch(() => undefined),
-          api.piAddonInfo().catch(() => undefined),
-          api.comfyuiAddonInfo().catch(() => undefined),
-          api.parserAddonInfo().catch(() => undefined),
-        ]);
-      } catch {
-        /* ignore — best-effort */
-      }
-      await refresh();
-    })();
+    // The six `*Info()` pre-pings that used to live here are GONE (0060).
+    //
+    // They existed to force the lazy-init add-ons to create their DB row
+    // before listing, because GET /api/addons could only show rows. That
+    // is exactly the auto-provisioning that produced the bug 0060 fixes:
+    // on the second account it created six rows with an EMPTY config, two
+    // of which the user then switched on and which failed silently
+    // forever because no URL was ever behind them.
+    //
+    // GET /api/addons now returns the EFFECTIVE list — the caller's rows,
+    // the instance rows they inherit, and the build's catalogue for
+    // anything neither has configured — so there is nothing to
+    // pre-create. A new account starts with no rows at all and inherits
+    // everything; a row appears the first time they actually change
+    // something.
+    refresh();
   }, []);
 
   const visible = useMemo(
@@ -69,24 +66,43 @@ export default function AddonsPage() {
     [addons],
   );
 
-  async function toggle(addon: ApiAddon) {
-    setPending((s) => new Set(s).add(addon.id));
+  /** Keyed by `name`, not `id`: an inherited or catalogue-only card has no
+   *  row of the caller's, and `id` may be the shared instance row's. */
+  async function mutate(addon: ApiAddon, run: () => Promise<ApiAddon>) {
+    setPending((s) => new Set(s).add(addon.name));
     try {
-      const { addon: updated } = await api.updateAddon(addon.id, {
-        enabled: !addon.enabled,
-      });
+      const updated = await run();
       setAddons((prev) =>
-        prev ? prev.map((a) => (a.id === updated.id ? updated : a)) : prev,
+        prev ? prev.map((a) => (a.name === updated.name ? updated : a)) : prev,
       );
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setPending((s) => {
         const next = new Set(s);
-        next.delete(addon.id);
+        next.delete(addon.name);
         return next;
       });
     }
+  }
+
+  async function toggle(addon: ApiAddon) {
+    // By name → the server copy-on-writes. Flipping an inherited card
+    // gives this account its own row; it must not flip the switch for
+    // everyone on the deployment.
+    await mutate(addon, async () => {
+      const { addon: updated } = await api.setAddonByName(addon.name, {
+        enabled: !addon.enabled,
+      });
+      return updated;
+    });
+  }
+
+  async function resetToInstance(addon: ApiAddon) {
+    await mutate(addon, async () => {
+      const { addon: updated } = await api.resetAddonToInstance(addon.name);
+      return updated;
+    });
   }
 
   const core = visible.filter((a) => a.kind === "core");
@@ -132,10 +148,11 @@ export default function AddonsPage() {
         >
           {core.map((a) => (
             <AddonCard
-              key={a.id}
+              key={a.name}
               addon={a}
-              pending={pending.has(a.id)}
+              pending={pending.has(a.name)}
               onToggle={() => toggle(a)}
+              onResetToInstance={() => resetToInstance(a)}
             />
           ))}
         </Group>
@@ -145,10 +162,11 @@ export default function AddonsPage() {
         <section className="flex flex-col gap-2.5">
           {installed.map((a) => (
             <AddonCard
-              key={a.id}
+              key={a.name}
               addon={a}
-              pending={pending.has(a.id)}
+              pending={pending.has(a.name)}
               onToggle={() => toggle(a)}
+              onResetToInstance={() => resetToInstance(a)}
             />
           ))}
         </section>
@@ -183,10 +201,12 @@ function AddonCard({
   addon,
   pending,
   onToggle,
+  onResetToInstance,
 }: {
   addon: ApiAddon;
   pending: boolean;
   onToggle: () => void;
+  onResetToInstance: () => void;
 }) {
   const isMobile = useIsMobile();
   // Mobile hides the per-addon advanced panels — these are admin/infra
@@ -214,6 +234,7 @@ function AddonCard({
               {displayName(addon.name)}
             </span>
             <KindBadge kind={addon.kind} />
+            {addon.inherited && <InheritedBadge />}
             {addon.version && (
               <span className="font-mono text-[11px] text-gray-400">
                 v{addon.version}
@@ -224,6 +245,23 @@ function AddonCard({
             <span className="text-[13px] leading-[20px] text-gray-600">
               {displayDescription(addon.name) ?? addon.description}
             </span>
+          )}
+          {/* Mirrors Settings → Inference: say where the value came from,
+              and offer the way back.
+              `overridesInstance`, not `!inherited && ownRowId`: the latter
+              is also true for a row with NOTHING behind it (fresh install,
+              an ad-hoc add-on, an instance row an admin deleted), and there
+              the endpoint deletes the only copy of the configuration. A
+              reset button that destroys data is worse than no button. */}
+          {addon.overridesInstance && (
+            <button
+              type="button"
+              onClick={onResetToInstance}
+              disabled={pending}
+              className="self-start rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-600 hover:border-cyan hover:text-navy disabled:opacity-50"
+            >
+              Reset to instance settings
+            </button>
           )}
         </div>
         <StatusPill enabled={addon.enabled} />
@@ -242,6 +280,19 @@ function AddonCard({
         </div>
       )}
     </div>
+  );
+}
+
+/** 0060 — this card's settings come from the instance, not from this
+ *  account. Changing anything on it creates a private override. */
+function InheritedBadge() {
+  return (
+    <span
+      title="Configured for the whole instance. Changing anything here creates an override for your account only."
+      className="rounded-full bg-[rgba(79,179,217,0.12)] px-2 py-0.5 text-[11px] font-medium text-cyan"
+    >
+      Instance
+    </span>
   );
 }
 

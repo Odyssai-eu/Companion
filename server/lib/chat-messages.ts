@@ -26,7 +26,16 @@ import type { ChatBody, ChatTurn } from "../routes/chat";
 
 export async function assembleMessages(args: {
   body: ChatBody;
-  userRow: { timezone: string | null };
+  /**
+   * ALREADY RESOLVED (0060). This used to be `userRow.timezone || "UTC"`,
+   * a raw column read with a hardcoded fallback — which, once the column
+   * became a nullable override of `global_settings.timezone`, would have
+   * stamped every time tag of every inheriting account with UTC and
+   * silently ignored the instance's zone. The caller passes
+   * `resolveUserSettings(...).timezone`, which always terminates on a real
+   * IANA zone.
+   */
+  timezone: string;
   userId: string;
   now: Date;
   convMemoryEnabled: boolean;
@@ -37,10 +46,10 @@ export async function assembleMessages(args: {
   /** Agent mode — gates the skills catalogue (useless without the skill_get tool). */
   convAgentMode: boolean;
 }): Promise<{ withSystem: ChatTurn[] }> {
-  const { body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock, convAgentMode } =
+  const { body, timezone, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock, convAgentMode } =
     args;
 
-  const tz = userRow.timezone || "UTC";
+  const tz = timezone;
   const tagged = tagUserMessages(body.messages!, {
     enabled: convMemoryEnabled,
     timezone: tz,

@@ -56,7 +56,11 @@ export default function InferencePage() {
     setShowMetrics(s.showMetrics);
     setDebugVerbose(s.debugVerbose);
     setDefaultModel(s.overrides.defaultModel ?? "");
-    setTimezone(s.timezone);
+    // Bound to the OVERRIDE (0060), like defaultModel just above and for
+    // the same reason: seeding it from the effective value would re-save
+    // the instance's zone as a personal override the next time the user
+    // touches anything on this page. "" = inherit.
+    setTimezone(s.overrides.timezone ?? "");
     setInferenceMode(s.inferenceMode);
   }
 
@@ -74,7 +78,8 @@ export default function InferencePage() {
         debugVerbose,
         // "" → null = drop the override and inherit the instance model.
         defaultModel: defaultModel.trim() || null,
-        timezone,
+        // "" → null = drop the override and inherit the instance zone.
+        timezone: timezone.trim() || null,
         // easyModel / namedModels are deliberately NOT sent anymore (0058
         // retired the modes that used them). Omitting them leaves the
         // columns untouched rather than nulling data the migration may
@@ -130,6 +135,19 @@ export default function InferencePage() {
   }
 
   /** Drop the personal default-model override; inherit the instance's. */
+  async function resetTimezoneToInstance() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.resetInferenceToInstance("timezone");
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function resetDefaultModelToInstance() {
     setBusy(true);
     setError(null);
@@ -468,15 +486,39 @@ export default function InferencePage() {
           onChange={(e) => setTimezone(e.target.value)}
           className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
         >
+          <option value="">
+            Inherit from the instance ({settings.instance.timezone})
+          </option>
           {COMMON_TIMEZONES.map((tz) => (
             <option key={tz} value={tz}>
               {tz}
             </option>
           ))}
-          {!COMMON_TIMEZONES.includes(timezone) && (
+          {timezone !== "" && !COMMON_TIMEZONES.includes(timezone) && (
             <option value={timezone}>{timezone}</option>
           )}
         </select>
+        {settings.inherited.timezone && (
+          <p className="text-[12px] text-gray-500">
+            Inherited from the instance:{" "}
+            <span className="font-mono text-navy">
+              {settings.instance.timezone}
+            </span>
+            . Pick a zone above to override it for your account only.
+          </p>
+        )}
+        {!settings.inherited.timezone && (
+          <div>
+            <button
+              type="button"
+              onClick={() => void resetTimezoneToInstance()}
+              disabled={busy}
+              className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-600 hover:border-cyan hover:text-navy disabled:opacity-50"
+            >
+              Reset to instance settings
+            </button>
+          </div>
+        )}
       </Section>
 
       {error && (

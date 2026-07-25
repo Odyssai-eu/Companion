@@ -260,7 +260,9 @@ chatRoute.post("/completions", async (c) => {
   const userRow = await db.transaction(async (tx) => {
     const [row] = await tx
       .select({
-        timezone: users.timezone,
+        // `timezone` moved INTO CONNECTION_COLUMNS in 0060 (it is inherited
+        // from the instance now) — selecting it separately here would have
+        // shadowed the spread with the same column for no reason.
         lastInteractionAt: users.lastInteractionAt,
         ...CONNECTION_COLUMNS,
         debugVerbose: users.debugVerbose,
@@ -366,7 +368,11 @@ chatRoute.post("/completions", async (c) => {
   // The RICH profile is appended ONLY when conversation memory is ON — with
   // memory OFF the assistant must not recite the profile (#fix 2026-06-18).
   const identityBlock = await getUserIdentityBlock(userId, convMemoryEnabled);
-  const { withSystem } = await assembleMessages({ body, userRow, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock, convAgentMode });
+  // `conn.timezone` (0060), not `userRow.timezone`: the column is a
+  // nullable override of the instance zone now, and the row is already
+  // resolved above — so this costs nothing and cannot silently fall back to
+  // a hardcoded UTC for an inheriting account.
+  const { withSystem } = await assembleMessages({ body, timezone: conn.timezone, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock, convAgentMode });
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)
   const baseBody = buildUpstreamBody(body);

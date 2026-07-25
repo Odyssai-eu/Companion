@@ -78,8 +78,8 @@ inferenceRoute.get("/settings", async (c) => {
   const userId = c.get("userId");
   const [u] = await db
     .select({
+      // `timezone` joined CONNECTION_COLUMNS in 0060.
       ...CONNECTION_COLUMNS,
-      timezone: users.timezone,
       inferenceMode: users.inferenceMode,
       easyModel: users.easyModel,
       namedModels: users.namedModels,
@@ -105,9 +105,17 @@ inferenceRoute.get("/settings", async (c) => {
     engineMeta: eff.engineMeta,
     engineMode: eff.engineMode,
     litellmDisabled: eff.litellmDisabled,
+    // EFFECTIVE too since 0060 — the form binds to `overrides.timezone`
+    // below, not to this. Binding a form to the effective value is how you
+    // re-save an inherited value as a personal override on the next click.
+    timezone: eff.timezone,
 
     // ── Per-user, non-inherited ───────────────────────────────────────
-    timezone: u.timezone,
+    // Both are deliberately NOT inheritable: show_metrics is a pure render
+    // preference the server never reads, and debug_verbose already has an
+    // instance switch (the DEBUG_VERBOSE env var, OR'd in chat-stream.ts)
+    // whose semantics a second `??`-resolved one would contradict. See the
+    // end of drizzle/0060.
     inferenceMode: normalizeInferenceMode(u.inferenceMode),
     showMetrics: u.showMetrics,
     debugVerbose: u.debugVerbose,
@@ -124,6 +132,7 @@ inferenceRoute.get("/settings", async (c) => {
       engineUrl: u.engineUrl,
       hasEngineToken: Boolean(u.engineToken),
       engineMode: u.engineMode as "gateway" | "hybrid" | "legacy" | null,
+      timezone: u.timezone,
     },
     /** Per field: true when the effective value came from the instance. */
     inherited: eff.inherited,
@@ -137,6 +146,7 @@ inferenceRoute.get("/settings", async (c) => {
       engineUrl: inst.engineUrl,
       hasEngineToken: Boolean(inst.engineToken),
       engineMode: inst.engineMode,
+      timezone: inst.timezone,
     },
 
     // Deployment env fallback, last link of the chain. Kept for the
@@ -170,7 +180,12 @@ const patchSchema = z.object({
   defaultModel: z.string().max(200).nullish(),
   litellmUrl: z.string().url().max(400).nullish(),
   litellmApiKey: z.string().max(400).nullish(),
-  timezone: z.string().min(1).max(80).optional(),
+  // `.nullish()` since 0060, like defaultModel above: null (or "") is
+  // "clear my override and inherit the instance zone", and the settings
+  // form sends the whole body in one PATCH — so a `.min(1)` that 400'd on
+  // an empty zone would have taken the mode, the metrics toggle and the
+  // default model down with it. Exactly the failure 0058 documented.
+  timezone: z.string().max(80).nullish(),
   // Write side accepts ONLY the two live modes (0058). Legacy 'easy' /
   // 'advanced' are rejected on purpose — they're read-mapped to 'auto' by
   // normalizeInferenceMode() above, so no client has a reason to send them.
@@ -200,7 +215,12 @@ inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => 
   if (data.defaultModel !== undefined) patch.defaultModel = data.defaultModel ?? null;
   if (data.litellmUrl !== undefined) patch.litellmUrl = data.litellmUrl ?? null;
   if (data.litellmApiKey !== undefined) patch.litellmApiKey = data.litellmApiKey ?? null;
-  if (data.timezone !== undefined) patch.timezone = data.timezone;
+  if (data.timezone !== undefined) {
+    // "" is what a cleared select submits, and it is not a zone Intl
+    // accepts — normalise it to NULL so it means "inherit" rather than
+    // pinning the account to a value that throws.
+    patch.timezone = data.timezone?.trim() || null;
+  }
   if (data.inferenceMode !== undefined) patch.inferenceMode = data.inferenceMode;
   if (data.easyModel !== undefined) patch.easyModel = data.easyModel ?? null;
   if (data.namedModels !== undefined) patch.namedModels = data.namedModels ?? null;
@@ -261,7 +281,7 @@ inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => 
  * the user no longer uses.
  */
 const resetSchema = z.object({
-  scope: z.enum(["engine", "litellm", "defaultModel", "all"]),
+  scope: z.enum(["engine", "litellm", "defaultModel", "timezone", "all"]),
 });
 
 inferenceRoute.post(
@@ -285,6 +305,13 @@ inferenceRoute.post(
     }
     if (scope === "defaultModel" || scope === "all") {
       patch.defaultModel = null;
+    }
+    // 0060 — the timezone override joined the same reset surface. Kept as
+    // its own scope rather than folded into another: it has nothing to do
+    // with the engine or the LiteLLM rail, and "reset everything" should
+    // not be the only way to stop pinning a zone.
+    if (scope === "timezone" || scope === "all") {
+      patch.timezone = null;
     }
 
     await db.update(users).set(patch).where(eq(users.id, userId));
@@ -349,7 +376,10 @@ inferenceRoute.get("/status", async (c) => {
   return c.json({
     lastInteractionAt: u.lastInteractionAt,
     serverTime: new Date().toISOString(),
-    timezone: u.timezone,
+    // EFFECTIVE, so the field keeps meaning what its name says and its
+    // `string` type stays honest. Returning the raw override would put a
+    // null behind a non-nullable API field for every inheriting account.
+    timezone: (await resolveUserSettings(u)).timezone,
   });
 });
 

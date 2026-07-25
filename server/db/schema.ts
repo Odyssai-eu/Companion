@@ -69,7 +69,11 @@ export const users = pgTable("users", {
   // a lot of stdout. Server-only sink (console.log → docker logs).
   debugVerbose: boolean("debug_verbose").notNull().default(false),
   // Temporal awareness — fed into every inference as a context tag.
-  timezone: text("timezone").notNull().default("UTC"),
+  // Nullable since 0060: it joined the inherited block, so NULL = "use the
+  // instance timezone" (global_settings.timezone). Read it through
+  // resolveUserSettings() like the connection columns — a raw read that
+  // falls back to a hardcoded "UTC" silently ignores the instance value.
+  timezone: text("timezone"),
   lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
   // Admin Extended — RBAC. Values: 'admin' | 'organiser' | 'user' | 'guest'.
   role: text("role").notNull().default("user"),
@@ -84,7 +88,15 @@ export const users = pgTable("users", {
   // 0058 collapsed easy+advanced into 'auto'). Plain text, no CHECK — the
   // zod enum in server/routes/inference.ts is the write-side gate, and the
   // read side maps any surviving legacy value to 'auto'.
-  inferenceMode: text("inference_mode").notNull().default("expert"),
+  //
+  // Default flipped to 'auto' by 0060, superseding 0058's note: that note
+  // refused the flip because a fresh account's Auto Router row was created
+  // disabled and empty, leaving a chat with no picker and no router. Under
+  // instance inheritance a fresh account resolves the INSTANCE Auto Router
+  // row instead, and 0060 step 8 guarantees that row exists with a usable
+  // fallback model. Existing rows keep their value (NOT NULL, and changing
+  // a DEFAULT rewrites nothing).
+  inferenceMode: text("inference_mode").notNull().default("auto"),
   // DEPRECATED (0058) — was the easy-mode single alias. Its role moved to
   // the Auto Router add-on's `fallbackModel` config key; 0058 copied the
   // value across. Kept as a column so 0058 stays reversible; nothing reads
@@ -465,20 +477,42 @@ export type Message = typeof messages.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
 
+// Add-ons — INSTANCE ROWS + PER-USER OVERRIDES since 0060.
+//
+// `user_id IS NULL` marks an INSTANCE row: the deployment's configuration
+// for that add-on, inherited by every account. A user row of the same
+// `name` wins over it, field by field and config KEY by config key.
+//
+// NEVER query this table with a bare `eq(addons.userId, userId)` again —
+// that filter cannot see an instance row (NULL never matches an equality)
+// and a user who inherits everything has no row at all. Every read goes
+// through server/lib/instance-rows.ts (`resolveAddonForUser` /
+// `resolveAddonsForUser`), every user write goes through
+// `materializeUserAddon` so it lands on the caller's own row and never on
+// the shared one.
 export const addons = pgTable(
   "addons",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    // Nullable since 0060 — NULL = instance row. The FK and its cascade
+    // stay: deleting a user drops their overrides, never the instance's
+    // configuration.
+    userId: uuid("user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
+    /** The identity used to pair a user row with its instance row. */
     name: text("name").notNull(),
     kind: text("kind", { enum: ["core", "plugin", "mcp"] })
       .notNull()
       .default("plugin"),
     description: text("description"),
     version: text("version"),
-    enabled: boolean("enabled").notNull().default(false),
+    // Nullable since 0060 for the same reason users.engine_mode became
+    // nullable in 0059: NOT NULL DEFAULT false meant a freshly created
+    // user row carried a `false` nobody chose, which then shadowed an
+    // instance row the operator had turned on. NULL = inherit. A CHECK in
+    // 0060 keeps it non-null on instance rows so resolution terminates.
+    enabled: boolean("enabled"),
     config: jsonb("config").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -489,6 +523,22 @@ export const addons = pgTable(
   },
   (t) => ({
     userKindIdx: index("addons_user_kind_idx").on(t.userId, t.kind),
+    // 0060. Both are partial: a plain UNIQUE (user_id, name) would not
+    // constrain the instance rows at all, because NULLs are distinct in a
+    // Postgres unique index.
+    //
+    // Caveat on `addons_user_name_unique`: 0060 only creates it when the
+    // data already satisfies it (duplicates were reachable through POST
+    // /api/addons and are not deleted by a migration). On a database that
+    // had duplicates it will be absent — resolution stays deterministic
+    // regardless, every resolver query orders by created_at before LIMIT 1.
+    nameIdx: index("addons_name_idx").on(t.name),
+    instanceNameUnique: uniqueIndex("addons_instance_name_unique")
+      .on(t.name)
+      .where(sql`user_id is null`),
+    userNameUnique: uniqueIndex("addons_user_name_unique")
+      .on(t.userId, t.name)
+      .where(sql`user_id is not null`),
   }),
 );
 
@@ -914,25 +964,46 @@ export type NewAgentMessageRow = typeof agentMessages.$inferInsert;
 // an MCP-compatible HTTP endpoint the user wants Companion to expose
 // as tools to the LLM. The slug namespaces the tool names so a Notion
 // `search` doesn't collide with a Qdrant `search`.
+// INSTANCE ROWS + PER-USER OVERRIDES since 0060, same shape as `addons`.
+//
+// `user_id IS NULL` = an instance row: a server the deployment declares for
+// everyone. A user row of the same `slug` wins over it, column by column,
+// which means a user row may be PARTIAL — in particular the "ghost" the
+// OAuth flow materialises, which carries the caller's tokens and leaves
+// name / url / transport NULL so it keeps following the instance server.
+//
+// HARD BOUNDARY: oauth_access_token, oauth_refresh_token,
+// oauth_client_secret, oauth_expires_at and oauth_scopes are NEVER read
+// from an instance row and never written to one. They are per user. See
+// server/lib/instance-rows.ts and the header of 0060.
+//
+// Reads go through `resolveMcpServersForUser` / `resolveMcpServerBySlug`,
+// not through `eq(mcpServers.userId, userId)`.
 export const mcpServers = pgTable(
   "mcp_servers",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    /** Lowercased ascii, unique per user. Used to prefix tool names
-     *  (`mcp_<slug>_<tool>`) so they don't collide with built-in tools
-     *  or with each other. */
+    /** Nullable since 0060 — NULL = instance row. */
+    userId: uuid("user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
+    /** Nullable on a user row since 0060 (a partial override inherits the
+     *  instance server's name). Always set on an instance row — CHECK
+     *  `mcp_servers_instance_complete`. Same for transport / url /
+     *  auth_kind / enabled below. */
+    name: text("name"),
+    /** Lowercased ascii, unique per user AND unique among instance rows.
+     *  Used to prefix tool names (`mcp_<slug>_<tool>`) so they don't
+     *  collide with built-in tools or with each other, and — since 0060 —
+     *  as the identity that pairs a user row with its instance row. */
     slug: text("slug").notNull(),
     /** 'streamable_http' (modern) | 'sse' (legacy). stdio deliberately
      *  unsupported — child-process spawning inside Docker is painful
      *  and every hosted MCP server exposes an HTTP variant. */
-    transport: text("transport").notNull(),
-    url: text("url").notNull(),
+    transport: text("transport"),
+    url: text("url"),
     /** 'bearer' (static authHeader) | 'oauth' (OAuth fields) | 'none'. */
-    authKind: text("auth_kind").notNull().default("bearer"),
+    authKind: text("auth_kind"),
     /** Full header value verbatim, e.g. "Bearer sk_test_…". Used when
      *  authKind = 'bearer'. */
     authHeader: text("auth_header"),
@@ -953,9 +1024,16 @@ export const mcpServers = pgTable(
     oauthRefreshToken: text("oauth_refresh_token"),
     oauthExpiresAt: timestamp("oauth_expires_at", { withTimezone: true }),
     oauthScopes: text("oauth_scopes").array(),
-    enabled: boolean("enabled").notNull().default(true),
+    /** Nullable since 0060 — NULL on a user row = inherit the instance
+     *  row's switch. This is how a user opts OUT of a shared server
+     *  (explicit false) without freezing the instance's value the day they
+     *  merely change a preference. */
+    enabled: boolean("enabled"),
     /** Last `tools/list` snapshot. Refreshed lazily (5 min TTL) or on
-     *  explicit POST /refresh. Avoids a round-trip per chat turn. */
+     *  explicit POST /refresh. Avoids a round-trip per chat turn.
+     *  Shared on the instance row for bearer/none servers (same answer for
+     *  everyone); kept per user for oauth servers, where the list is
+     *  scoped to the authorizing account. */
     toolsCache: jsonb("tools_cache").$type<
       Array<{
         name: string;
@@ -974,10 +1052,22 @@ export const mcpServers = pgTable(
   },
   (t) => ({
     userIdx: index("mcp_servers_user_id_idx").on(t.userId),
+    // NOTE: 0029 declared this inline, so the object Postgres actually
+    // created is the constraint `mcp_servers_user_id_slug_key` and its
+    // implicit index — this Drizzle name has never existed in the
+    // database. Left as-is (it constrains the right thing) but do not
+    // write a DROP against this identifier.
     slugUnique: uniqueIndex("mcp_servers_user_slug_unique").on(
       t.userId,
       t.slug,
     ),
+    // 0060 — the instance rows all have user_id NULL, and NULLs are
+    // distinct in a unique index, so the constraint above does not
+    // constrain them. Partial index does.
+    slugIdx: index("mcp_servers_slug_idx").on(t.slug),
+    instanceSlugUnique: uniqueIndex("mcp_servers_instance_slug_unique")
+      .on(t.slug)
+      .where(sql`user_id is null`),
   }),
 );
 
@@ -1172,6 +1262,11 @@ export const globalSettings = pgTable("global_settings", {
   // real boolean.
   litellmDisabled: boolean("litellm_disabled").notNull().default(false),
   defaultModel: text("default_model"),
+  // 0060 — the deployment's timezone, inherited by every account whose own
+  // users.timezone is NULL. NOT NULL for the same reason as engineMode: the
+  // chain has to terminate on a real IANA zone, Intl.DateTimeFormat throws
+  // RangeError on "" and silently uses the container's zone on undefined.
+  timezone: text("timezone").notNull().default("UTC"),
 
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()

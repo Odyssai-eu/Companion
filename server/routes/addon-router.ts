@@ -13,12 +13,18 @@
  * with a helpful error if not.
  */
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { addons } from "../db/schema";
+import {
+  materializeUserAddon,
+  pruneInheritedEchoes,
+  readOwnAddonConfig,
+  resolveKnownAddon,
+} from "../lib/instance-rows";
 import {
   buildAnchorCentroids,
   routeMessage,
@@ -35,29 +41,17 @@ const routerRoute = new Hono<Env>();
 
 const ADDON_NAME = "Auto Router";
 
-async function findOrInit(userId: string) {
-  const [existing] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (existing) return existing;
-  const [created] = await db
-    .insert(addons)
-    .values({
-      userId,
-      name: ADDON_NAME,
-      kind: "plugin",
-      description:
-        "Pick the right model automatically based on what you're asking. " +
-        "Routes conversation, deep analysis, and code to the model that " +
-        "handles each best. Requires an OpenAI-compatible embeddings " +
-        "endpoint — point it at any service that exposes one.",
-      version: "0.1.0",
-      enabled: false,
-    })
-    .returning();
-  return created;
+/** Own row over instance row, key by key. Replaces findOrInit(): resolution
+ *  never writes.
+ *
+ *  `embeddingsModel`, `anchorCentroids` and `anchorsBuiltAt` are paired to
+ *  `embeddingsUrl` (PAIRED_CONFIG_KEYS in server/lib/instance-rows.ts): a
+ *  user pointing at their own embedding service inherits none of the
+ *  three, because centroids computed elsewhere have the wrong dimensions
+ *  and the wrong geometry — this route already rebuilds them whenever the
+ *  URL changes, for exactly that reason. */
+async function loadRouterAddon(userId: string) {
+  return resolveKnownAddon(userId, ADDON_NAME);
 }
 
 function readConfig(addon: { config: Record<string, unknown> | null }): RouterConfig {
@@ -97,14 +91,10 @@ export type RouterAddonState = {
 export async function loadRouterAddonForUser(
   userId: string,
 ): Promise<RouterAddonState> {
-  const [row] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (!row) {
-    return { cfg: null, ready: false, reason: "the Auto Router add-on has never been set up" };
-  }
+  const row = await loadRouterAddon(userId);
+  // "No row" no longer exists as a state: the catalogue always resolves, so
+  // the honest reason for an unconfigured router is now "never set up",
+  // meaning neither this account nor the instance has configured it.
   const cfg = readConfig(row);
   if (!row.enabled) {
     return { cfg, ready: false, reason: "the Auto Router add-on is turned off" };
@@ -137,10 +127,12 @@ export async function loadRouterConfigForUser(
 
 routerRoute.get("/info", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInit(userId);
+  const addon = await loadRouterAddon(userId);
   const cfg = readConfig(addon);
   return c.json({
     addonId: addon.id,
+    inherited: addon.inherited,
+    inheritedConfigKeys: addon.inheritedConfigKeys,
     enabled: addon.enabled,
     configured: Boolean(cfg.embeddingsUrl && cfg.anchorCentroids),
     embeddingsUrl: cfg.embeddingsUrl ?? "",
@@ -212,33 +204,68 @@ routerRoute.put(
       );
     }
 
-    const addon = await findOrInit(userId);
-    const cfg = readConfig(addon);
+    // Copy-on-write + delta write — see the note in addon-parser.ts. `eff`
+    // is what the router is actually running on right now (own over
+    // instance); `cfg` is the caller's own config and the only thing that
+    // gets written back.
+    const eff = readConfig(await loadRouterAddon(userId));
+    const ownId = await materializeUserAddon(userId, ADDON_NAME);
+    // The RAW own blob, not readConfig()'s output: readConfig substitutes
+    // DEFAULT_POLICY for an absent `policy` (l.61), so writing its result
+    // back would stamp an empty {chat:"",deep:"",code:""} onto the caller's
+    // row as a real override the moment they save anything else — and that
+    // override then shadows the instance policy for good. Absent stays
+    // absent; a key is written only when this request carries it, and
+    // clearing a field DELETES the key so it inherits again.
+    const own = { ...((await readOwnAddonConfig(userId, ADDON_NAME)) ?? {}) };
+    // Own keys before this request — see pruneInheritedEchoes.
+    const before = { ...own };
+    const setOrClear = (key: string, value: string | undefined) => {
+      if (value) own[key] = value;
+      else delete own[key];
+    };
 
-    if (typeof data.embeddingsUrl === "string") cfg.embeddingsUrl = data.embeddingsUrl;
+    if (typeof data.embeddingsUrl === "string") {
+      setOrClear("embeddingsUrl", data.embeddingsUrl);
+    }
     if (data.embeddingsModel !== undefined) {
-      cfg.embeddingsModel = data.embeddingsModel ?? undefined;
+      setOrClear("embeddingsModel", data.embeddingsModel ?? undefined);
     }
-    if (data.policy) cfg.policy = data.policy;
+    if (data.policy) own.policy = data.policy;
     if (data.fallbackModel !== undefined) {
-      cfg.fallbackModel = data.fallbackModel?.trim() || undefined;
+      setOrClear("fallbackModel", data.fallbackModel?.trim() || undefined);
     }
+    const cfg = readConfig({ config: own });
 
     // Rebuild centroids if URL changed or explicitly requested. A URL
     // change implies the old embeddings may come from a different model
     // (different dim, different geometry) so the centroids are useless.
+    //
+    // Compared against the caller's OWN previous URL, not the effective
+    // one: the moment they write a URL of their own they stop inheriting
+    // the instance's centroids (they are paired to the URL — see
+    // instance-rows.ts), so a first personal URL always needs a rebuild
+    // even when it happens to equal the instance's.
+    const ownBefore = readConfig({
+      config: await readOwnAddonConfig(userId, ADDON_NAME),
+    });
     const urlChanged =
       typeof data.embeddingsUrl === "string" &&
-      data.embeddingsUrl !== readConfig(addon).embeddingsUrl;
+      data.embeddingsUrl !== ownBefore.embeddingsUrl;
     const needRebuild = data.rebuildAnchors === true || urlChanged;
 
-    if (needRebuild && cfg.embeddingsUrl) {
+    // Fall back to the inherited endpoint so a plain "rebuild" from an
+    // account that inherits everything still works; the centroids it
+    // produces land on that account's own row.
+    const rebuildUrl = cfg.embeddingsUrl ?? eff.embeddingsUrl;
+    const rebuildModel = cfg.embeddingsModel ?? eff.embeddingsModel;
+    if (needRebuild && rebuildUrl) {
       try {
-        cfg.anchorCentroids = await buildAnchorCentroids(
-          cfg.embeddingsUrl,
-          cfg.embeddingsModel,
+        own.anchorCentroids = await buildAnchorCentroids(
+          rebuildUrl,
+          rebuildModel,
         );
-        cfg.anchorsBuiltAt = new Date().toISOString();
+        own.anchorsBuiltAt = new Date().toISOString();
       } catch (e) {
         const msg =
           e instanceof EmbeddingServiceError
@@ -253,17 +280,14 @@ routerRoute.put(
       updatedAt: Date;
       enabled?: boolean;
     } = {
-      config: cfg as unknown as Record<string, unknown>,
+      config: await pruneInheritedEchoes(ADDON_NAME, before, own),
       updatedAt: new Date(),
     };
     if (typeof data.enabled === "boolean") updatedPatch.enabled = data.enabled;
 
-    const [updated] = await db
-      .update(addons)
-      .set(updatedPatch)
-      .where(eq(addons.id, addon.id))
-      .returning();
+    await db.update(addons).set(updatedPatch).where(eq(addons.id, ownId));
 
+    const updated = await loadRouterAddon(userId);
     const out = readConfig(updated);
     return c.json({
       ok: true,
@@ -280,17 +304,32 @@ routerRoute.put(
 
 routerRoute.post("/rebuild", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInit(userId);
-  const cfg = readConfig(addon);
-  if (!cfg.embeddingsUrl) {
+  // Rebuild against the EFFECTIVE endpoint, persist onto the caller's OWN
+  // row. Anything else would have this route write a shared cache from an
+  // unprivileged request.
+  const eff = readConfig(await loadRouterAddon(userId));
+  if (!eff.embeddingsUrl) {
     return c.json({ error: "not_configured" }, 400);
   }
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  // Patch the RAW own config, never the object `readConfig()` returns.
+  // readConfig substitutes DEFAULT_POLICY for an absent `policy` (l.61) and
+  // spells every other key out as undefined; persisting its output would
+  // write those materialised defaults onto the caller's row. For an inheritor
+  // that means an empty {chat:"",deep:"",code:""} policy landing as a real
+  // override that shadows the instance's — after which every turn hits the
+  // "no model is mapped to that bucket" guard in chat.ts. One click on
+  // Rebuild, and the routing this add-on exists to do is silently dead.
+  // Only the two anchor keys belong to this route.
+  const own = { ...((await readOwnAddonConfig(userId, ADDON_NAME)) ?? {}) };
+  let anchorsBuiltAt: string;
   try {
-    cfg.anchorCentroids = await buildAnchorCentroids(
-      cfg.embeddingsUrl,
-      cfg.embeddingsModel,
+    own.anchorCentroids = await buildAnchorCentroids(
+      eff.embeddingsUrl,
+      eff.embeddingsModel,
     );
-    cfg.anchorsBuiltAt = new Date().toISOString();
+    anchorsBuiltAt = new Date().toISOString();
+    own.anchorsBuiltAt = anchorsBuiltAt;
   } catch (e) {
     const msg =
       e instanceof EmbeddingServiceError
@@ -300,9 +339,9 @@ routerRoute.post("/rebuild", async (c) => {
   }
   await db
     .update(addons)
-    .set({ config: cfg as unknown as Record<string, unknown>, updatedAt: new Date() })
-    .where(eq(addons.id, addon.id));
-  return c.json({ ok: true, anchorsBuiltAt: cfg.anchorsBuiltAt });
+    .set({ config: own, updatedAt: new Date() })
+    .where(eq(addons.id, ownId));
+  return c.json({ ok: true, anchorsBuiltAt });
 });
 
 const testSchema = z.object({
@@ -311,7 +350,7 @@ const testSchema = z.object({
 
 routerRoute.post("/test", zValidator("json", testSchema), async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInit(userId);
+  const addon = await loadRouterAddon(userId);
   const cfg = readConfig(addon);
   if (!cfg.embeddingsUrl) {
     return c.json({ error: "not_configured" }, 400);

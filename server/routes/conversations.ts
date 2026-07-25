@@ -648,7 +648,7 @@ conversationsRoute.post(
 
     const [user] = await db
       .select({
-        timezone: users.timezone,
+        // `timezone` is part of CONNECTION_COLUMNS since 0060.
         ...CONNECTION_COLUMNS,
       })
       .from(users)
@@ -680,7 +680,12 @@ conversationsRoute.post(
       globalMemory: null,
     });
 
-    const tz = user.timezone || "UTC";
+    // Resolved, not raw (0060). `user.timezone` is a nullable override of
+    // `global_settings.timezone`; `|| "UTC"` here would have made every
+    // prewarmed prefix diverge from what chat.ts actually sends for an
+    // inheriting account — and a diverging prefix is a cache miss, which is
+    // the one thing prewarm exists to avoid.
+    const tz = conn.timezone;
     type WireMsg = { role: string; content: string; createdAt?: string };
     // Build a tag-ready intermediate (Date instances) so the builder gets
     // the same types chat.ts feeds it.

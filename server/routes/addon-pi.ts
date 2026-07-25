@@ -11,12 +11,18 @@
  * serves as the on/off switch (mirror of addon-hermes.ts).
  */
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { addons } from "../db/schema";
+import {
+  materializeUserAddon,
+  pruneInheritedEchoes,
+  readOwnAddonConfig,
+  resolveKnownAddon,
+} from "../lib/instance-rows";
 
 type Env = { Variables: { userId: string } };
 const piRoute = new Hono<Env>();
@@ -29,52 +35,36 @@ export type PiAddonConfig = {
   cwd?: string;
 };
 
-export async function findOrInitPiAddon(userId: string) {
-  const [existing] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (existing) return existing;
-  const [created] = await db
-    .insert(addons)
-    .values({
-      userId,
-      name: ADDON_NAME,
-      kind: "plugin",
-      description:
-        "Type /pi in chat to open a Pi coding-agent sub-thread. Pi can " +
-        "read, write, edit files and run shell commands on its host " +
-        "machine. Requires a thecompai-pi-bridge HTTP endpoint " +
-        "reachable from Companion.",
-      version: "0.1.0",
-      enabled: false,
-    })
-    .returning();
-  return created;
+/** The add-on as this user sees it — own row over instance row, key by
+ *  key. Replaces findOrInitPiAddon(): resolution never writes.
+ *
+ *  `bridgeToken` is inherited only while `bridgeUrl` is
+ *  (PAIRED_CONFIG_KEYS in server/lib/instance-rows.ts). `cwd` is NOT
+ *  paired: it is a plain preference, and inheriting the operator's working
+ *  directory is a sensible starting point a user can override. */
+async function loadPiAddon(userId: string) {
+  return resolveKnownAddon(userId, ADDON_NAME);
 }
 
 /** Loaded by chat-side code on `/pi` to know where to send prompts. */
 export async function loadPiConfigForUser(
   userId: string,
-): Promise<(PiAddonConfig & { addonId: string }) | null> {
-  const [row] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (!row || !row.enabled) return null;
-  const cfg = (row.config ?? {}) as PiAddonConfig;
+): Promise<(PiAddonConfig & { addonId: string | null }) | null> {
+  const row = await loadPiAddon(userId);
+  if (!row.enabled) return null;
+  const cfg = row.config as PiAddonConfig;
   if (!cfg.bridgeUrl) return null;
   return { ...cfg, addonId: row.id };
 }
 
 piRoute.get("/info", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitPiAddon(userId);
-  const cfg = (addon.config ?? {}) as PiAddonConfig;
+  const addon = await loadPiAddon(userId);
+  const cfg = addon.config as PiAddonConfig;
   return c.json({
     addonId: addon.id,
+    inherited: addon.inherited,
+    inheritedConfigKeys: addon.inheritedConfigKeys,
     enabled: addon.enabled,
     configured: Boolean(cfg.bridgeUrl),
     bridgeUrl: cfg.bridgeUrl ?? "",
@@ -93,8 +83,13 @@ const configSchema = z.object({
 piRoute.put("/config", zValidator("json", configSchema), async (c) => {
   const userId = c.get("userId");
   const data = c.req.valid("json");
-  const addon = await findOrInitPiAddon(userId);
-  const cfg = { ...((addon.config ?? {}) as PiAddonConfig) };
+  // Copy-on-write + delta write — see the note in addon-parser.ts.
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  const cfg = (await readOwnAddonConfig(userId, ADDON_NAME)) as PiAddonConfig;
+  // Which keys were ALREADY the user's own, before this request touched
+  // anything. pruneInheritedEchoes needs it to tell a real override from the
+  // form echoing back a value it only displayed because it was inherited.
+  const before = { ...cfg } as Record<string, unknown>;
   if (data.bridgeUrl !== undefined) cfg.bridgeUrl = data.bridgeUrl;
   if (data.bridgeToken !== undefined) {
     cfg.bridgeToken = data.bridgeToken ?? undefined;
@@ -107,17 +102,18 @@ piRoute.put("/config", zValidator("json", configSchema), async (c) => {
     updatedAt: Date;
     enabled?: boolean;
   } = {
-    config: cfg as unknown as Record<string, unknown>,
+    config: await pruneInheritedEchoes(
+      ADDON_NAME,
+      before,
+      cfg as unknown as Record<string, unknown>,
+    ),
     updatedAt: new Date(),
   };
   if (typeof data.enabled === "boolean") patch.enabled = data.enabled;
 
-  const [updated] = await db
-    .update(addons)
-    .set(patch)
-    .where(eq(addons.id, addon.id))
-    .returning();
-  const out = (updated.config ?? {}) as PiAddonConfig;
+  await db.update(addons).set(patch).where(eq(addons.id, ownId));
+  const updated = await loadPiAddon(userId);
+  const out = updated.config as PiAddonConfig;
   return c.json({
     ok: true,
     enabled: updated.enabled,
@@ -130,8 +126,8 @@ piRoute.put("/config", zValidator("json", configSchema), async (c) => {
 
 piRoute.post("/probe", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitPiAddon(userId);
-  const cfg = (addon.config ?? {}) as PiAddonConfig;
+  const addon = await loadPiAddon(userId);
+  const cfg = addon.config as PiAddonConfig;
   if (!cfg.bridgeUrl) {
     return c.json({ error: "not_configured" }, 400);
   }

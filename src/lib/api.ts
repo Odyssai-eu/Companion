@@ -88,6 +88,8 @@ export type ApiConnectionOverrides = {
   engineUrl: string | null;
   hasEngineToken: boolean;
   engineMode: "gateway" | "hybrid" | "legacy" | null;
+  /** 0060 — null means "inherit the instance timezone". */
+  timezone: string | null;
 };
 
 /** The shared instance defaults. Used for placeholders and hints. */
@@ -99,6 +101,8 @@ export type ApiInstanceConnection = {
   engineUrl: string | null;
   hasEngineToken: boolean;
   engineMode: "gateway" | "hybrid" | "legacy";
+  /** 0060 — the deployment's timezone. Always a real IANA zone. */
+  timezone: string;
 };
 
 /**
@@ -126,6 +130,7 @@ export type ApiInheritedFlags = {
   engineToken: boolean;
   engineMode: boolean;
   engineMeta: boolean;
+  timezone: boolean;
 };
 
 export type ApiInferenceSettings = {
@@ -249,7 +254,10 @@ export type ApiInferencePresetInput = {
 };
 
 export type ApiMcpServer = {
+  /** The caller's row if they have one, else the instance row's (0060). */
   id: string;
+  /** Non-null only when the caller has a row of their own. */
+  ownRowId: string | null;
   name: string;
   slug: string;
   transport: "streamable_http" | "sse";
@@ -265,6 +273,20 @@ export type ApiMcpServer = {
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
+  /** True when this card is the instance's, not the caller's own (0060). */
+  inherited: boolean;
+  /**
+   * True when the caller's own row sits on TOP of an instance row of the
+   * same slug. Deleting it goes back to the shared configuration instead
+   * of removing the server.
+   */
+  overridesInstance: boolean;
+  /**
+   * True when THIS caller completed the OAuth dance. Distinct from
+   * `inherited`: an instance row can declare an OAuth server nobody on this
+   * account has authorized yet, and the UI must still offer Connect.
+   */
+  oauthConnectedByMe: boolean;
 };
 
 export type ApiMcpServerInput = {
@@ -421,17 +443,41 @@ export type ApiUserMemorySettings = {
   memoryMode: "basic" | "advanced";
 };
 
+/**
+ * One add-on card as the caller sees it (0060). An EFFECTIVE view, not a
+ * row: the values may come from the caller's own row, from the instance
+ * row every account inherits, or — when neither exists yet — from the
+ * build's catalogue, in which case `id` is null.
+ *
+ * Address writes by `name`, never by `id`: `id` can be the shared row's,
+ * and `api.setAddonByName` is what performs the copy-on-write.
+ */
 export type ApiAddon = {
-  id: string;
-  userId: string;
+  /** The caller's row if they have one, else the instance row's, else null. */
+  id: string | null;
+  /** Non-null only when the caller has a row of their own. */
+  ownRowId: string | null;
+  userId: string | null;
   name: string;
   kind: "core" | "plugin" | "mcp";
   description: string | null;
   version: string | null;
   enabled: boolean;
-  config: Record<string, unknown> | null;
-  createdAt: string;
-  updatedAt: string;
+  /** Secrets and the bulky router centroids are stripped — see configHas. */
+  config: Record<string, unknown>;
+  /** `true` for a stripped key that IS set, `false` when it is not. */
+  configHas: Record<string, boolean>;
+  /** True when the caller has no row: everything comes from the instance. */
+  inherited: boolean;
+  /** Config keys whose effective value came from the instance row. */
+  inheritedConfigKeys: string[];
+  /**
+   * True when the caller's own row sits on TOP of an instance row of the
+   * same name. The ONLY condition under which "Reset to instance settings"
+   * is a reset: with no instance row behind it, dropping the override
+   * deletes the only copy of the configuration.
+   */
+  overridesInstance: boolean;
 };
 
 export type ApiProjectCategory = {
@@ -664,7 +710,8 @@ export const api = {
       defaultModel: string | null;
       litellmUrl: string | null;
       litellmApiKey: string | null;
-      timezone: string;
+      /** null / "" = drop the override and inherit the instance zone. */
+      timezone: string | null;
       inferenceMode: ApiInferenceMode;
       easyModel: string | null;
       namedModels: ApiNamedModels | null;
@@ -689,7 +736,7 @@ export const api = {
    * engine_meta, which the PATCH surface doesn't expose.
    */
   resetInferenceToInstance: (
-    scope: "engine" | "litellm" | "defaultModel" | "all",
+    scope: "engine" | "litellm" | "defaultModel" | "timezone" | "all",
   ) =>
     request<{ ok: true; scope: string }>("/api/inference/reset-to-instance", {
       method: "POST",
@@ -1306,13 +1353,43 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  /**
+   * Edit an add-on BY IDENTITY (0060). This is the one to use: a card may
+   * be inherited from the instance or exist only in the catalogue, so it
+   * has no row id of the caller's to address. The server materialises
+   * their own row if needed and applies the patch there — it never writes
+   * the shared row.
+   *
+   * `enabled: null` drops the switch override and goes back to following
+   * the instance.
+   */
+  setAddonByName: (
+    name: string,
+    body: Partial<{
+      description: string | null;
+      version: string | null;
+      enabled: boolean | null;
+      config: Record<string, unknown> | null;
+    }>,
+  ) =>
+    request<{ addon: ApiAddon }>(
+      `/api/addons/by-name/${encodeURIComponent(name)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+  /** "Reset to instance settings" — delete the caller's override row. */
+  resetAddonToInstance: (name: string) =>
+    request<{ ok: true; addon: ApiAddon }>(
+      `/api/addons/by-name/${encodeURIComponent(name)}/override`,
+      { method: "DELETE" },
+    ),
+  /** @deprecated 0060 — prefer setAddonByName; an inherited card's `id` is
+   *  the instance row's and only resolves to a copy-on-write server-side. */
   updateAddon: (
     id: string,
     body: Partial<{
-      name: string;
       description: string | null;
       version: string | null;
-      enabled: boolean;
+      enabled: boolean | null;
       config: Record<string, unknown> | null;
     }>,
   ) =>
@@ -1326,7 +1403,7 @@ export const api = {
   // Obsidian add-on
   obsidianInfo: () =>
     request<{
-      addonId: string;
+      addonId: string | null;
       enabled: boolean;
       hasToken: boolean;
       lastSyncedAt: string | null;
@@ -1342,7 +1419,7 @@ export const api = {
 
   // Web Search (Tavily) add-on
   tavilyInfo: () =>
-    request<{ addonId: string; enabled: boolean; hasKey: boolean }>(
+    request<{ addonId: string | null; enabled: boolean; hasKey: boolean }>(
       "/api/addons/tavily/info",
     ),
   tavilySetKey: (key: string) =>
@@ -1407,7 +1484,7 @@ export const api = {
   // new architecture: ACP bridge on the user's machine.
   hermesAddonInfo: () =>
     request<{
-      addonId: string;
+      addonId: string | null;
       enabled: boolean;
       configured: boolean;
       bridgeUrl: string;
@@ -1455,7 +1532,7 @@ export const api = {
   // session jsonl on disk there, not in Companion's DB.
   piAddonInfo: () =>
     request<{
-      addonId: string;
+      addonId: string | null;
       enabled: boolean;
       configured: boolean;
       bridgeUrl: string;
@@ -1502,7 +1579,7 @@ export const api = {
   // so a single call yields one image back.
   comfyuiAddonInfo: () =>
     request<{
-      addonId: string;
+      addonId: string | null;
       enabled: boolean;
       configured: boolean;
       bridgeUrl: string;
@@ -1631,7 +1708,7 @@ export const api = {
   // Parser add-on (Docling — parse documents to markdown before send)
   parserAddonInfo: () =>
     request<{
-      addonId: string;
+      addonId: string | null;
       enabled: boolean;
       url: string;
       pdfMode: "text" | "vision";
@@ -1691,7 +1768,7 @@ export const api = {
   // Auto Router add-on (semantic routing via embeddings)
   routerInfo: () =>
     request<{
-      addonId: string;
+      addonId: string | null;
       enabled: boolean;
       configured: boolean;
       embeddingsUrl: string;
@@ -1746,7 +1823,7 @@ export const api = {
   // Voice add-on (local OpenAI-compatible TTS + ASR)
   voiceLiveInfo: () =>
     request<{
-      addonId: string;
+      addonId: string | null;
       enabled: boolean;
       provider: "local";
       ttsEndpoint: string;
@@ -1798,7 +1875,7 @@ export const api = {
 
   // ── Admin Extended ──────────────────────────────────────────────────
   adminExtInfo: () =>
-    request<{ addonId: string; enabled: boolean }>(
+    request<{ addonId: string | null; enabled: boolean }>(
       "/api/addons/admin-ext/info",
     ),
 

@@ -23,11 +23,16 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { Hono, type MiddlewareHandler } from "hono";
 import JSZip from "jszip";
 import { db } from "../db/index";
 import { addons, memoryArticles, projects } from "../db/schema";
+import {
+  materializeUserAddon,
+  readOwnAddonConfig,
+  resolveKnownAddon,
+} from "../lib/instance-rows";
 
 type Env = { Variables: { userId: string } };
 
@@ -42,26 +47,22 @@ type AddonConfig = {
   lastSyncedAt?: string; // ISO-8601 — set on each successful download
 };
 
-async function findOrInitAddon(userId: string) {
-  const [existing] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (existing) return existing;
-  const [created] = await db
-    .insert(addons)
-    .values({
-      userId,
-      name: ADDON_NAME,
-      kind: "plugin",
-      description:
-        "Read-only sync of your memory wiki to an Obsidian vault. Install the companion plugin and paste your sync token.",
-      version: "0.1.0",
-      enabled: false,
-    })
-    .returning();
-  return created;
+/**
+ * Own row over instance row. Replaces findOrInitAddon(): resolution never
+ * writes.
+ *
+ * `syncToken` and `lastSyncedAt` are in NEVER_INHERITED_CONFIG_KEYS
+ * (server/lib/instance-rows.ts) and can therefore never arrive from the
+ * instance row, whatever an operator puts there. The token is not
+ * configuration — resolveBearerUser() below turns it into a user id — and
+ * `lastSyncedAt` is per-account state.
+ *
+ * The switch itself still inherits, which is the useful half: an operator
+ * can turn the Obsidian add-on on for the deployment and each user
+ * generates their own token.
+ */
+async function loadObsidianAddon(userId: string) {
+  return resolveKnownAddon(userId, ADDON_NAME);
 }
 
 function newToken(): string {
@@ -77,7 +78,7 @@ function getConfig(addon: { config: unknown }): AddonConfig {
 
 obsidianRoute.get("/info", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitAddon(userId);
+  const addon = await loadObsidianAddon(userId);
   const cfg = getConfig(addon);
 
   const [{ count }] = await db
@@ -87,6 +88,7 @@ obsidianRoute.get("/info", async (c) => {
 
   return c.json({
     addonId: addon.id,
+    inherited: addon.inherited,
     enabled: addon.enabled,
     hasToken: Boolean(cfg.syncToken),
     lastSyncedAt: cfg.lastSyncedAt ?? null,
@@ -99,26 +101,29 @@ obsidianRoute.get("/info", async (c) => {
 
 obsidianRoute.post("/token", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitAddon(userId);
-  const cfg = getConfig(addon);
+  // Copy-on-write + delta write. Critical here specifically: a token
+  // written onto the instance row would authenticate every vault download
+  // as whoever's row it landed on.
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  const cfg = (await readOwnAddonConfig(userId, ADDON_NAME)) as AddonConfig;
   const token = newToken();
   cfg.syncToken = token;
   await db
     .update(addons)
     .set({ config: cfg, updatedAt: new Date() })
-    .where(eq(addons.id, addon.id));
+    .where(eq(addons.id, ownId));
   return c.json({ token });
 });
 
 obsidianRoute.delete("/token", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitAddon(userId);
-  const cfg = getConfig(addon);
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  const cfg = (await readOwnAddonConfig(userId, ADDON_NAME)) as AddonConfig;
   cfg.syncToken = undefined;
   await db
     .update(addons)
     .set({ config: cfg, updatedAt: new Date() })
-    .where(eq(addons.id, addon.id));
+    .where(eq(addons.id, ownId));
   return c.body(null, 204);
 });
 
@@ -140,8 +145,17 @@ async function resolveBearerUser(
   const [row] = await db
     .select({ userId: addons.userId, addonId: addons.id })
     .from(addons)
+    // 0060: instance rows have user_id NULL and this query has no user
+    // filter by design (it is a token → user lookup). A token sitting on
+    // an instance row cannot identify anybody, and matching one would
+    // return null further down and read as a mysterious 401 — so exclude
+    // them and keep looking. Belt and braces: the resolver already refuses
+    // to inherit syncToken, and nothing writes one to an instance row.
     .where(
-      sql`${addons.name} = ${ADDON_NAME} AND ${addons.config} @> ${JSON.stringify({ syncToken: token })}::jsonb`,
+      and(
+        isNotNull(addons.userId),
+        sql`${addons.name} = ${ADDON_NAME} AND ${addons.config} @> ${JSON.stringify({ syncToken: token })}::jsonb`,
+      ),
     )
     .limit(1);
   return row?.userId ?? null;
@@ -161,7 +175,7 @@ obsidianRoute.get("/vault.zip", async (c) => {
   if (!userId) return c.json({ error: "unauthorized" }, 401);
 
   // Make sure the add-on is enabled. If the user disabled it we don't serve.
-  const addon = await findOrInitAddon(userId);
+  const addon = await loadObsidianAddon(userId);
   if (!addon.enabled) {
     return c.json({ error: "addon_disabled" }, 403);
   }
@@ -255,13 +269,18 @@ obsidianRoute.get("/vault.zip", async (c) => {
     zip.file(folder, fm + a.body);
   }
 
-  // Mark this as a successful sync.
-  const cfg = getConfig(addon);
+  // Mark this as a successful sync. A write on a read path, so it needs
+  // the same copy-on-write discipline as everything else: `addon.id` is
+  // the INSTANCE row's id for a user who inherits the switch, and stamping
+  // lastSyncedAt there would date every account's last sync from one
+  // person's download.
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  const cfg = (await readOwnAddonConfig(userId, ADDON_NAME)) as AddonConfig;
   cfg.lastSyncedAt = new Date().toISOString();
   await db
     .update(addons)
     .set({ config: cfg, updatedAt: new Date() })
-    .where(eq(addons.id, addon.id));
+    .where(eq(addons.id, ownId));
 
   const buf = await zip.generateAsync({ type: "uint8array" });
   c.header("Content-Type", "application/zip");

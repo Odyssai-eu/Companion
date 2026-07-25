@@ -22,13 +22,21 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { isLocalAgentConnected, localAgentExecute } from "../routes/local-agent";
 import { db } from "../db/index";
-import { addons, agentSkills, mcpServers } from "../db/schema";
+import { agentSkills, mcpServers } from "../db/schema";
 import {
   callTool as callMcpTool,
   fetchTools as fetchMcpTools,
   parseMcpToolName,
   type McpToolSpec,
 } from "./mcp-client";
+import {
+  invalidateInstanceMcpServers,
+  mcpOwnWriteTargetId,
+  mcpStateTargetId,
+  resolveKnownAddon,
+  resolveMcpServerBySlug,
+  resolveMcpServersForUser,
+} from "./instance-rows";
 import { parseSkillMd, SkillParseError } from "./skill-format";
 import { fsEdit, fsList, fsRead, fsWrite, WorkspaceError } from "./workspace";
 import { loadComfyuiConfigForUser } from "../routes/addon-comfyui";
@@ -605,12 +613,22 @@ export async function toolsForUser(userId: string): Promise<unknown[]> {
 const MCP_CACHE_TTL_MS = 5 * 60 * 1000;
 
 async function collectMcpTools(userId: string): Promise<unknown[]> {
-  const rows = await db
-    .select()
-    .from(mcpServers)
-    .where(and(eq(mcpServers.userId, userId), eq(mcpServers.enabled, true)));
+  // Instance rows overridden by the caller's own, by slug (0060). One
+  // query on their rows plus the cached instance list — same budget as the
+  // single query this used to be.
+  //
+  // `enabled` is filtered HERE, in JS, and deliberately not in SQL. The
+  // old `AND enabled = true` predicate would, extended naively, drop a
+  // user row saying `enabled = false` — which is precisely how someone
+  // opts out of a shared server — leave the instance row's `true`
+  // standing, and keep the tools exposed. Identity first, switch second.
+  const rows = (await resolveMcpServersForUser(userId)).filter((r) => r.enabled);
   const out: unknown[] = [];
   for (const row of rows) {
+    // Where the tools cache and any error belong for this server: the
+    // shared row for a shared credential, the caller's own row for OAuth,
+    // nowhere at all for an OAuth server they have not authorized.
+    const stateId = mcpStateTargetId(row);
     let tools = row.toolsCache;
     const stale =
       !row.toolsCacheAt ||
@@ -618,43 +636,64 @@ async function collectMcpTools(userId: string): Promise<unknown[]> {
     // Synchronous refresh only when we have nothing at all to show.
     // Stale caches get returned now and refreshed in the background so
     // the chat turn doesn't wait on a 3rd-party server.
+    // When the write lands on the SHARED row it also has to drop the 30 s
+    // memo of the instance rows, or the next turns keep reading the stale
+    // pre-write copy: with an empty cache that means a synchronous
+    // third-party fetch on every chat turn for 30 s, and with a stale one
+    // a duplicate background refresh per turn. Invalidation happens once
+    // per TTL window, not per turn, so the memo still does its job.
+    const afterWrite = () => {
+      if (stateId && stateId === row.instanceRowId) {
+        invalidateInstanceMcpServers();
+      }
+    };
     if (!tools || tools.length === 0) {
       try {
         tools = await fetchMcpTools(row);
-        await db
-          .update(mcpServers)
-          .set({
-            toolsCache: tools,
-            toolsCacheAt: new Date(),
-            lastError: null,
-          })
-          .where(eq(mcpServers.id, row.id));
+        if (stateId) {
+          await db
+            .update(mcpServers)
+            .set({
+              toolsCache: tools,
+              toolsCacheAt: new Date(),
+              lastError: null,
+            })
+            .where(eq(mcpServers.id, stateId));
+          afterWrite();
+        }
       } catch (e) {
-        await db
-          .update(mcpServers)
-          .set({ lastError: (e as Error).message })
-          .where(eq(mcpServers.id, row.id));
+        if (stateId) {
+          await db
+            .update(mcpServers)
+            .set({ lastError: (e as Error).message })
+            .where(eq(mcpServers.id, stateId));
+          afterWrite();
+        }
         continue;
       }
     } else if (stale) {
       // Fire-and-forget refresh. Don't block the chat turn.
       void fetchMcpTools(row)
-        .then((fresh) =>
-          db
+        .then(async (fresh) => {
+          if (!stateId) return;
+          await db
             .update(mcpServers)
             .set({
               toolsCache: fresh,
               toolsCacheAt: new Date(),
               lastError: null,
             })
-            .where(eq(mcpServers.id, row.id)),
-        )
-        .catch((e) =>
-          db
+            .where(eq(mcpServers.id, stateId));
+          afterWrite();
+        })
+        .catch(async (e) => {
+          if (!stateId) return;
+          await db
             .update(mcpServers)
             .set({ lastError: (e as Error).message })
-            .where(eq(mcpServers.id, row.id)),
-        );
+            .where(eq(mcpServers.id, stateId));
+          afterWrite();
+        });
     }
     for (const t of tools) {
       out.push(toOpenAiTool(row.slug, t));
@@ -794,13 +833,13 @@ async function tavilyExtract(
 type WebSearchConfig = { apiKey?: string };
 
 export async function getWebSearchKey(userId: string): Promise<string | null> {
-  const [row] = await db
-    .select({ enabled: addons.enabled, config: addons.config })
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (!row || !row.enabled) return null;
-  const cfg = (row.config ?? {}) as WebSearchConfig;
+  // Resolved (own row over instance row) since 0060 — a bare
+  // `eq(addons.userId, userId)` cannot see an instance row, and a user who
+  // inherits everything has no row at all. Still one indexed query plus the
+  // cached instance list, so the chat hot path costs what it did before.
+  const row = await resolveKnownAddon(userId, ADDON_NAME);
+  if (!row.enabled) return null;
+  const cfg = row.config as WebSearchConfig;
   return cfg.apiKey ?? null;
 }
 
@@ -1503,25 +1542,31 @@ async function executeMcpTool(
 ): Promise<ToolResult> {
   const parsed = parseMcpToolName(name);
   if (!parsed) return { ok: false, error: `bad MCP tool name: ${name}` };
-  const [row] = await db
-    .select()
-    .from(mcpServers)
-    .where(
-      and(eq(mcpServers.userId, userId), eq(mcpServers.slug, parsed.slug)),
-    )
-    .limit(1);
+  // The SAME resolver collectMcpTools used to build the definition. Two
+  // independent lookups were two chances to disagree; with instance rows
+  // in play, an unordered `limit(1)` over {instance row, user row} could
+  // have handed the model one server's description and Companion the
+  // other's credentials.
+  const row = await resolveMcpServerBySlug(userId, parsed.slug);
   if (!row) return { ok: false, error: `MCP server not found: ${parsed.slug}` };
   if (!row.enabled) {
     return { ok: false, error: `MCP server disabled: ${parsed.slug}` };
   }
   const res = await callMcpTool(row, parsed.tool, args);
   if (!res.ok) {
-    // Persist last_error so the Settings UI surfaces the failure.
-    await db
-      .update(mcpServers)
-      .set({ lastError: res.error ?? "unknown" })
-      .where(eq(mcpServers.id, row.id))
-      .catch(() => undefined);
+    // Persist last_error so the Settings UI surfaces the failure — but
+    // only on a row of the caller's own. A failed INVOCATION is a fact
+    // about one account's turn, not about the deployment, so unlike a
+    // failed tools/list it never lands on the shared instance row where
+    // every other user would read it as their own.
+    const ownId = mcpOwnWriteTargetId(row);
+    if (ownId) {
+      await db
+        .update(mcpServers)
+        .set({ lastError: res.error ?? "unknown" })
+        .where(eq(mcpServers.id, ownId))
+        .catch(() => undefined);
+    }
     return { ok: false, error: res.error ?? "mcp_tool_failed" };
   }
   // Cap at 16k chars — typical Tavily / Qdrant tool responses are 4-10k

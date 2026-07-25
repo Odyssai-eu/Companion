@@ -32,6 +32,7 @@ import producerAddonRoute from "./routes/addon-producer";
 import helpRoute from "./routes/help";
 import { loadCorpus as loadHelpCorpus } from "./lib/help-search";
 import adminGuestTokensRoute from "./routes/admin-guest-tokens";
+import adminInstanceAddonsRoute from "./routes/admin-instance-addons";
 import adminInstanceSettingsRoute from "./routes/admin-instance-settings";
 import adminMemoryHealthRoute from "./routes/admin-memory-health";
 import adminSettingsRoute from "./routes/admin-settings";
@@ -196,6 +197,11 @@ app.route("/api/admin/guest-tokens", adminGuestTokensRoute);
 app.route("/api/admin/audit", auditRoute);
 app.route("/api/admin/settings", adminSettingsRoute);
 app.route("/api/admin/instance-settings", adminInstanceSettingsRoute);
+// 0060 — the shared add-ons and MCP servers every account inherits. One
+// router serving two prefixes because they are the same admin surface;
+// mounted at /api/admin so the paths read
+// /api/admin/instance-addons and /api/admin/instance-mcp-servers.
+app.route("/api/admin", adminInstanceAddonsRoute);
 app.route("/api/admin/memory/health", adminMemoryHealthRoute);
 app.route("/api/admin/nemo-sync", nemoSyncRoute);
 app.route("/api/local-agent", localAgentRoute);

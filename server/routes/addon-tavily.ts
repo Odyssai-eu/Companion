@@ -6,12 +6,17 @@
  *   DELETE /api/addons/tavily/key  → clear the key
  */
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { addons } from "../db/schema";
+import {
+  materializeUserAddon,
+  readOwnAddonConfig,
+  resolveKnownAddon,
+} from "../lib/instance-rows";
 
 type Env = { Variables: { userId: string } };
 const tavilyRoute = new Hono<Env>();
@@ -20,35 +25,26 @@ const ADDON_NAME = "Web Search";
 
 type Config = { apiKey?: string };
 
-async function findOrInit(userId: string) {
-  const [existing] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (existing) return existing;
-  const [created] = await db
-    .insert(addons)
-    .values({
-      userId,
-      name: ADDON_NAME,
-      kind: "plugin",
-      description:
-        "Give the assistant web access via Tavily — search and fetch URLs " +
-        "as tool calls. Paste your Tavily API key to enable.",
-      version: "0.1.0",
-      enabled: false,
-    })
-    .returning();
-  return created;
+/** Own row over instance row, key by key. Replaces findOrInit(): resolution
+ *  never writes.
+ *
+ *  The Tavily key was deliberately NOT lifted onto the instance row by
+ *  0060 — it bills a metered third-party account, which is a different
+ *  decision from sharing a token for a service the deployment owns. It
+ *  will inherit if an operator puts one there on purpose from
+ *  Admin → Instance add-ons. */
+async function loadTavilyAddon(userId: string) {
+  return resolveKnownAddon(userId, ADDON_NAME);
 }
 
 tavilyRoute.get("/info", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInit(userId);
-  const cfg = (addon.config ?? {}) as Config;
+  const addon = await loadTavilyAddon(userId);
+  const cfg = addon.config as Config;
   return c.json({
     addonId: addon.id,
+    inherited: addon.inherited,
+    inheritedConfigKeys: addon.inheritedConfigKeys,
     enabled: addon.enabled,
     hasKey: Boolean(cfg.apiKey),
   });
@@ -60,25 +56,29 @@ const setKeySchema = z.object({
 
 tavilyRoute.post("/key", zValidator("json", setKeySchema), async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInit(userId);
-  const cfg = ((addon.config ?? {}) as Config);
+  // Copy-on-write + delta write — see the note in addon-parser.ts.
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  const cfg = (await readOwnAddonConfig(userId, ADDON_NAME)) as Config;
   cfg.apiKey = c.req.valid("json").key.trim();
   await db
     .update(addons)
     .set({ config: cfg, updatedAt: new Date() })
-    .where(eq(addons.id, addon.id));
+    .where(eq(addons.id, ownId));
   return c.json({ ok: true });
 });
 
 tavilyRoute.delete("/key", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInit(userId);
-  const cfg = ((addon.config ?? {}) as Config);
+  // Clears the caller's OWN key. If the instance publishes one they fall
+  // back onto it, which is the same semantics as clearing any other
+  // inherited field.
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  const cfg = (await readOwnAddonConfig(userId, ADDON_NAME)) as Config;
   cfg.apiKey = undefined;
   await db
     .update(addons)
     .set({ config: cfg, updatedAt: new Date() })
-    .where(eq(addons.id, addon.id));
+    .where(eq(addons.id, ownId));
   return c.body(null, 204);
 });
 

@@ -21,12 +21,18 @@
  *                                        return { ok, pandoc, ms }.
  */
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { addons } from "../db/schema";
+import {
+  materializeUserAddon,
+  pruneInheritedEchoes,
+  readOwnAddonConfig,
+  resolveKnownAddon,
+} from "../lib/instance-rows";
 
 type Env = { Variables: { userId: string } };
 const producerRoute = new Hono<Env>();
@@ -43,29 +49,12 @@ export type ProducerAddonConfig = {
   url?: string;
 };
 
-export async function findOrInitProducerAddon(userId: string) {
-  const [existing] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (existing) return existing;
-  const [created] = await db
-    .insert(addons)
-    .values({
-      userId,
-      name: ADDON_NAME,
-      kind: "plugin",
-      description:
-        "Turn the model's reply into a real Office file: Word (.docx) from " +
-        "markdown, Excel (.xlsx) from a JSON table spec. The mirror of the " +
-        "Parser. Points Companion at your render service endpoint. " +
-        "Slides are produced as HTML instead.",
-      version: "0.1.0",
-      enabled: false,
-    })
-    .returning();
-  return created;
+/** The add-on as this user sees it — own row over instance row, key by
+ *  key. Replaces findOrInitProducerAddon(): resolution never writes, so a
+ *  read can no longer materialise the empty row that shadows the
+ *  instance. See server/lib/instance-rows.ts. */
+async function loadProducerAddon(userId: string) {
+  return resolveKnownAddon(userId, ADDON_NAME);
 }
 
 /** Loaded by the chat completion path (output hook) so the render URL is
@@ -73,14 +62,10 @@ export async function findOrInitProducerAddon(userId: string) {
  *  URL configured — mirrors loadParserConfigForUser. */
 export async function loadProducerConfigForUser(
   userId: string,
-): Promise<{ url: string; addonId: string } | null> {
-  const [row] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (!row || !row.enabled) return null;
-  const cfg = (row.config ?? {}) as ProducerAddonConfig;
+): Promise<{ url: string; addonId: string | null } | null> {
+  const row = await loadProducerAddon(userId);
+  if (!row.enabled) return null;
+  const cfg = row.config as ProducerAddonConfig;
   if (!cfg.url) return null; // enabled but unconfigured → no hardcoded fallback
   return { url: cfg.url.replace(/\/+$/, ""), addonId: row.id };
 }
@@ -91,11 +76,13 @@ export async function isProducerEnabled(userId: string): Promise<boolean> {
 
 producerRoute.get("/info", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitProducerAddon(userId);
-  const cfg = (addon.config ?? {}) as ProducerAddonConfig;
+  const addon = await loadProducerAddon(userId);
+  const cfg = addon.config as ProducerAddonConfig;
   const url = cfg.url || DEFAULT_PRODUCER_URL;
   return c.json({
     addonId: addon.id,
+    inherited: addon.inherited,
+    inheritedConfigKeys: addon.inheritedConfigKeys,
     enabled: addon.enabled,
     url,
     configured: Boolean(url),
@@ -110,25 +97,33 @@ const configSchema = z.object({
 producerRoute.put("/config", zValidator("json", configSchema), async (c) => {
   const userId = c.get("userId");
   const data = c.req.valid("json");
-  const addon = await findOrInitProducerAddon(userId);
-  const cfg = { ...((addon.config ?? {}) as ProducerAddonConfig) };
+  // Copy-on-write + delta write — see the long note in addon-parser.ts:
+  // the patch layers on the caller's OWN config so untouched keys keep
+  // inheriting instead of being snapshotted.
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  const cfg = (await readOwnAddonConfig(userId, ADDON_NAME)) as ProducerAddonConfig;
+  // Which keys were ALREADY the user's own, before this request touched
+  // anything. pruneInheritedEchoes needs it to tell a real override from the
+  // form echoing back a value it only displayed because it was inherited.
+  const before = { ...cfg } as Record<string, unknown>;
   if (data.url !== undefined) cfg.url = data.url;
   const patch: {
     config: Record<string, unknown>;
     updatedAt: Date;
     enabled?: boolean;
   } = {
-    config: cfg as unknown as Record<string, unknown>,
+    config: await pruneInheritedEchoes(
+      ADDON_NAME,
+      before,
+      cfg as unknown as Record<string, unknown>,
+    ),
     updatedAt: new Date(),
   };
   if (typeof data.enabled === "boolean") patch.enabled = data.enabled;
 
-  const [updated] = await db
-    .update(addons)
-    .set(patch)
-    .where(eq(addons.id, addon.id))
-    .returning();
-  const out = (updated.config ?? {}) as ProducerAddonConfig;
+  await db.update(addons).set(patch).where(eq(addons.id, ownId));
+  const updated = await loadProducerAddon(userId);
+  const out = updated.config as ProducerAddonConfig;
   return c.json({
     ok: true,
     enabled: updated.enabled,
@@ -141,8 +136,8 @@ producerRoute.put("/config", zValidator("json", configSchema), async (c) => {
  *  verify connectivity (and whether pandoc is present for docx). */
 producerRoute.post("/test", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitProducerAddon(userId);
-  const cfg = (addon.config ?? {}) as ProducerAddonConfig;
+  const addon = await loadProducerAddon(userId);
+  const cfg = addon.config as ProducerAddonConfig;
   const base = (cfg.url || DEFAULT_PRODUCER_URL).replace(/\/+$/, "");
   if (!base) return c.json({ ok: false, error: "not_configured" }, 400);
 

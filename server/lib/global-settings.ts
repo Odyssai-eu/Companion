@@ -4,13 +4,14 @@
  *
  * TWO THINGS LIVE HERE
  *
- * 1. The singleton itself: the company LightRAG URL (0051) and, since 0059,
- *    the INSTANCE CONNECTION SETTINGS — engine URL / token / mode / meta,
- *    LiteLLM URL / key / kill-switch, and the default model.
+ * 1. The singleton itself: the company LightRAG URL (0051), since 0059 the
+ *    INSTANCE CONNECTION SETTINGS — engine URL / token / mode / meta,
+ *    LiteLLM URL / key / kill-switch, and the default model — and since
+ *    0060 the instance TIMEZONE.
  *
  * 2. The resolver. A Companion deployment has ONE engine, so that config is
  *    infrastructure, not a personal preference. `users` keeps columns of the
- *    same eight names but they are now nullable OVERRIDES, and everything
+ *    same nine names but they are now nullable OVERRIDES, and everything
  *    reads through `resolveUserSettings()`:
  *
  *        user.X  ??  instance.X  ??  env (LiteLLM only)
@@ -51,6 +52,14 @@ export type InstanceSettings = {
   litellmApiKey: string | null;
   litellmDisabled: boolean;
   defaultModel: string | null;
+  /**
+   * IANA zone for the time tags injected into every chat message (0060).
+   * NOT NULL in the database: server/lib/timetag.ts hands this straight to
+   * Intl.DateTimeFormat, which throws RangeError on "" and quietly uses the
+   * container's own zone on undefined — so the chain has to end on a real
+   * value, exactly like engineMode.
+   */
+  timezone: string;
   companyRagUrl: string;
 };
 
@@ -68,6 +77,7 @@ export type UserConnectionOverrides = {
   litellmApiKey?: string | null;
   litellmDisabled?: boolean | null;
   defaultModel?: string | null;
+  timezone?: string | null;
 };
 
 /** Which fields came from the instance rather than the user's own row. */
@@ -83,18 +93,26 @@ export type ResolvedConnection = {
   litellmApiKey: string | null;
   litellmDisabled: boolean;
   defaultModel: string | null;
+  timezone: string;
   /** True per field when the value came from `global_settings`. */
   inherited: InheritedFlags;
 };
 
 /**
- * The eight connection columns, ready to splat into a `db.select({...})`.
+ * The nine inherited columns, ready to splat into a `db.select({...})`.
  * Call sites that need extra columns spread this first:
  *
- *     .select({ ...CONNECTION_COLUMNS, timezone: users.timezone })
+ *     .select({ ...CONNECTION_COLUMNS, debugVerbose: users.debugVerbose })
  *
  * Keeping the list in one place is what stops a call site from silently
- * selecting seven of the eight and resolving a hole.
+ * selecting eight of the nine and resolving a hole.
+ *
+ * (`timezone` joined the list in 0060 and this comment used to use it as
+ * the example of a column that did NOT belong here. It does now: the whole
+ * deployment sits in one place, and a fresh account that reads "UTC"
+ * because nobody typed a zone yet is the same class of bug 0059 fixed for
+ * the engine URL. Named CONNECTION_COLUMNS still, because renaming it
+ * would touch every call site for no behavioural gain.)
  */
 export const CONNECTION_COLUMNS = {
   engineUrl: users.engineUrl,
@@ -105,6 +123,7 @@ export const CONNECTION_COLUMNS = {
   litellmApiKey: users.litellmApiKey,
   litellmDisabled: users.litellmDisabled,
   defaultModel: users.defaultModel,
+  timezone: users.timezone,
 } as const;
 
 // ── Cache ────────────────────────────────────────────────────────────────
@@ -149,6 +168,7 @@ const SINGLETON_COLUMNS = {
   litellmApiKey: globalSettings.litellmApiKey,
   litellmDisabled: globalSettings.litellmDisabled,
   defaultModel: globalSettings.defaultModel,
+  timezone: globalSettings.timezone,
   companyRagUrl: globalSettings.companyRagUrl,
 } as const;
 
@@ -176,6 +196,10 @@ async function load(): Promise<InstanceSettings> {
     litellmApiKey: pick(row?.litellmApiKey),
     litellmDisabled: row?.litellmDisabled ?? false,
     defaultModel: pick(row?.defaultModel),
+    // The literal is the last link of a chain that must not end on null,
+    // and it is the same value the column defaults to — it fires only on a
+    // singleton so damaged the row itself is missing.
+    timezone: pick(row?.timezone) ?? "UTC",
     companyRagUrl: trimUrl(row?.companyRagUrl ?? ""),
   };
 }
@@ -220,6 +244,7 @@ export async function resolveUserSettings(
   const litellmUrl = pickUrl(u.litellmUrl);
   const litellmApiKey = pick(u.litellmApiKey);
   const defaultModel = pick(u.defaultModel);
+  const timezone = pick(u.timezone);
   const litellmDisabled =
     u.litellmDisabled === null || u.litellmDisabled === undefined
       ? null
@@ -254,6 +279,9 @@ export async function resolveUserSettings(
       litellmApiKey ?? inst.litellmApiKey ?? pick(process.env.LITELLM_API_KEY),
     litellmDisabled: litellmDisabled ?? inst.litellmDisabled,
     defaultModel: defaultModel ?? inst.defaultModel,
+    // Plain `user ?? instance`, no pairing: a timezone is neither a secret
+    // nor bound to a host, so none of the engineToken reasoning applies.
+    timezone: timezone ?? inst.timezone,
     inherited: {
       engineUrl: engineUrl === null,
       // Only inherited when the engine itself is (see the token comment
@@ -266,6 +294,7 @@ export async function resolveUserSettings(
       litellmApiKey: litellmApiKey === null,
       litellmDisabled: litellmDisabled === null,
       defaultModel: defaultModel === null,
+      timezone: timezone === null,
     },
   };
 }
@@ -358,6 +387,7 @@ export type InstanceConnectionPatch = Partial<{
   litellmApiKey: string | null;
   litellmDisabled: boolean;
   defaultModel: string | null;
+  timezone: string;
 }>;
 
 /**
@@ -385,6 +415,12 @@ export async function setInstanceSettings(
   }
   if (patch.defaultModel !== undefined) {
     set.defaultModel = pick(patch.defaultModel);
+  }
+  // NOT NULL column — a blank submission means "leave it alone", never
+  // "store an empty zone Intl would throw on".
+  if (patch.timezone !== undefined) {
+    const tz = pick(patch.timezone);
+    if (tz !== null) set.timezone = tz;
   }
 
   await db

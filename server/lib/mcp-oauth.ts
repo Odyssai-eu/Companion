@@ -33,7 +33,8 @@
 import crypto from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index";
-import { mcpServers, type McpServerRow } from "../db/schema";
+import { mcpServers } from "../db/schema";
+import { mcpOwnWriteTargetId, type ResolvedMcpServer } from "./instance-rows";
 import { assertFetchTargetAllowed } from "./net-guard";
 
 export type AuthServerMetadata = {
@@ -287,7 +288,7 @@ async function tokenRequest(
  * leaving it to the caller to surface "re-authorization required".
  */
 export async function forceRefreshAccessToken(
-  server: McpServerRow,
+  server: ResolvedMcpServer,
 ): Promise<string> {
   if (server.authKind !== "oauth") {
     throw new Error(`server ${server.slug} is not OAuth`);
@@ -314,12 +315,12 @@ export async function forceRefreshAccessToken(
       oauthRefreshToken: fresh.refreshToken ?? server.oauthRefreshToken,
       oauthExpiresAt: newExpires,
     })
-    .where(eq(mcpServers.id, server.id));
+    .where(eq(mcpServers.id, oauthWriteTarget(server)));
   return fresh.accessToken;
 }
 
 export async function ensureFreshAccessToken(
-  server: McpServerRow,
+  server: ResolvedMcpServer,
 ): Promise<string> {
   if (server.authKind !== "oauth") {
     throw new Error(`server ${server.slug} is not OAuth (authKind=${server.authKind})`);
@@ -358,8 +359,31 @@ export async function ensureFreshAccessToken(
       oauthRefreshToken: fresh.refreshToken ?? server.oauthRefreshToken,
       oauthExpiresAt: newExpires,
     })
-    .where(eq(mcpServers.id, server.id));
+    .where(eq(mcpServers.id, oauthWriteTarget(server)));
   return fresh.accessToken;
+}
+
+/**
+ * The row an OAuth token may be written to: the caller's own, never the
+ * shared instance row.
+ *
+ * By construction we can never get here without one — tokens only ever
+ * live on a user row, so a server with no `ownRowId` has no access token
+ * and both functions above have already thrown `oauth_not_connected`. This
+ * is the belt to that pair of braces: if a future caller reaches a token
+ * write on an inherited row, it fails loudly instead of publishing one
+ * user's Notion credentials to the whole deployment. That failure mode is
+ * exactly the engine_token hole 0059 closed (see the `ownEngine` comment in
+ * global-settings.ts); it does not get to come back through OAuth.
+ */
+function oauthWriteTarget(server: ResolvedMcpServer): string {
+  const ownId = mcpOwnWriteTargetId(server);
+  if (!ownId) {
+    throw new Error(
+      `refusing to write OAuth credentials to the instance row for ${server.slug}`,
+    );
+  }
+  return ownId;
 }
 
 function base64url(buf: Buffer): string {

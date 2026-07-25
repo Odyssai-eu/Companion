@@ -230,7 +230,15 @@ export default function McpServersPage() {
   }
 
   async function remove(s: ApiMcpServer) {
-    if (!confirm(`Remove "${s.name}"?`)) return;
+    // Two different meanings behind one button (0060). When an instance
+    // server of the same slug exists, this row is only an OVERRIDE of it,
+    // so deleting it is "go back to the shared configuration", not
+    // "remove the server" — and saying "Remove" there would read as a
+    // destructive action on something the user does not own.
+    const msg = s.overridesInstance
+      ? `Drop your override of "${s.name}" and go back to the instance configuration?`
+      : `Remove "${s.name}"?`;
+    if (!confirm(msg)) return;
     try {
       await api.deleteMcpServer(s.id);
       await reload();
@@ -382,7 +390,12 @@ function ServerCard({
   onOauthDisconnect: () => void;
 }) {
   const isOauth = server.authKind === "oauth";
-  const oauthNeedsAuth = isOauth && !server.oauthConnected;
+  // `oauthConnectedByMe`, not `oauthConnected`: an instance row can declare
+  // an OAuth server that somebody else authorized, and offering no Connect
+  // button because of that would leave this account permanently unable to
+  // use it. Tokens are never shared (0060), so "connected" is always a
+  // per-account fact.
+  const oauthNeedsAuth = isOauth && !server.oauthConnectedByMe;
   return (
     <div
       className={`flex flex-col gap-2 rounded-lg border bg-white p-4 ${
@@ -403,6 +416,17 @@ function ServerCard({
             >
               mcp_{server.slug}_…
             </span>
+            {/* 0060 — this server is declared for the whole instance. Any
+                edit here becomes a private override, and Delete is not
+                offered at all (the shared row belongs to the admin page). */}
+            {server.inherited && (
+              <span
+                title="Declared for the whole instance. Editing anything here creates an override for your account only."
+                className="rounded-md bg-[rgba(79,179,217,0.12)] px-1.5 py-0.5 text-[10px] font-medium text-cyan"
+              >
+                instance
+              </span>
+            )}
             {!server.enabled && (
               <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
                 disabled
@@ -419,7 +443,9 @@ function ServerCard({
               ` · refreshed ${new Date(server.toolsCacheAt).toLocaleString()}`}
             {server.authKind === "bearer" && server.hasAuthHeader && " · auth set"}
             {isOauth &&
-              (server.oauthConnected ? " · OAuth connected" : " · OAuth — needs authorization")}
+              (server.oauthConnectedByMe
+                ? " · OAuth connected"
+                : " · OAuth — needs authorization")}
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -432,7 +458,7 @@ function ServerCard({
               Connect
             </button>
           )}
-          {isOauth && server.oauthConnected && (
+          {isOauth && server.oauthConnectedByMe && (
             <button
               type="button"
               onClick={onOauthDisconnect}
@@ -464,13 +490,19 @@ function ServerCard({
           >
             Edit
           </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="rounded-md border border-rose-200 bg-white px-2.5 py-1 text-[11px] text-rose-700 hover:bg-rose-50"
-          >
-            Delete
-          </button>
+          {/* Only for a server this account owns. An instance server is
+              removed for everybody from Admin → Instance MCP servers; the
+              user-facing way to be rid of it is Disable, which writes an
+              override on their own row. */}
+          {!server.inherited && (
+            <button
+              type="button"
+              onClick={onDelete}
+              className="rounded-md border border-rose-200 bg-white px-2.5 py-1 text-[11px] text-rose-700 hover:bg-rose-50"
+            >
+              {server.overridesInstance ? "Reset to instance" : "Delete"}
+            </button>
+          )}
         </div>
       </div>
       {server.lastError && (

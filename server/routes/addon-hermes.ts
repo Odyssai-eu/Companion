@@ -13,12 +13,18 @@
  * and serves as the on/off switch.
  */
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { addons } from "../db/schema";
+import {
+  materializeUserAddon,
+  pruneInheritedEchoes,
+  readOwnAddonConfig,
+  resolveKnownAddon,
+} from "../lib/instance-rows";
 
 type Env = { Variables: { userId: string } };
 const hermesRoute = new Hono<Env>();
@@ -30,55 +36,42 @@ export type HermesAddonConfig = {
   bridgeToken?: string;
 };
 
-export async function findOrInitHermesAddon(userId: string) {
-  const [existing] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (existing) return existing;
-  const [created] = await db
-    .insert(addons)
-    .values({
-      userId,
-      name: ADDON_NAME,
-      kind: "plugin",
-      description:
-        "Type /hermes in chat to open an agent sub-thread that can read " +
-        "files, write files, and run shell commands on your machine. " +
-        "Requires a Hermes ACP bridge endpoint reachable from Companion.",
-      version: "0.1.0",
-      enabled: false,
-    })
-    .returning();
-  return created;
+/** The add-on as this user sees it — own row over instance row, key by
+ *  key. Replaces findOrInitHermesAddon(): resolution never writes.
+ *
+ *  `bridgeToken` is inherited only while `bridgeUrl` is (PAIRED_CONFIG_KEYS
+ *  in server/lib/instance-rows.ts): the token authenticates against one
+ *  host, so a user who repoints the bridge gets no shared credential. */
+async function loadHermesAddon(userId: string) {
+  return resolveKnownAddon(userId, ADDON_NAME);
 }
 
 /** Loaded by chat-side code on `/hermes` to know where to send prompts. */
 export async function loadHermesConfigForUser(
   userId: string,
-): Promise<(HermesAddonConfig & { addonId: string }) | null> {
-  const [row] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (!row || !row.enabled) return null;
-  const cfg = (row.config ?? {}) as HermesAddonConfig;
+): Promise<(HermesAddonConfig & { addonId: string | null }) | null> {
+  const row = await loadHermesAddon(userId);
+  if (!row.enabled) return null;
+  const cfg = row.config as HermesAddonConfig;
   if (!cfg.bridgeUrl) return null;
   return { ...cfg, addonId: row.id };
 }
 
 hermesRoute.get("/info", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitHermesAddon(userId);
-  const cfg = (addon.config ?? {}) as HermesAddonConfig;
+  const addon = await loadHermesAddon(userId);
+  const cfg = addon.config as HermesAddonConfig;
   // #25 — enterprise default: when the operator sets HERMES_DASHBOARD_URL the
-  // shared Hermes dashboard (e.g. http://<host>:9119) is used out of the box,
-  // so a user only needs to flip the add-on on. A per-user bridgeUrl overrides.
+  // shared Hermes dashboard is used out of the box, so a user only needs to
+  // flip the add-on on. Since 0060 that env var is the LAST link, behind the
+  // instance row an admin can actually see and edit (same ordering as
+  // LITELLM_URL in global-settings.ts): own bridgeUrl, then instance, then
+  // env.
   const bridgeUrl = cfg.bridgeUrl || process.env.HERMES_DASHBOARD_URL || "";
   return c.json({
     addonId: addon.id,
+    inherited: addon.inherited,
+    inheritedConfigKeys: addon.inheritedConfigKeys,
     enabled: addon.enabled,
     configured: Boolean(bridgeUrl),
     bridgeUrl,
@@ -95,8 +88,13 @@ const configSchema = z.object({
 hermesRoute.put("/config", zValidator("json", configSchema), async (c) => {
   const userId = c.get("userId");
   const data = c.req.valid("json");
-  const addon = await findOrInitHermesAddon(userId);
-  const cfg = { ...((addon.config ?? {}) as HermesAddonConfig) };
+  // Copy-on-write + delta write — see the note in addon-parser.ts.
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  const cfg = (await readOwnAddonConfig(userId, ADDON_NAME)) as HermesAddonConfig;
+  // Which keys were ALREADY the user's own, before this request touched
+  // anything. pruneInheritedEchoes needs it to tell a real override from the
+  // form echoing back a value it only displayed because it was inherited.
+  const before = { ...cfg } as Record<string, unknown>;
   if (data.bridgeUrl !== undefined) cfg.bridgeUrl = data.bridgeUrl;
   if (data.bridgeToken !== undefined) {
     cfg.bridgeToken = data.bridgeToken ?? undefined;
@@ -106,17 +104,18 @@ hermesRoute.put("/config", zValidator("json", configSchema), async (c) => {
     updatedAt: Date;
     enabled?: boolean;
   } = {
-    config: cfg as unknown as Record<string, unknown>,
+    config: await pruneInheritedEchoes(
+      ADDON_NAME,
+      before,
+      cfg as unknown as Record<string, unknown>,
+    ),
     updatedAt: new Date(),
   };
   if (typeof data.enabled === "boolean") patch.enabled = data.enabled;
 
-  const [updated] = await db
-    .update(addons)
-    .set(patch)
-    .where(eq(addons.id, addon.id))
-    .returning();
-  const out = (updated.config ?? {}) as HermesAddonConfig;
+  await db.update(addons).set(patch).where(eq(addons.id, ownId));
+  const updated = await loadHermesAddon(userId);
+  const out = updated.config as HermesAddonConfig;
   return c.json({
     ok: true,
     enabled: updated.enabled,
@@ -128,8 +127,8 @@ hermesRoute.put("/config", zValidator("json", configSchema), async (c) => {
 
 hermesRoute.post("/probe", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitHermesAddon(userId);
-  const cfg = (addon.config ?? {}) as HermesAddonConfig;
+  const addon = await loadHermesAddon(userId);
+  const cfg = addon.config as HermesAddonConfig;
   if (!cfg.bridgeUrl) {
     return c.json({ error: "not_configured" }, 400);
   }

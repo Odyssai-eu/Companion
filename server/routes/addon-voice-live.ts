@@ -15,6 +15,12 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { addons } from "../db/schema";
+import {
+  materializeUserAddon,
+  pruneInheritedEchoes,
+  readOwnAddonConfig,
+  resolveKnownAddon,
+} from "../lib/instance-rows";
 
 type Env = { Variables: { userId: string } };
 const voiceLiveRoute = new Hono<Env>();
@@ -36,44 +42,55 @@ type Config = {
   voice?: string;
 };
 
-async function findOrInit(userId: string) {
-  const [existing] = await db
-    .select()
+/**
+ * Rename any surviving "Voice (Gemini Live)" row of THIS USER in place, so
+ * a saved endpoint / model / voice survives the rename to the unified
+ * "Voice" add-on (#26).
+ *
+ * Two changes from the pre-0060 version, both load-bearing:
+ *
+ *  - it is scoped to the caller's own rows, `user_id = :userId`. Before,
+ *    the same query with a nullable user_id could have matched the
+ *    INSTANCE row and renamed the add-on for the entire deployment from a
+ *    plain user's GET /info.
+ *  - it no longer creates anything when there is no legacy row. Creation
+ *    was the auto-provision bug; resolution handles the absence.
+ *
+ * Called ONLY from the two settings handlers, never from
+ * `resolveVoiceConfig`. It used to sit inside findOrInit and therefore ran
+ * on every TTS and ASR request; keeping it there would now cost an extra
+ * SELECT per audio call forever, for every account that inherits the
+ * add-on and has no legacy row to find. The values this rescues are only
+ * visible and only editable in the panel, so migrating when the panel is
+ * opened loses nothing.
+ */
+async function migrateLegacyVoiceRow(userId: string): Promise<void> {
+  const [own] = await db
+    .select({ id: addons.id })
     .from(addons)
     .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
     .limit(1);
-  if (existing) return existing;
-  // Migrate the legacy "Voice (Gemini Live)" row in place so a saved endpoint /
-  // model / voice survives the rename to the unified "Voice" addon (#26).
+  if (own) return;
   const [legacy] = await db
-    .select()
+    .select({ id: addons.id })
     .from(addons)
     .where(and(eq(addons.userId, userId), eq(addons.name, LEGACY_ADDON_NAME)))
     .limit(1);
-  if (legacy) {
-    const [renamed] = await db
-      .update(addons)
-      .set({
-        name: ADDON_NAME,
-        description: ADDON_DESCRIPTION,
-        updatedAt: new Date(),
-      })
-      .where(eq(addons.id, legacy.id))
-      .returning();
-    return renamed;
-  }
-  const [created] = await db
-    .insert(addons)
-    .values({
-      userId,
+  if (!legacy) return;
+  await db
+    .update(addons)
+    .set({
       name: ADDON_NAME,
-      kind: "plugin",
       description: ADDON_DESCRIPTION,
-      version: "0.2.0",
-      enabled: false,
+      updatedAt: new Date(),
     })
-    .returning();
-  return created;
+    .where(eq(addons.id, legacy.id));
+}
+
+/** Own row over instance row, key by key. Replaces findOrInit(): a pure
+ *  read, one indexed query plus the cached instance list. */
+async function loadVoiceAddon(userId: string) {
+  return resolveKnownAddon(userId, ADDON_NAME);
 }
 
 // Defaults. TTS/ASR fall back to the env-configured local endpoint so a fresh
@@ -88,11 +105,14 @@ const DEFAULT_TTS_VOICE = process.env.TTS_DEFAULT_VOICE ?? "";
 
 voiceLiveRoute.get("/info", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInit(userId);
-  const cfg = (addon.config ?? {}) as Config;
+  await migrateLegacyVoiceRow(userId);
+  const addon = await loadVoiceAddon(userId);
+  const cfg = addon.config as Config;
   const provider = cfg.provider ?? DEFAULT_PROVIDER;
   return c.json({
     addonId: addon.id,
+    inherited: addon.inherited,
+    inheritedConfigKeys: addon.inheritedConfigKeys,
     enabled: addon.enabled,
     provider,
     ttsEndpoint: cfg.ttsEndpoint ?? DEFAULT_TTS_ENDPOINT,
@@ -112,8 +132,12 @@ const configSchema = z.object({
 
 voiceLiveRoute.patch("/config", zValidator("json", configSchema), async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInit(userId);
-  const cfg = (addon.config ?? {}) as Config;
+  await migrateLegacyVoiceRow(userId);
+  // Copy-on-write + delta write — see the note in addon-parser.ts.
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  const cfg = (await readOwnAddonConfig(userId, ADDON_NAME)) as Config;
+  // Own keys before this request — see pruneInheritedEchoes.
+  const before = { ...cfg } as Record<string, unknown>;
   const data = c.req.valid("json");
   if (data.provider !== undefined) cfg.provider = data.provider;
   if (data.ttsEndpoint !== undefined) cfg.ttsEndpoint = data.ttsEndpoint;
@@ -122,8 +146,15 @@ voiceLiveRoute.patch("/config", zValidator("json", configSchema), async (c) => {
   if (data.voice !== undefined) cfg.voice = data.voice;
   await db
     .update(addons)
-    .set({ config: cfg, updatedAt: new Date() })
-    .where(eq(addons.id, addon.id));
+    .set({
+      config: await pruneInheritedEchoes(
+        ADDON_NAME,
+        before,
+        cfg as unknown as Record<string, unknown>,
+      ),
+      updatedAt: new Date(),
+    })
+    .where(eq(addons.id, ownId));
   return c.json({ ok: true });
 });
 
@@ -133,8 +164,12 @@ voiceLiveRoute.patch("/config", zValidator("json", configSchema), async (c) => {
  * endpoint is user-configurable instead of frozen on TTS_BASE_URL (#26).
  */
 export async function resolveVoiceConfig(userId: string) {
-  const addon = await findOrInit(userId);
-  const cfg = (addon.config ?? {}) as Config;
+  // Called from four handlers on the audio hot path (routes/tts.ts). Before
+  // 0060 each of those was an implicit INSERT through findOrInit; it is a
+  // single indexed read now, and the legacy-rename lookup that used to ride
+  // along has moved to the settings handlers (see migrateLegacyVoiceRow).
+  const addon = await loadVoiceAddon(userId);
+  const cfg = addon.config as Config;
   return {
     enabled: addon.enabled,
     provider: cfg.provider ?? DEFAULT_PROVIDER,

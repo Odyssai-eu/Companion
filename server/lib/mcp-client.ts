@@ -24,14 +24,14 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import type { McpServerRow } from "../db/schema";
+import {
+  resolveMcpServerBySlug,
+  type ResolvedMcpServer,
+} from "./instance-rows";
 import {
   ensureFreshAccessToken,
   forceRefreshAccessToken,
 } from "./mcp-oauth";
-import { eq } from "drizzle-orm";
-import { db } from "../db/index";
-import { mcpServers } from "../db/schema";
 
 export type McpToolSpec = {
   name: string;
@@ -47,7 +47,7 @@ const CALL_TIMEOUT_MS = 60_000;
  * it via `client.close()` in a finally block — the SDK doesn't time
  * out idle connections.
  */
-async function openClient(server: McpServerRow): Promise<Client> {
+async function openClient(server: ResolvedMcpServer): Promise<Client> {
   const client = new Client(
     { name: "companion", version: "1.0" },
     { capabilities: {} },
@@ -89,7 +89,7 @@ async function openClient(server: McpServerRow): Promise<Client> {
  *  - 'none'   → no headers
  */
 async function buildAuthHeaders(
-  server: McpServerRow,
+  server: ResolvedMcpServer,
 ): Promise<Record<string, string>> {
   const headers: Record<string, string> = {};
   if (server.authKind === "oauth") {
@@ -146,7 +146,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
  * advertised expiry. Force-refresh and re-attempt with a fresh token.
  */
 export async function fetchTools(
-  server: McpServerRow,
+  server: ResolvedMcpServer,
 ): Promise<McpToolSpec[]> {
   return withOauthRetry(server, async (s) => {
     const client = await openClient(s);
@@ -176,8 +176,8 @@ export async function fetchTools(
  * Non-OAuth servers skip the retry — there's no recovery action.
  */
 async function withOauthRetry<T>(
-  server: McpServerRow,
-  fn: (s: McpServerRow) => Promise<T>,
+  server: ResolvedMcpServer,
+  fn: (s: ResolvedMcpServer) => Promise<T>,
 ): Promise<T> {
   try {
     return await fn(server);
@@ -189,11 +189,14 @@ async function withOauthRetry<T>(
     } catch {
       throw e; // propagate original
     }
-    const [reloaded] = await db
-      .select()
-      .from(mcpServers)
-      .where(eq(mcpServers.id, server.id))
-      .limit(1);
+    // Re-RESOLVE rather than re-select by id (0060). The refresh wrote to
+    // the caller's own row, but the url / transport / auth header this
+    // request runs on may come from the instance row; a raw row would
+    // arrive half-null and could not be handed to the transport.
+    // `server.userId` is non-null here by construction — an OAuth token
+    // only ever lives on a user row.
+    if (!server.userId) throw e;
+    const reloaded = await resolveMcpServerBySlug(server.userId, server.slug);
     if (!reloaded) throw e;
     return await fn(reloaded);
   }
@@ -206,7 +209,7 @@ async function withOauthRetry<T>(
  * what the LLM expects.
  */
 export async function callTool(
-  server: McpServerRow,
+  server: ResolvedMcpServer,
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<{ ok: boolean; content: string; error?: string }> {

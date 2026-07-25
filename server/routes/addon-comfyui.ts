@@ -16,12 +16,18 @@
  * expose a sensible default for the operator's own deployment.
  */
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { addons } from "../db/schema";
+import {
+  materializeUserAddon,
+  pruneInheritedEchoes,
+  readOwnAddonConfig,
+  resolveKnownAddon,
+} from "../lib/instance-rows";
 
 type Env = { Variables: { userId: string } };
 const comfyuiRoute = new Hono<Env>();
@@ -33,56 +39,43 @@ export type ComfyuiAddonConfig = {
   bridgeToken?: string;
 };
 
-export async function findOrInitComfyuiAddon(userId: string) {
-  const [existing] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (existing) return existing;
-  const [created] = await db
-    .insert(addons)
-    .values({
-      userId,
-      name: ADDON_NAME,
-      kind: "plugin",
-      description:
-        "Image generation via the OdyssAI-Imager bridge. Type /comfyui " +
-        "<prompt> in chat or use the panel below to render with Flux.1 " +
-        "(schnell or dev) on your local ComfyUI host. Requires the bridge " +
-        "endpoint reachable from Companion.",
-      version: "0.1.0",
-      enabled: false,
-    })
-    .returning();
-  return created;
+/** The add-on as this user sees it — own row over instance row, key by
+ *  key. Replaces findOrInitComfyuiAddon(): resolution never writes.
+ *
+ *  `bridgeToken` is inherited only while `bridgeUrl` is (see
+ *  PAIRED_CONFIG_KEYS in server/lib/instance-rows.ts) — a user who points
+ *  the bridge at their own host must not have the deployment's token sent
+ *  there. Same rule as engineToken/ownEngine in 0059. */
+async function loadComfyuiAddon(userId: string) {
+  return resolveKnownAddon(userId, ADDON_NAME);
 }
 
 /** Loaded by chat-side code on `/comfyui` and by the tools dispatcher so the
  *  bridge URL + token are resolved per request, not at module import. */
 export async function loadComfyuiConfigForUser(
   userId: string,
-): Promise<(ComfyuiAddonConfig & { addonId: string }) | null> {
-  const [row] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (!row || !row.enabled) return null;
-  const cfg = (row.config ?? {}) as ComfyuiAddonConfig;
+): Promise<(ComfyuiAddonConfig & { addonId: string | null }) | null> {
+  const row = await loadComfyuiAddon(userId);
+  if (!row.enabled) return null;
+  const cfg = row.config as ComfyuiAddonConfig;
   if (!cfg.bridgeUrl) return null;
   return { ...cfg, addonId: row.id };
 }
 
 comfyuiRoute.get("/info", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitComfyuiAddon(userId);
-  const cfg = (addon.config ?? {}) as ComfyuiAddonConfig;
-  // Optional operator-wide default. Per-user bridgeUrl always wins.
+  const addon = await loadComfyuiAddon(userId);
+  const cfg = addon.config as ComfyuiAddonConfig;
+  // Optional operator-wide default, now the LAST link: the user's own
+  // bridgeUrl wins, then the instance row's, then the env var. Same
+  // ordering as LITELLM_URL in global-settings.ts — a value an admin can
+  // see and edit beats a container env nobody remembers setting.
   const bridgeUrl =
     cfg.bridgeUrl || process.env.IMAGER_BRIDGE_URL || "";
   return c.json({
     addonId: addon.id,
+    inherited: addon.inherited,
+    inheritedConfigKeys: addon.inheritedConfigKeys,
     enabled: addon.enabled,
     configured: Boolean(bridgeUrl),
     bridgeUrl,
@@ -99,8 +92,13 @@ const configSchema = z.object({
 comfyuiRoute.put("/config", zValidator("json", configSchema), async (c) => {
   const userId = c.get("userId");
   const data = c.req.valid("json");
-  const addon = await findOrInitComfyuiAddon(userId);
-  const cfg = { ...((addon.config ?? {}) as ComfyuiAddonConfig) };
+  // Copy-on-write + delta write — see the note in addon-parser.ts.
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  const cfg = (await readOwnAddonConfig(userId, ADDON_NAME)) as ComfyuiAddonConfig;
+  // Which keys were ALREADY the user's own, before this request touched
+  // anything. pruneInheritedEchoes needs it to tell a real override from the
+  // form echoing back a value it only displayed because it was inherited.
+  const before = { ...cfg } as Record<string, unknown>;
   if (data.bridgeUrl !== undefined) cfg.bridgeUrl = data.bridgeUrl;
   if (data.bridgeToken !== undefined) {
     cfg.bridgeToken = data.bridgeToken ?? undefined;
@@ -110,17 +108,18 @@ comfyuiRoute.put("/config", zValidator("json", configSchema), async (c) => {
     updatedAt: Date;
     enabled?: boolean;
   } = {
-    config: cfg as unknown as Record<string, unknown>,
+    config: await pruneInheritedEchoes(
+      ADDON_NAME,
+      before,
+      cfg as unknown as Record<string, unknown>,
+    ),
     updatedAt: new Date(),
   };
   if (typeof data.enabled === "boolean") patch.enabled = data.enabled;
 
-  const [updated] = await db
-    .update(addons)
-    .set(patch)
-    .where(eq(addons.id, addon.id))
-    .returning();
-  const out = (updated.config ?? {}) as ComfyuiAddonConfig;
+  await db.update(addons).set(patch).where(eq(addons.id, ownId));
+  const updated = await loadComfyuiAddon(userId);
+  const out = updated.config as ComfyuiAddonConfig;
   return c.json({
     ok: true,
     enabled: updated.enabled,
@@ -132,8 +131,8 @@ comfyuiRoute.put("/config", zValidator("json", configSchema), async (c) => {
 
 comfyuiRoute.post("/probe", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitComfyuiAddon(userId);
-  const cfg = (addon.config ?? {}) as ComfyuiAddonConfig;
+  const addon = await loadComfyuiAddon(userId);
+  const cfg = addon.config as ComfyuiAddonConfig;
   const fallback = process.env.IMAGER_BRIDGE_URL || "";
   const bridgeUrl = cfg.bridgeUrl || fallback;
   if (!bridgeUrl) {

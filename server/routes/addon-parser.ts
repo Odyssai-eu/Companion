@@ -13,12 +13,18 @@
  *                                       panel can verify connectivity.
  */
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index";
 import { addons } from "../db/schema";
+import {
+  materializeUserAddon,
+  pruneInheritedEchoes,
+  readOwnAddonConfig,
+  resolveKnownAddon,
+} from "../lib/instance-rows";
 
 type Env = { Variables: { userId: string } };
 const parserRoute = new Hono<Env>();
@@ -37,29 +43,20 @@ export type ParserAddonConfig = {
   maxUploadBytes?: number;
 };
 
-export async function findOrInitParserAddon(userId: string) {
-  const [existing] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (existing) return existing;
-  const [created] = await db
-    .insert(addons)
-    .values({
-      userId,
-      name: ADDON_NAME,
-      kind: "plugin",
-      description:
-        "Parse attached documents (PDF, DOCX, PPTX, XLSX, CSV, MD, HTML) " +
-        "into markdown via the Docling service before the message is sent, " +
-        "so text-only models can read them. Points Companion at your Docling " +
-        "endpoint.",
-      version: "0.1.0",
-      enabled: false,
-    })
-    .returning();
-  return created;
+/**
+ * The add-on as this user sees it: their own row on top of the instance
+ * row, key by key.
+ *
+ * Replaces the old `findOrInitParserAddon()`, which INSERTED an empty row
+ * on the first /info ping. That write was the direct cause of the bug 0060
+ * fixes — six rows with an empty `config` on the second account, "enabled"
+ * with no URL behind them — and under inheritance it would be fatal rather
+ * than merely useless: an empty own row shadows the instance and the
+ * add-on could never inherit anything. Resolution writes nothing; the
+ * user's row is created only when they actually save something.
+ */
+async function loadParserAddon(userId: string) {
+  return resolveKnownAddon(userId, ADDON_NAME);
 }
 
 /** Loaded by the chat send path (assembleMessages → parser hook) so the
@@ -70,17 +67,13 @@ export async function loadParserConfigForUser(
   userId: string,
 ): Promise<
   | (Required<Pick<ParserAddonConfig, "url" | "pdfMode" | "maxUploadBytes">> & {
-      addonId: string;
+      addonId: string | null;
     })
   | null
 > {
-  const [row] = await db
-    .select()
-    .from(addons)
-    .where(and(eq(addons.userId, userId), eq(addons.name, ADDON_NAME)))
-    .limit(1);
-  if (!row || !row.enabled) return null;
-  const cfg = (row.config ?? {}) as ParserAddonConfig;
+  const row = await loadParserAddon(userId);
+  if (!row.enabled) return null;
+  const cfg = row.config as ParserAddonConfig;
   // Enabled but no Docling URL configured → treat as not configured so the
   // send-path skips parsing (no hardcoded fallback).
   if (!cfg.url) return null;
@@ -101,11 +94,13 @@ export async function isParserEnabled(userId: string): Promise<boolean> {
 
 parserRoute.get("/info", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitParserAddon(userId);
-  const cfg = (addon.config ?? {}) as ParserAddonConfig;
+  const addon = await loadParserAddon(userId);
+  const cfg = addon.config as ParserAddonConfig;
   const url = cfg.url || DEFAULT_PARSER_URL;
   return c.json({
     addonId: addon.id,
+    inherited: addon.inherited,
+    inheritedConfigKeys: addon.inheritedConfigKeys,
     enabled: addon.enabled,
     url,
     pdfMode: cfg.pdfMode === "vision" ? "vision" : "text",
@@ -127,8 +122,20 @@ const configSchema = z.object({
 parserRoute.put("/config", zValidator("json", configSchema), async (c) => {
   const userId = c.get("userId");
   const data = c.req.valid("json");
-  const addon = await findOrInitParserAddon(userId);
-  const cfg = { ...((addon.config ?? {}) as ParserAddonConfig) };
+  // Copy-on-write, then a DELTA write.
+  //
+  // The patch is layered on the caller's OWN config, never on the resolved
+  // one. This handler (like all eight of its siblings) rewrites `config`
+  // wholesale, so building it from the merged object would freeze the
+  // instance's values into the user's row the first time they save — the
+  // snapshot 0059 rejected, arriving sideways. Starting from the own
+  // config means an untouched key stays absent and keeps inheriting.
+  const ownId = await materializeUserAddon(userId, ADDON_NAME);
+  const cfg = (await readOwnAddonConfig(userId, ADDON_NAME)) as ParserAddonConfig;
+  // Which keys were ALREADY the user's own, before this request touched
+  // anything. pruneInheritedEchoes needs it to tell a real override from the
+  // form echoing back a value it only displayed because it was inherited.
+  const before = { ...cfg } as Record<string, unknown>;
   if (data.url !== undefined) cfg.url = data.url;
   if (data.pdfMode !== undefined) cfg.pdfMode = data.pdfMode;
   if (data.maxUploadBytes !== undefined) cfg.maxUploadBytes = data.maxUploadBytes;
@@ -137,17 +144,18 @@ parserRoute.put("/config", zValidator("json", configSchema), async (c) => {
     updatedAt: Date;
     enabled?: boolean;
   } = {
-    config: cfg as unknown as Record<string, unknown>,
+    config: await pruneInheritedEchoes(
+      ADDON_NAME,
+      before,
+      cfg as unknown as Record<string, unknown>,
+    ),
     updatedAt: new Date(),
   };
   if (typeof data.enabled === "boolean") patch.enabled = data.enabled;
 
-  const [updated] = await db
-    .update(addons)
-    .set(patch)
-    .where(eq(addons.id, addon.id))
-    .returning();
-  const out = (updated.config ?? {}) as ParserAddonConfig;
+  await db.update(addons).set(patch).where(eq(addons.id, ownId));
+  const updated = await loadParserAddon(userId);
+  const out = updated.config as ParserAddonConfig;
   return c.json({
     ok: true,
     enabled: updated.enabled,
@@ -166,8 +174,8 @@ parserRoute.put("/config", zValidator("json", configSchema), async (c) => {
  *  through the chat path. */
 parserRoute.post("/test", async (c) => {
   const userId = c.get("userId");
-  const addon = await findOrInitParserAddon(userId);
-  const cfg = (addon.config ?? {}) as ParserAddonConfig;
+  const addon = await loadParserAddon(userId);
+  const cfg = addon.config as ParserAddonConfig;
   const url = cfg.url || DEFAULT_PARSER_URL;
 
   let form: FormData;
