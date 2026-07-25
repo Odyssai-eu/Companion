@@ -26,7 +26,6 @@ export default function Input({
   hideModelPicker = false,
   priorTokens = 0,
   hiddenModels = [],
-  inferenceMode = "expert",
   onToggleHidden,
   injectText,
   parserConfig,
@@ -42,16 +41,17 @@ export default function Input({
   model: string;
   onModelChange: (id: string) => void;
   models: ApiGlobalModel[];
+  /** True in the 'auto' inference mode — the Auto Router owns the choice,
+   *  so the composer shows no picker at all. */
   hideModelPicker?: boolean;
   /** Rough token count of the conversation history already on the wire
    *  (computed in ChatLayout from chat.messages). Combined with the live
    *  estimate of the typed value to render the context bar. */
   priorTokens?: number;
-  /** Per-user hide list — filtered out in `easy`, grayed out elsewhere. */
+  /** Per-user hide list — rendered grayed out in the picker. */
   hiddenModels?: string[];
-  inferenceMode?: "easy" | "advanced" | "expert";
   /** Toggle a model id's hidden state. Provided by ChatLayout; called
-   *  from the eye button next to each row in advanced/expert mode. */
+   *  from the eye button next to each row in expert mode. */
   onToggleHidden?: (id: string) => void;
   /** Signal to append transcribed text into the composer. ChatLayout bumps
    *  `nonce` after the Space-bar ASR finishes in a normal chat — the effect
@@ -399,7 +399,6 @@ export default function Input({
                 onChange={onModelChange}
                 models={models}
                 hiddenModels={hiddenModels}
-                inferenceMode={inferenceMode}
                 onToggleHidden={onToggleHidden}
               />
             )}

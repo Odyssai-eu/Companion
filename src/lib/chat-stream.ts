@@ -31,7 +31,12 @@ export type StreamDelta =
         };
       }>;
     }
-  | { type: "file_changed"; path: string };
+  | { type: "file_changed"; path: string }
+  /** Non-fatal server-side warning emitted mid-stream. Currently only the
+   *  Auto Router fallback ("routing failed, answering with X instead").
+   *  Distinct from the inline `error` channel: a notice does NOT mark the
+   *  stream as failed — the answer still arrives. */
+  | { type: "notice"; level: "warn" | "info"; message: string };
 
 export type InferencePayload = {
   temperature?: number;
@@ -155,6 +160,8 @@ export async function streamChat(
           _event?: string;
           calls?: Array<unknown>;
           path?: string;
+          level?: string;
+          message?: string;
           choices?: {
             delta?: { content?: string | null; reasoning_content?: string | null };
           }[];
@@ -197,6 +204,17 @@ export async function streamChat(
         }
         if (chunk._event === "file_changed" && typeof chunk.path === "string") {
           opts.onDelta({ type: "file_changed", path: chunk.path });
+          continue;
+        }
+        // Non-fatal warning (Auto Router fallback). Surfaced to the user
+        // but explicitly NOT folded into `inlineError` — the stream is
+        // still going to produce a real answer, so ok must stay true.
+        if (chunk._event === "notice" && typeof chunk.message === "string") {
+          opts.onDelta({
+            type: "notice",
+            level: chunk.level === "info" ? "info" : "warn",
+            message: chunk.message,
+          });
           continue;
         }
         if (chunk.usage) {

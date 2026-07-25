@@ -8,6 +8,10 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Agents tokens** — `hms_…` bearer tokens that external coding agents (Cline, Continue.dev, Claude Desktop, Cowork) use to call Companion's MCP brain endpoint. See *Agents tokens* (13).
 
+**Auto mode** — Inference mode where the chat shows no model selector and the Auto Router picks a model per message. Replaced the retired *Easy* and *Advanced* modes in migration `0058`. See *Model picker* (06).
+
+**Auto Router** — Opt-in add-on that classifies each message (chat / deep / code) by embedding similarity and dispatches to the model mapped to that bucket. Powers Auto mode; also selectable as `Auto` in the Expert-mode picker. See *Semantic routing* (065).
+
 **Alias** — A short name for a model published by the engine (e.g. `<your-cluster-name>`, `or:claude-haiku`). Resolved to a concrete model path at engine side.
 
 **`agentskills.io`** — Open specification for SKILL.md packages. Companion follows it. See *Skills* (11).
@@ -52,9 +56,11 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Engine mode** — One of `gateway` / `hybrid` / `legacy`. Auto-derived at pair time. See *Engine pairing* (16).
 
-**Easy / Advanced / Expert mode** — Inference layouts. Easy = single fixed model. Advanced = 4 named slots. Expert = full catalog. See *Model picker* (06).
+**Easy / Advanced mode** — Retired inference layouts (migration `0058`). Both were replaced by **Auto**; existing accounts were migrated automatically. See *Model picker* (06).
 
 ## F
+
+**Fallback model** — The Auto Router setting naming the model that answers when routing itself can't run (embedding service down, router unconfigured). The routing error is still shown to the user; only the answer's source changes. Empty = fail loud, no answer. See *Semantic routing* (065).
 
 **Fenced code block** — Markdown code block delimited by triple-backticks. Companion adds Copy / Save / Save all (.zip) helpers under each one. See *Exports & imports* (17).
 
@@ -76,7 +82,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## I
 
-**Inference mode** — Easy / Advanced / Expert. See *Model picker* (06).
+**Inference mode** — `auto` or `expert` (`users.inference_mode`). Auto = no picker, the Auto Router chooses per message. Expert = full catalog picker. See *Model picker* (06).
 
 **Inference preset** — Saved bundle of sampling params. Per-user. See *Inference settings* (14).
 
@@ -114,7 +120,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## N
 
-**Named models** — `users.named_models`. The 4 slots (conversation / analyse / engineer / expert) used in Advanced mode.
+**Named models** — `users.named_models`. The 4 slots of the retired Advanced mode. Dead since migration `0058`; the column survives only so the migration stays reversible.
 
 **Némo** — A name some users give their assistant persona. The principle: the assistant isn't a single model, it's an orchestrator above all models, defined by memory + relationship. See `profile/assistant-name.md` in the wiki for how to set your own.
 

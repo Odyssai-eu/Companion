@@ -27,7 +27,7 @@ import {
   routeMessage,
   EmbeddingServiceError,
 } from "../lib/semantic-router";
-import { loadRouterConfigForUser } from "./addon-router";
+import { loadRouterAddonForUser } from "./addon-router";
 import { resolveChatTools } from "../lib/chat-tools";
 import { buildUpstreamBody } from "../lib/upstream-request";
 import { resolveConvContext } from "../lib/chat-context";
@@ -42,6 +42,18 @@ import { runChatStream } from "../lib/chat-stream";
 
 export type Env = { Variables: { userId: string } };
 const chatRoute = new Hono<Env>();
+
+/**
+ * The synthetic MODEL ID that means "let the Auto Router decide". Not a
+ * real model — the chat route intercepts it before dispatching upstream.
+ *
+ * Do not confuse it with the inference MODE also spelled "auto"
+ * (users.inference_mode, migration 0058): the mode is a per-user UX
+ * setting that hides the chat's model picker, this is a wire value. The
+ * mode implies this id, but expert-mode users can also pick "Auto" from
+ * the picker, so neither one owns the other.
+ */
+export const AUTO_ROUTER_MODEL_ID = "auto";
 
 // ── Types from the client ─────────────────────────────────────────────────
 
@@ -93,29 +105,37 @@ chatRoute.post("/completions", async (c) => {
   const guest: GuestTokenContext | undefined = c.get("guest");
 
   // ── Auto-router pre-step ────────────────────────────────────────────────
-  // When the client picks "auto", we run the user's last message through
-  // the semantic router add-on (small embedding model on the cluster) to
-  // choose chat / deep / code → the configured model for that bucket.
-  // If the add-on is not configured, we 400 with a clear error rather
-  // than silently dispatching to a fallback — the user enabled "auto"
-  // expecting routing; pretending isn't help.
+  // When the client sends the routing sentinel as its model id, we run the
+  // user's last message through the semantic router add-on (small embedding
+  // model on the cluster) to choose chat / deep / code → the configured
+  // model for that bucket.
+  //
+  // NAMING: AUTO_ROUTER_MODEL_ID ("auto") is a MODEL ID, not the inference
+  // MODE also called "auto" (users.inference_mode, see migration 0058).
+  // The mode is a per-user UX setting that hides the chat picker; this
+  // sentinel is what the chat actually puts on the wire. Expert-mode users
+  // can pick "Auto" from the picker too, so the two are independent.
+  //
+  // When routing can't happen (add-on off, no embeddings URL, service
+  // down) we DON'T swallow it and we DON'T necessarily kill the turn:
+  // since 0058 the error is surfaced to the user as a visible notice AND
+  // the turn completes on the add-on's configured fallback model. With no
+  // fallback configured we keep the pre-0058 fail-loud behaviour.
   let routedDecision:
-    | { from: string; to: string; label: string; score: number; ms: number }
+    | {
+        from: string;
+        to: string;
+        label: string;
+        score: number;
+        ms: number;
+        /** Set only on the fallback path — the reason routing didn't run.
+         *  Non-null means `to` is the fallback model, not a routed pick. */
+        error?: string;
+      }
     | null = null;
-  if (body.model === "auto") {
-    const routerCfg = await loadRouterConfigForUser(userId);
-    if (!routerCfg) {
-      return c.json(
-        {
-          error: "auto_router_not_configured",
-          detail:
-            "The Auto Router add-on is not enabled or not configured. " +
-            "Open Settings → Add-ons → Auto Router to set the embeddings URL " +
-            "and pick a model per bucket.",
-        },
-        400,
-      );
-    }
+  if (body.model === AUTO_ROUTER_MODEL_ID) {
+    const { cfg: routerCfg, ready, reason } = await loadRouterAddonForUser(userId);
+
     // Find the latest user message — that's what we route on. Going further
     // back risks classifying on stale context (the conversation may have
     // pivoted from a deep analysis to "tu te sens comment").
@@ -123,6 +143,8 @@ chatRoute.post("/completions", async (c) => {
       .reverse()
       .find((m) => m.role === "user");
     if (!lastUser) {
+      // Not a routing failure — a malformed request. No fallback for this
+      // one; there is nothing to answer.
       return c.json({ error: "auto_router_no_user_message" }, 400);
     }
     const userText = typeof lastUser.content === "string"
@@ -132,34 +154,85 @@ chatRoute.post("/completions", async (c) => {
             .map((p) => (typeof p === "string" ? p : (p as { text?: string }).text ?? ""))
             .join("\n")
         : "";
-    try {
-      const decision = await routeMessage(userText.slice(0, 4000), routerCfg);
-      console.log(
-        "[chat] auto-router → %s (label=%s score=%.3f) in %dms",
-        decision.model,
-        decision.label,
-        decision.score,
-        decision.ms,
-      );
-      body.model = decision.model;
+
+    // routeFailure stays null on the happy path. Anything else falls
+    // through to the shared fallback block below, so "add-on not
+    // configured" and "embedding service died" behave identically from
+    // the user's point of view: same visible error, same fallback.
+    let routeFailure: string | null = null;
+    if (!ready || !routerCfg) {
+      routeFailure =
+        `Auto Router couldn't pick a model — ${reason ?? "it is not configured"}. ` +
+        "Open Settings → Add-ons → Auto Router to set the embeddings URL and " +
+        "pick a model per bucket.";
+    } else {
+      try {
+        const decision = await routeMessage(userText.slice(0, 4000), routerCfg);
+        // A "ready" router can still classify into an EMPTY bucket:
+        // DEFAULT_POLICY is { chat: "", deep: "", code: "" } by design
+        // (semantic-router.ts — the user must name each model), and
+        // `ready` only checks the embeddings URL + the anchors. Without
+        // this guard `body.model` becomes "" and goes upstream as-is —
+        // the missing_model check above already ran — so the user gets an
+        // opaque provider error instead of the routing error. Route it
+        // through the same failure path as everything else: visible
+        // reason, then the configured fallback (or the 503).
+        if (!decision.model || !decision.model.trim()) {
+          routeFailure =
+            `Auto Router classified this message as "${decision.label}" but no ` +
+            "model is mapped to that bucket. Set one in Settings → Add-ons → " +
+            "Auto Router.";
+        } else {
+          console.log(
+            "[chat] auto-router → %s (label=%s score=%.3f) in %dms",
+            decision.model,
+            decision.label,
+            decision.score,
+            decision.ms,
+          );
+          body.model = decision.model;
+          routedDecision = {
+            from: AUTO_ROUTER_MODEL_ID,
+            to: decision.model,
+            label: decision.label,
+            score: decision.score,
+            ms: decision.ms,
+          };
+        }
+      } catch (e) {
+        routeFailure =
+          e instanceof EmbeddingServiceError
+            ? `Auto Router couldn't reach its embedding service — ${e.message}.`
+            : `Auto Router failed — ${(e as Error).message}.`;
+      }
+    }
+
+    if (routeFailure) {
+      const fallback = routerCfg?.fallbackModel?.trim() ?? "";
+      if (!fallback) {
+        // No fallback configured → the pre-0058 contract: fail loud rather
+        // than guess a model the user never approved.
+        return c.json(
+          {
+            error: "auto_router_unavailable",
+            detail:
+              `${routeFailure} No fallback model is configured either, so ` +
+              "there is nothing to answer with. Set one in Settings → " +
+              "Add-ons → Auto Router.",
+          },
+          503,
+        );
+      }
+      console.warn("[chat] auto-router fallback → %s (%s)", fallback, routeFailure);
+      body.model = fallback;
       routedDecision = {
-        from: "auto",
-        to: decision.model,
-        label: decision.label,
-        score: decision.score,
-        ms: decision.ms,
+        from: AUTO_ROUTER_MODEL_ID,
+        to: fallback,
+        label: "fallback",
+        score: 0,
+        ms: 0,
+        error: routeFailure,
       };
-    } catch (e) {
-      // Embedding service down → fail loud. Better than silently picking
-      // a wrong model the user can't see.
-      const msg =
-        e instanceof EmbeddingServiceError
-          ? e.message
-          : `auto_router_failed: ${(e as Error).message}`;
-      return c.json(
-        { error: "auto_router_unavailable", detail: msg },
-        503,
-      );
     }
   }
 

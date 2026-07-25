@@ -15,9 +15,11 @@
  * centroids. At route time we embed the latest user message, cosine
  * vs the three centroids, pick the closest. ~6ms per message.
  *
- * The embedding service is an add-on. If it's not configured, "Auto"
- * just falls back to the user's last manual choice or 400s — never
- * implicit, never silent.
+ * The embedding service is an add-on. If it's not configured, routing
+ * throws — never implicit, never silent. The caller (chat.ts) decides
+ * what to do with the throw: since 0058 it surfaces the error to the user
+ * AND completes the turn on the add-on's configured `fallbackModel`, so a
+ * dead embedding service degrades the answer instead of killing it.
  */
 
 export type RouterLabel = "chat" | "deep" | "code";
@@ -35,6 +37,17 @@ export interface RouterConfig {
   /** Optional override; the service serves one model so this is mostly cosmetic. */
   embeddingsModel?: string;
   policy: RouterPolicy;
+  /**
+   * Model that answers when routing itself can't happen — embedding
+   * service down, anchors never built, add-on disabled. Empty = no
+   * fallback, in which case the chat route fails loud (the pre-0058
+   * behaviour).
+   *
+   * Note this is NOT consumed by routeMessage(): the router engine still
+   * only knows how to route or throw. The fallback is applied one level up,
+   * by the caller that catches the throw (server/routes/chat.ts).
+   */
+  fallbackModel?: string;
   /** Cached anchor centroids — populated on first use or via /rebuild. */
   anchorCentroids?: Record<RouterLabel, number[]>;
   /** ISO timestamp of last centroid build (for cache invalidation in UI). */

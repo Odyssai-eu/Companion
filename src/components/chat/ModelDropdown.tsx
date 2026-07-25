@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIsMobile } from "~/hooks/useIsMobile";
-import type { ApiGlobalModel } from "~/lib/api";
+import { AUTO_ROUTER_MODEL_ID, type ApiGlobalModel } from "~/lib/api";
 import { formatBytes } from "~/lib/file-attach";
 import { formatTokenCount } from "~/lib/tokens";
 
@@ -44,20 +44,21 @@ function modelDisplayName(m: ApiGlobalModel): string {
  * needs it as the first option. Surfaces that don't (Auto Router
  * buckets — Auto IS the router) pass `includeAuto={false}`.
  *
- * Hide / unhide is a chat-mode concern (the chat picker filters out
- * hidden models in easy mode). Surfaces that don't need it leave
- * `hiddenModels` empty and omit `onToggleHidden` + `inferenceMode`.
+ * Hide / unhide is a chat-mode concern. Surfaces that don't need it leave
+ * `hiddenModels` empty and omit `onToggleHidden`.
+ *
+ * (Pre-0058 this component also took an `inferenceMode` prop, because
+ * 'easy' mode stripped hidden ids from the list entirely. 'easy' is gone
+ * and its successor 'auto' renders no picker at all, so the picker no
+ * longer has a mode-dependent behaviour and the prop was dropped.)
  */
 export type ModelDropdownProps = {
   value: string;
   onChange: (id: string) => void;
   models: ApiGlobalModel[];
-  /** Models to hide from the picker. In "easy" inferenceMode they're
-   *  removed entirely; in advanced/expert they render grayed out. */
+  /** Models the user hid from the picker. They render grayed out with an
+   *  eye toggle so they can be un-hidden in context. */
   hiddenModels?: string[];
-  /** "easy" filters hidden entries. Other modes show them. Defaults to
-   *  "expert" so non-chat surfaces always see the full list. */
-  inferenceMode?: "easy" | "advanced" | "expert";
   /** Render the eye-toggle next to each row (chat-mode admin). */
   onToggleHidden?: (id: string) => void;
   /** When true (default), the synthetic "auto" entry is inserted at
@@ -79,7 +80,6 @@ export default function ModelDropdown({
   onChange,
   models,
   hiddenModels = [],
-  inferenceMode = "expert",
   onToggleHidden,
   includeAuto = true,
   triggerLabel,
@@ -90,25 +90,17 @@ export default function ModelDropdown({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
-  // Easy mode: hidden ids vanish from the picker entirely so the user
-  // sees only the curated set. Advanced / expert mode keeps them visible
-  // (rendered grayed) with the eye toggle so they can be un-hidden inline.
+  // Hidden ids stay in the list, rendered grayed, with the eye toggle so
+  // they can be un-hidden inline.
   const hiddenSet = useMemo(() => new Set(hiddenModels), [hiddenModels]);
-  const visibleModels = useMemo(
-    () =>
-      inferenceMode === "easy"
-        ? models.filter((m) => !hiddenSet.has(m.id))
-        : models,
-    [models, hiddenSet, inferenceMode],
-  );
 
   // The "Auto" synthetic entry — picks chat / deep / code automatically
-  // via the semantic-router add-on. Always rendered first when included;
-  // if the add-on isn't configured, the server returns a clear 400
-  // pointing to Settings.
+  // via the semantic-router add-on. Always rendered first when included.
+  // If the add-on isn't ready, the server says so on the first send and
+  // answers with the router's fallback model (see chat.ts).
   const AUTO_MODEL: ApiGlobalModel = useMemo(
     () => ({
-      id: "auto",
+      id: AUTO_ROUTER_MODEL_ID,
       name: "Auto — pick best model per message",
       tags: ["Smart"],
       capabilities: { vision: false, tools: false },
@@ -123,15 +115,16 @@ export default function ModelDropdown({
   const groups = useMemo(() => {
     const out = new Map<string, ApiGlobalModel[]>();
     if (includeAuto) out.set("Smart", [AUTO_MODEL]);
-    for (const m of visibleModels) {
-      if (m.id === "auto") continue; // dedupe if backend ever lists it
+    for (const m of models) {
+      // dedupe if the backend ever lists the routing sentinel itself
+      if (m.id === AUTO_ROUTER_MODEL_ID) continue;
       const tag = m.tags[0] ?? "Models";
       const list = out.get(tag) ?? [];
       list.push(m);
       out.set(tag, list);
     }
     return Array.from(out.entries());
-  }, [visibleModels, AUTO_MODEL, includeAuto]);
+  }, [models, AUTO_MODEL, includeAuto]);
 
   useEffect(() => {
     if (!open) return;
@@ -143,12 +136,12 @@ export default function ModelDropdown({
   }, [open]);
 
   const current =
-    value === "auto" && includeAuto
+    value === AUTO_ROUTER_MODEL_ID && includeAuto
       ? AUTO_MODEL
       : models.find((m) => m.id === value);
   const label =
     triggerLabel ??
-    (value === "auto" && includeAuto
+    (value === AUTO_ROUTER_MODEL_ID && includeAuto
       ? "Auto"
       : current
         ? modelDisplayName(current)
@@ -198,7 +191,7 @@ export default function ModelDropdown({
                   model={m}
                   selected={m.id === value}
                   hidden={hiddenSet.has(m.id)}
-                  showHideToggle={inferenceMode !== "easy" && !!onToggleHidden}
+                  showHideToggle={!!onToggleHidden}
                   onToggleHidden={
                     onToggleHidden ? () => onToggleHidden(m.id) : undefined
                   }
@@ -309,11 +302,7 @@ function ModelRow({
             e.stopPropagation();
             onToggleHidden();
           }}
-          title={
-            hidden
-              ? "Show in picker (easy mode)"
-              : "Hide from picker (easy mode)"
-          }
+          title={hidden ? "Show in picker" : "Hide from picker"}
           className="shrink-0 self-center rounded p-1 text-gray-400 opacity-0 transition-opacity hover:bg-gray-100 hover:text-ink group-hover/row:opacity-100"
         >
           {/* eye-slash if hidden, eye if visible */}

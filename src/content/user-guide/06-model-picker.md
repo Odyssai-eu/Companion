@@ -8,32 +8,25 @@ In the **chat header**, leftmost element. Click it to open the model panel. The 
 
 ## Inference modes
 
-Three layouts, picked in *Settings → Inference*:
+Two layouts, picked in *Settings → Inference*:
 
-### Easy mode
+### Auto mode
 
-One model, fixed by the workspace admin. No picker shown in the chat. The chat just uses that model.
+No picker in the chat at all. Every message goes to the **Auto Router**, which classifies it (chat / deep / code) and dispatches to the model you mapped to that bucket. You never choose — that's the point.
 
-For: users who don't want to think about routing. Customer-facing deployments.
+If routing itself can't run (embedding service down, router not configured, add-on switched off), Companion **shows you the error** and answers with the router's **fallback model**. It never substitutes a model silently. With no fallback configured, the turn fails outright instead.
 
-### Advanced mode
+Everything Auto mode depends on lives in *Settings → Add-ons → Auto Router*: the embedding service URL, the three bucket models, and the fallback. See *Semantic routing* (065).
 
-Four **named slots** in the picker:
-
-- **Conversation** — general chat, fast.
-- **Analyse** — vision / reasoning-heavy.
-- **Engineer** — code-focused.
-- **Expert** — top of the line for the hardest turns.
-
-The user picks the slot; the alias behind the slot is configured per slot (Settings → Inference → Advanced). Hot-swap by clicking the slot in the picker.
-
-For: users who want a curated set without facing the full catalog.
+For: users who don't want to think about model selection. Customer-facing deployments.
 
 ### Expert mode (default)
 
-Full catalog. Search bar at top, every alias listed below. Capability chips next to each, hide/show eye toggle on hover.
+Full catalog. Every alias listed, capability chips next to each, hide/show eye toggle on hover. **Auto** is offered as the first entry (group `Smart`), so a power user can opt into routing per conversation without leaving the mode.
 
 For: power users tuning per-turn.
+
+> **Retired modes.** *Easy* and *Advanced* existed until migration `0058`. Auto replaces both. Accounts sitting on either were migrated to Auto automatically; an easy-mode fallback model was carried over into the Auto Router's fallback setting.
 
 ## Capability chips
 
@@ -52,8 +45,7 @@ Chips come from the Odyssai `x_odyssai` contract when paired in gateway mode. In
 
 Each row has an eye toggle (👁/🙈) revealed on hover. Click to hide.
 
-- **In Easy mode** — hidden ids are filtered out entirely. Even the admin's pick is suppressed if it's in the user's hide list (rare but documented).
-- **In Advanced / Expert mode** — hidden ids appear **grayed out** with opacity 45%, still pickable. Click the eye on a grayed row to un-hide.
+Hidden ids appear **grayed out** with opacity 45%, still pickable. Click the eye on a grayed row to un-hide. (Auto mode has no picker, so the list is inert there.)
 
 The hide list is per-user, stored in `users.hidden_models` (jsonb array). Synced across devices.
 
@@ -110,22 +102,25 @@ To force unload (free the cluster RAM): admin dashboard on the engine itself (no
 
 If your picker is empty: the engine probe is failing. See *Troubleshooting* (20).
 
-## Named models (Advanced mode config)
+## Bucket models (Auto mode config)
 
-Settings → Inference → **Advanced** → 4 dropdowns for the slots:
+Settings → **Add-ons → Auto Router** → one dropdown per intent bucket:
 
-- `conversation` — your everyday chat model.
-- `analyse` — a vision-capable / reasoning-heavy model.
-- `engineer` — a code-tuned model.
-- `expert` — your strongest model, for the hardest turns.
+- `chat` — small talk, identity, casual creative.
+- `deep` — analysis, comparison, long-form reasoning.
+- `code` — write, refactor, debug, test.
 
-You pick what fills each slot from your engine's catalogue — there are no built-in defaults. Stored as `users.named_models` jsonb. Editing here is a workspace-wide change for your account.
+Plus a **fallback model** used when routing can't run at all.
+
+Each dropdown offers whatever your engine publishes, with no curation — including router-style virtual models such as **CoeOS**, which appear the moment your engine advertises them. The only entry excluded is `Auto` itself, since binding a bucket to Auto would loop the router into itself.
+
+Stored in the add-on's config, not on the user row. See *Semantic routing* (065).
 
 ## Default model
 
 `users.default_model` (Settings → Inference → Default). Used when a conversation is created without an explicit model.
 
-In Easy mode this is also the *only* model. In Advanced it pre-fills the "Conversation" slot. In Expert it's the picker's pre-selected entry.
+It's the picker's pre-selected entry in Expert mode, and ignored in Auto mode (the router chooses there).
 
 ## Related
 

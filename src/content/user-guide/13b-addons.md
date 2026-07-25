@@ -31,9 +31,15 @@ See *Engine pairing* (16) for gateway vs hybrid vs legacy.
 
 ## Auto Router
 
-When enabled, the **Auto Router** inspects each incoming message and picks the best model pool before forwarding. Useful in Easy inference mode or when you don't want to think about model selection per turn.
+When enabled, the **Auto Router** inspects each incoming message and picks the best model before forwarding. It's what powers the **Auto** inference mode, and it's also available as the `Auto` entry at the top of the picker in Expert mode.
 
-Configure in the add-on panel: engine URL for the router service.
+Configure in the add-on panel:
+
+- **Embedding service URL** — any OpenAI-compatible `/v1/embeddings` endpoint.
+- **Model per bucket** — chat / deep / code.
+- **Fallback model** — answers when routing itself can't run. Companion still shows you the routing error; the reply just comes from this model instead of failing. Leave it empty to keep the strict "error, no answer" behaviour.
+
+See *Semantic routing* (065) for the full walkthrough.
 
 ---
 

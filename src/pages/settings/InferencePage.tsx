@@ -4,7 +4,6 @@ import {
   type ApiGlobalModel,
   type ApiInferenceMode,
   type ApiInferenceSettings,
-  type ApiNamedModels,
 } from "~/lib/api";
 import { JoinOdyssaiModal } from "~/components/settings/JoinOdyssai";
 
@@ -38,8 +37,6 @@ export default function InferencePage() {
   const [keyDirty, setKeyDirty] = useState(false);
   const [inferenceMode, setInferenceMode] =
     useState<ApiInferenceMode>("expert");
-  const [easyModel, setEasyModel] = useState("");
-  const [namedModels, setNamedModels] = useState<ApiNamedModels>({});
 
   // Join the Odyssai flow
   const [joinOpen, setJoinOpen] = useState(false);
@@ -61,8 +58,6 @@ export default function InferencePage() {
     setDefaultModel(s.defaultModel ?? "");
     setTimezone(s.timezone);
     setInferenceMode(s.inferenceMode);
-    setEasyModel(s.easyModel ?? "");
-    setNamedModels(s.namedModels ?? {});
   }
 
   useEffect(() => {
@@ -81,11 +76,11 @@ export default function InferencePage() {
         debugVerbose,
         defaultModel: defaultModel.trim() || null,
         timezone,
+        // easyModel / namedModels are deliberately NOT sent anymore (0058
+        // retired the modes that used them). Omitting them leaves the
+        // columns untouched rather than nulling data the migration may
+        // still need if the change is rolled back.
         inferenceMode,
-        easyModel: easyModel.trim() || null,
-        namedModels: Object.values(namedModels).some((v) => v && v.length > 0)
-          ? namedModels
-          : null,
       };
       if (keyDirty) patch.litellmApiKey = apiKey.trim() || null;
       await api.updateInferenceSettings(patch);
@@ -244,29 +239,27 @@ export default function InferencePage() {
          row and continue to gate the chat routing chain — only the UI
          surface moved. */}
 
-      {/* ── Inference mode ──────────────────────────────────────────── */}
+      {/* ── Inference mode ────────────────────────────────────────────
+       *  Two modes since 0058. 'easy' and 'advanced' were retired and
+       *  both collapse into 'auto'; the migration rewrote existing rows,
+       *  so nothing here has to render a legacy value. */}
       <Section title="Inference mode">
         <p className="text-[13px] text-gray-600">
-          How models are exposed in the chat picker. Pick what fits the user
-          you're configuring.
+          How models are exposed in the chat. Pick what fits the user you're
+          configuring.
         </p>
         <div className="flex flex-col gap-2">
           {(
             [
               {
-                v: "easy" as const,
-                title: "Easy — OdyssAI-X picks the best model",
-                desc: "No picker. OdyssAI-X auto-routes each request to the best model (via the Auto Router add-on). Falls back to the model below when the router isn't configured.",
-              },
-              {
-                v: "advanced" as const,
-                title: "Advanced — 4 named slots",
-                desc: "User picks among Conversation / Analyse / Engineer / Expert. Each maps to a model alias you set below.",
+                v: "auto" as const,
+                title: "Auto — the router chooses the model",
+                desc: "No model selector in the chat. The Auto Router picks the best model for every message. Configure it (and its fallback model) in Add-ons → Auto Router.",
               },
               {
                 v: "expert" as const,
                 title: "Expert — full list available",
-                desc: "User picks any model in the provider's catalog. Power-user mode.",
+                desc: "User picks any model in the provider's catalog, per message. Power-user mode. The Auto Router is still available as the “Auto” entry at the top of the picker.",
               },
             ]
           ).map((opt) => (
@@ -294,64 +287,22 @@ export default function InferencePage() {
           ))}
         </div>
 
-        {inferenceMode === "easy" && (
-          <Field
-            label="Fallback model"
-            hint="Used only when the Auto Router add-on isn't configured. Set it up in Add-ons → Auto Router to enable smart routing; until then Easy mode uses this model."
-          >
-            <select
-              value={easyModel}
-              onChange={(e) => setEasyModel(e.target.value)}
-              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
-            >
-              <option value="">(pick a model)</option>
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-
-        {inferenceMode === "advanced" && (
-          <div className="flex flex-col gap-3">
-            {(
-              [
-                ["conversation", "Conversation", "Casual chat, fast turns."],
-                ["analyse", "Analyse", "Reading, summarising, comparing."],
-                ["engineer", "Engineer", "Code, debugging, refactor."],
-                ["expert", "Expert", "Heavy reasoning, deep dives."],
-              ] as const
-            ).map(([key, title, desc]) => (
-              <Field key={key} label={title} hint={desc}>
-                <select
-                  value={namedModels[key] ?? ""}
-                  onChange={(e) =>
-                    setNamedModels((prev) => ({
-                      ...prev,
-                      [key]: e.target.value || undefined,
-                    }))
-                  }
-                  className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-cyan"
-                >
-                  <option value="">(pick a model)</option>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            ))}
-          </div>
+        {inferenceMode === "auto" && (
+          <p className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-[12px] text-gray-600">
+            Auto mode delegates everything to the <strong>Auto Router</strong>{" "}
+            add-on: one model per intent bucket (chat / deep / code), plus a{" "}
+            <strong>fallback model</strong> that answers if routing itself
+            fails. All of it lives in <em>Settings → Add-ons → Auto Router</em>.
+            If the router isn't set up, the chat says so and uses the fallback
+            — it never picks a model behind your back.
+          </p>
         )}
       </Section>
 
       <Section title="Default model">
         <p className="text-[13px] text-gray-600">
           The model that pre-fills the picker on a fresh chat in Expert mode.
-          Ignored in Easy and Advanced modes (those have their own slots).
+          Ignored in Auto mode — the router chooses there.
         </p>
         <select
           value={defaultModel}
@@ -581,24 +532,6 @@ function Section({
   );
 }
 
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <span className="text-[11px] tracking-[0.04em] text-gray-500 uppercase">
-        {label}
-      </span>
-      {children}
-      {hint && (
-        <span className="font-mono text-[11px] text-gray-400">{hint}</span>
-      )}
-    </div>
-  );
-}
+// The local `Field` helper died with the easy/advanced mode panels (0058).
+// The identical component still lives in ./addons/shared for the add-on
+// panels — import it from there if this page ever needs one again.

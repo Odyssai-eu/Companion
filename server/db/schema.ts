@@ -66,12 +66,19 @@ export const users = pgTable("users", {
   passwordChangedAt: timestamp("password_changed_at", { withTimezone: true })
     .notNull()
     .default(sql`now()`),
-  // Inference mode: 'easy' | 'advanced' | 'expert' (see migration 0015).
+  // Inference mode: 'auto' | 'expert' (0015 introduced easy/advanced/expert,
+  // 0058 collapsed easy+advanced into 'auto'). Plain text, no CHECK — the
+  // zod enum in server/routes/inference.ts is the write-side gate, and the
+  // read side maps any surviving legacy value to 'auto'.
   inferenceMode: text("inference_mode").notNull().default("expert"),
-  // Easy mode: a single LiteLLM alias the admin curates. UI hides picker.
+  // DEPRECATED (0058) — was the easy-mode single alias. Its role moved to
+  // the Auto Router add-on's `fallbackModel` config key; 0058 copied the
+  // value across. Kept as a column so 0058 stays reversible; nothing reads
+  // it anymore.
   easyModel: text("easy_model"),
-  // Advanced mode: 4 named slots → LiteLLM aliases.
-  // Shape: { conversation: string, analyse: string, engineer: string, expert: string }
+  // DEPRECATED (0058) — was the advanced-mode 4-slot map. Advanced mode is
+  // gone; nothing reads this. Kept for reversibility, drop in a later
+  // cleanup migration.
   namedModels: jsonb("named_models").$type<{
     conversation?: string;
     analyse?: string;
@@ -79,11 +86,10 @@ export const users = pgTable("users", {
     expert?: string;
   }>(),
   // Model picker hide list — per-user curation of which model ids
-  // appear in the chat picker. Set populated via Settings → Inference
-  // (advanced) or via the eye-toggle in the picker itself. In `easy`
-  // mode, hidden ids are filtered out; in `advanced`/`expert` mode,
-  // they appear grayed out so the user can un-hide them in context.
-  // Default null = "show everything" (no hide list yet).
+  // appear in the chat picker. Populated via the eye-toggle in the picker
+  // itself. In 'expert' mode hidden ids render grayed out so the user can
+  // un-hide them in context; 'auto' mode has no picker at all, so the list
+  // is inert there. Default null = "show everything" (no hide list yet).
   hiddenModels: jsonb("hidden_models").$type<string[]>(),
   // Global memory vault — user-owned ingestion path mirroring the
   // project vault pattern. Coexists with the auto-compiled Karpathy

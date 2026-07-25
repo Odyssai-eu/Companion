@@ -34,11 +34,10 @@ The model picker is the leftmost element in the chat top bar. Click to open a pa
 - **⚒** tools / function-calling (required for `skill_*`, MCP, `fs_*`, agent mode)
 - **⚡** sub-second TTFT (probe targets, autocomplete models)
 
-Three picker layouts depending on your *Inference mode* setting:
+Two picker layouts depending on your *Inference mode* setting:
 
-- **Easy** — no picker. OdyssAI-X auto-routes each request to the best model (via the Auto Router add-on), falling back to a model you set when the router isn't configured.
-- **Advanced** — 4 named slots (conversation / analyse / engineer / expert). Pick a slot.
-- **Expert** — full catalog with eye toggles for hide/show. Default for power users.
+- **Auto** — no picker at all. The Auto Router chooses the model for every message. If routing can't run, Companion tells you and answers with the router's fallback model.
+- **Expert** — full catalog with eye toggles for hide/show. Default. "Auto" is still available as the first entry in the picker.
 
 See *Model picker* (06) for the full breakdown.
 

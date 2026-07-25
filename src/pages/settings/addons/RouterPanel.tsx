@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type ApiGlobalModel } from "~/lib/api";
+import { api, AUTO_ROUTER_MODEL_ID, type ApiGlobalModel } from "~/lib/api";
 import ModelDropdown from "~/components/chat/ModelDropdown";
 import { Field } from "./shared";
 
@@ -20,9 +20,15 @@ export function RouterPanel() {
     deep: "",
     code: "",
   });
-  // Model catalog drives the per-bucket pickers. We exclude the "auto"
-  // synthetic entry since picking Auto as a router bucket would loop
-  // back into the router itself.
+  // Model that answers when routing itself can't run. "" = none, which
+  // restores the fail-loud behaviour (error, no answer).
+  const [fallbackModel, setFallbackModel] = useState("");
+  // Model catalog drives the per-bucket pickers AND the fallback picker.
+  // Whatever the engine lists is offered as-is — no allow-list, no
+  // curation. That's how a router-style virtual model such as CoeOS shows
+  // up in the Deep / Code buckets the moment the user's engine advertises
+  // it. The ONLY exclusion is the "auto" sentinel itself, because binding
+  // a bucket to Auto would loop the router back into itself.
   const [models, setModels] = useState<ApiGlobalModel[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -40,6 +46,7 @@ export function RouterPanel() {
       setInfo(r);
       setUrlInput(r.embeddingsUrl || r.embeddingsUrlDefault);
       setPolicy(r.policy);
+      setFallbackModel(r.fallbackModel ?? "");
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -48,7 +55,7 @@ export function RouterPanel() {
   async function refreshModels() {
     try {
       const r = await api.listAllModels();
-      setModels(r.models.filter((m) => m.id !== "auto"));
+      setModels(r.models.filter((m) => m.id !== AUTO_ROUTER_MODEL_ID));
     } catch {
       // Non-fatal — the picker will render with an empty list + the
       // standard "No models" hint. The router itself doesn't depend on
@@ -68,6 +75,7 @@ export function RouterPanel() {
       await api.routerSetConfig({
         embeddingsUrl: urlInput.trim() || undefined,
         policy,
+        fallbackModel: fallbackModel.trim() || null,
         rebuildAnchors,
       });
       setSaved(true);
@@ -204,6 +212,29 @@ export function RouterPanel() {
             />
           </div>
         </div>
+        <p className="mt-2 text-[11px] text-gray-500">
+          Three intents, three models. <strong>Chat</strong> = small talk
+          and quick replies. <strong>Deep</strong> = analysis, comparisons,
+          longer reasoning. <strong>Code</strong> = write, refactor, debug.
+          Use any model id your inference engine exposes — including
+          router-style models such as CoeOS, which show up here as soon as
+          your engine advertises them.
+        </p>
+      </Field>
+
+      {/* Fallback — the answer path when routing itself can't run. Same
+          picker component as the buckets so the UX is identical. */}
+      <Field label="Fallback model">
+        <div className="sm:max-w-[50%]">
+          <ModelDropdown
+            value={fallbackModel}
+            onChange={setFallbackModel}
+            models={models}
+            includeAuto={false}
+            fullWidth
+            placeholder="None — fail with an error"
+          />
+        </div>
         <div className="mt-2 flex items-center gap-2">
           <button
             type="button"
@@ -211,7 +242,9 @@ export function RouterPanel() {
             disabled={busy !== null}
             className="rounded-md bg-navy px-4 py-2 text-[13px] font-medium text-white hover:opacity-95 disabled:opacity-50"
           >
-            {busy === "save" ? "Saving…" : "Save policy"}
+            {/* Saves buckets AND fallback — both live in the same config
+                blob, so one button covers the two fields above. */}
+            {busy === "save" ? "Saving…" : "Save routing config"}
           </button>
           <button
             type="button"
@@ -221,12 +254,23 @@ export function RouterPanel() {
           >
             Rebuild anchors
           </button>
+          {fallbackModel && (
+            <button
+              type="button"
+              onClick={() => setFallbackModel("")}
+              disabled={busy !== null}
+              className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[13px] text-gray-600 hover:text-ink disabled:opacity-50"
+            >
+              Clear fallback
+            </button>
+          )}
         </div>
         <p className="mt-2 text-[11px] text-gray-500">
-          Three intents, three models. <strong>Chat</strong> = small talk
-          and quick replies. <strong>Deep</strong> = analysis, comparisons,
-          longer reasoning. <strong>Code</strong> = write, refactor, debug.
-          Use any model id your inference engine exposes.
+          Answers when the router <em>itself</em> can't run — embedding
+          service unreachable, anchors never built, add-on switched off.
+          The chat still shows you the routing error; the reply just comes
+          from this model instead of dying. Leave it empty to keep the
+          strict behaviour: an error and no answer at all.
         </p>
       </Field>
 
@@ -295,8 +339,9 @@ export function RouterPanel() {
           The embedding service is opt-in and runs wherever you choose —
           locally, in your own cluster, or via a cloud provider that
           exposes an OpenAI-compatible embeddings endpoint. If it goes
-          down, the chat returns a clear error instead of guessing a
-          model on your behalf.
+          down, the chat shows you the error rather than guessing silently,
+          and — if you set a <strong>fallback model</strong> above — still
+          answers using it. With no fallback set, the turn fails outright.
         </p>
       </details>
 

@@ -99,7 +99,17 @@ export type ChatStreamCtx = {
   userRow: { debugVerbose: boolean };
   guest: GuestTokenContext | undefined;
   routedDecision:
-    | { from: string; to: string; label: string; score: number; ms: number }
+    | {
+        from: string;
+        to: string;
+        label: string;
+        score: number;
+        ms: number;
+        /** Set only when routing FAILED and `to` is the Auto Router's
+         *  configured fallback model. Surfaced to the user as a stream
+         *  notice + persisted on the message so it survives a reload. */
+        error?: string;
+      }
     | null;
   convKind: "chat" | "talk";
   convMemoryEnabled: boolean;
@@ -138,6 +148,25 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
   } = ctx;
 
   let conversation: ChatTurn[] = withSystem as ChatTurn[];
+
+    // Auto Router fell back → tell the user BEFORE the first token lands.
+    // We deliberately don't use the inline `{error: …}` channel here: that
+    // one marks the whole stream as failed. This turn is going to succeed,
+    // just not on the model the router would have chosen, so it rides its
+    // own `notice` event that the client renders as a banner without
+    // aborting anything.
+    if (routedDecision?.error) {
+      await safeWrite(
+        encoder.encode(
+          `data: ${JSON.stringify({
+            _event: "notice",
+            level: "warn",
+            message: `${routedDecision.error} Answering with the fallback model "${routedDecision.to}" instead.`,
+          })}\n\n`,
+        ),
+      );
+    }
+
     // Max upstream calls in the tool loop. History: 3 → 8 (2026-05-29) → 20.
     // In agent mode the model legitimately needs many rounds — with N distinct
     // tools (Hy3 case: 8 different tools) a real workflow can chain well past 8,
@@ -637,8 +666,21 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
           // Surface the auto-router decision so the UI can render a chip
           // "via Auto → {model} ({label}, {score})". Stored on the
           // assistant message so it's visible when the chat is reopened.
+          // routedError is set only on the fallback path — it keeps the
+          // "this answer didn't come from the router's pick" signal
+          // attached to the message, so reopening the conversation later
+          // still shows why. The live SSE notice is transient; this isn't.
           const statsWithRouting = routedDecision
-            ? { ...stats, routedFrom: "auto", routedLabel: routedDecision.label, routedScore: routedDecision.score, routedMs: routedDecision.ms }
+            ? {
+                ...stats,
+                routedFrom: routedDecision.from,
+                routedLabel: routedDecision.label,
+                routedScore: routedDecision.score,
+                routedMs: routedDecision.ms,
+                ...(routedDecision.error
+                  ? { routedError: routedDecision.error }
+                  : {}),
+              }
             : stats;
           try {
             await db.insert(messages).values({

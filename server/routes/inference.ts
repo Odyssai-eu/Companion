@@ -18,6 +18,37 @@ import { probeEngine } from "../lib/odyssai-probe";
 type Env = { Variables: { userId: string } };
 const inferenceRoute = new Hono<Env>();
 
+/** The two inference modes (0058). 'auto' = no picker, the Auto Router
+ *  add-on chooses the model per message. 'expert' = full catalog picker. */
+export type InferenceMode = "auto" | "expert";
+
+/**
+ * Safety belt for the read path.
+ *
+ * 0058 backfills every 'easy' / 'advanced' row to 'auto', and the PATCH
+ * enum below only accepts the two live values — so in a correctly migrated
+ * database this never fires. It exists for the rows that migration can't
+ * reach: a restored-from-backup user row, a replica that lagged the deploy,
+ * a row written by hand. Those users get the behaviour 'auto' inherited
+ * from 'easy' (no picker, router decides) instead of a mode string the
+ * client doesn't understand, which would leave the chat with no model.
+ *
+ * Deliberately read-only — we don't rewrite the row here. The next save
+ * from the Settings page normalises it for good.
+ *
+ * Anything we don't recognise at all falls back to 'expert' (the column
+ * default), not 'auto': an unknown string is a bug, and the failure mode of
+ * 'expert' is a visible picker, while the failure mode of 'auto' is a chat
+ * with no picker and possibly no router — strictly worse.
+ */
+function normalizeInferenceMode(raw: string | null | undefined): InferenceMode {
+  if (raw === "auto") return "auto";
+  // Legacy values retired by 0058. 'easy' hid the picker and deferred to the
+  // router; 'advanced' offered 4 curated slots. Both land on 'auto'.
+  if (raw === "easy" || raw === "advanced") return "auto";
+  return "expert";
+}
+
 inferenceRoute.get("/settings", async (c) => {
   const userId = c.get("userId");
   const [u] = await db
@@ -48,7 +79,9 @@ inferenceRoute.get("/settings", async (c) => {
     timezone: u.timezone,
     hasApiKey: Boolean(u.hasApiKey),
     envDefaultUrl: process.env.LITELLM_URL ?? "",
-    inferenceMode: u.inferenceMode as "easy" | "advanced" | "expert",
+    inferenceMode: normalizeInferenceMode(u.inferenceMode),
+    // DEPRECATED (0058) — no UI reads these. Still returned so a client
+    // bundle cached from before the deploy doesn't choke on missing keys.
     easyModel: u.easyModel,
     namedModels: u.namedModels ?? {},
     engineUrl: u.engineUrl,
@@ -62,6 +95,8 @@ inferenceRoute.get("/settings", async (c) => {
   });
 });
 
+/** DEPRECATED (0058) — the retired advanced mode's 4 slots. Kept only so
+ *  an in-flight PATCH from a pre-deploy client bundle still validates. */
 const namedModelsSchema = z
   .object({
     conversation: z.string().max(200).optional(),
@@ -81,7 +116,12 @@ const patchSchema = z.object({
   litellmUrl: z.string().url().max(400).nullish(),
   litellmApiKey: z.string().max(400).nullish(),
   timezone: z.string().min(1).max(80).optional(),
-  inferenceMode: z.enum(["easy", "advanced", "expert"]).optional(),
+  // Write side accepts ONLY the two live modes (0058). Legacy 'easy' /
+  // 'advanced' are rejected on purpose — they're read-mapped to 'auto' by
+  // normalizeInferenceMode() above, so no client has a reason to send them.
+  inferenceMode: z.enum(["auto", "expert"]).optional(),
+  // DEPRECATED (0058) — no UI writes these anymore. The keys stay accepted
+  // so an old cached client bundle mid-deploy doesn't 400 its whole PATCH.
   easyModel: z.string().max(200).nullish(),
   namedModels: namedModelsSchema,
   engineUrl: z.string().url().max(400).nullish(),

@@ -4,8 +4,10 @@ import {
   api,
   type ApiConversation,
   type ApiGlobalModel,
+  type ApiInferenceMode,
   type ApiMessage,
   type ApiProject,
+  AUTO_ROUTER_MODEL_ID,
 } from "~/lib/api";
 import { type ChatMessage } from "~/lib/chat-stream";
 import {
@@ -167,6 +169,11 @@ export type UIMessage = {
     routedLabel?: string;
     routedScore?: number;
     routedMs?: number;
+    /** Set instead of a real routing decision when the router couldn't run
+     *  and the turn was answered by the Auto Router's fallback model. Kept
+     *  on the message so reopening the conversation still explains why the
+     *  answer came from that model. */
+    routedError?: string;
     /** #36 memory transparency — what memory was actually injected this turn.
      *  Set only when something WAS injected (>0). `memoryInjected` is the
      *  inspectable text (stable wiki/vault + per-turn RAG, labelled). */
@@ -225,20 +232,22 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     enabled: false,
     pdfMode: "text",
   });
-  const [inferenceMode, setInferenceMode] = useState<
-    "easy" | "advanced" | "expert"
-  >("expert");
-  const [easyModel, setEasyModel] = useState<string | null>(null);
-  const [namedModels, setNamedModels] = useState<{
-    conversation?: string;
-    analyse?: string;
-    engineer?: string;
-    expert?: string;
-  }>({});
+  // Inference mode (0058): 'auto' = no picker, the Auto Router decides
+  // per message; 'expert' = full catalog picker. The retired 'easy' and
+  // 'advanced' modes are read-mapped to 'auto' server-side.
+  const [inferenceMode, setInferenceMode] = useState<ApiInferenceMode>(
+    "expert",
+  );
+  // Same value, readable synchronously from the conversation-load effect.
+  // The two effects (settings fetch / conversation fetch) race, and the
+  // conversation one must not restore a concrete saved model over the
+  // routing sentinel when the user is in 'auto' mode — see the guard at
+  // the restoreModelFromConv call site.
+  const inferenceModeRef = useRef<ApiInferenceMode>("expert");
   const [showMetrics, setShowMetrics] = useState(false);
-  // Per-user picker hide list. Filtered out in easy mode; grayed
-  // with an eye toggle elsewhere. PATCH'd back to /api/inference/settings
-  // when the user clicks the toggle.
+  // Per-user picker hide list. Rendered grayed with an eye toggle in
+  // expert mode (auto mode has no picker at all). PATCH'd back to
+  // /api/inference/settings when the user clicks the toggle.
   const [hiddenModels, setHiddenModels] = useState<string[]>([]);
   /** ComfyUI Imager enriched-prompt modal. When set, the chat composer
    *  (ChatLayout) opens the modal pre-filled with `prompt` (everything
@@ -492,40 +501,43 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         if (cancelled) return;
         setGlobalModels(models);
         setInferenceMode(settings.inferenceMode);
-        setEasyModel(settings.easyModel);
-        setNamedModels(settings.namedModels ?? {});
+        inferenceModeRef.current = settings.inferenceMode;
         setShowMetrics(settings.showMetrics);
         setHiddenModels(settings.hiddenModels ?? []);
 
         // Choose a default model that respects the active mode.
-        if (settings.inferenceMode === "easy") {
-          // Easy = OdyssAI-X picks the best model: auto-route when the Auto
-          // Router add-on is enabled AND configured, otherwise fall back to
-          // the admin-set fallback model. Either way ignore local override.
-          const routerReady = Boolean(router?.enabled && router?.configured);
-          const easyTarget = routerReady
-            ? "auto"
-            : (settings.easyModel ?? settings.defaultModel ?? "");
-          if (easyTarget) setModelAndPersist(easyTarget);
-        } else if (settings.inferenceMode === "advanced") {
-          // Advanced: if the persisted model isn't one of the 4 slots, default
-          // to "conversation" (or the first non-empty slot).
-          const slots = [
-            settings.namedModels?.conversation,
-            settings.namedModels?.analyse,
-            settings.namedModels?.engineer,
-            settings.namedModels?.expert,
-          ].filter((v): v is string => Boolean(v && v.length > 0));
-          if (!slots.includes(model)) {
-            const fallback = slots[0] ?? settings.defaultModel ?? "";
-            if (fallback) setModelAndPersist(fallback);
+        if (settings.inferenceMode === "auto") {
+          // Auto mode: the chat always sends the routing sentinel and the
+          // Auto Router decides per message. There is no picker, so any
+          // locally remembered choice is irrelevant.
+          //
+          // We send the sentinel even when the router isn't ready: the
+          // server owns that failure now (it surfaces the reason AND
+          // answers on the router's own fallback model). Second-guessing it
+          // here would just hide a misconfiguration behind a silent
+          // substitution — exactly what the fallback design avoids.
+          //
+          // Deliberately NOT setModelAndPersist: state + localStorage only.
+          // Writing the sentinel into `conversations.model` would erase
+          // which concrete model each conversation actually used, and the
+          // user gets that history back the moment they switch to expert.
+          // localStorage still gets it so a reload starts on the sentinel
+          // instead of a stale concrete id.
+          setModel(AUTO_ROUTER_MODEL_ID);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(MODEL_LS_KEY, AUTO_ROUTER_MODEL_ID);
           }
-        } else {
-          // Expert: behave as before.
-          if (!model) {
-            const fallback = settings.defaultModel ?? models[0]?.id ?? "";
-            if (fallback) setModelAndPersist(fallback);
+          if (router && !(router.enabled && router.configured)) {
+            // Not an error yet — the first send will surface the real one,
+            // with the server's reason. Just a console breadcrumb.
+            console.warn(
+              "[chat] inference mode is 'auto' but the Auto Router add-on is not ready",
+            );
           }
+        } else if (!model) {
+          // Expert: pre-fill the picker, leave an existing choice alone.
+          const fallback = settings.defaultModel ?? models[0]?.id ?? "";
+          if (fallback) setModelAndPersist(fallback);
         }
       })
       .catch(() => {
@@ -610,7 +622,15 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         // existing `model` state (= localStorage default) stays. The
         // ref binds the active model to this conv so the next picker
         // change PATCHes the right row.
-        if (conversation.model) {
+        //
+        // EXCEPT in 'auto' mode: conversations started in expert mode
+        // carry a concrete model id, and restoring it here would silently
+        // pin the turn to that model — the user would be in auto mode
+        // with no picker and no routing, unable to see or change it.
+        // The mode outranks the conversation's history, so we keep the
+        // routing sentinel and only bind the conv id (so a later mode
+        // switch back to expert still PATCHes the right row).
+        if (conversation.model && inferenceModeRef.current !== "auto") {
           restoreModelFromConv(conversation.model, conversationId);
         } else {
           // No saved model on this conv yet — bind the current default
@@ -733,6 +753,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     // with a fresh startedAt — that's our identity key.
     let lastHandledStart: number | null = null;
     const unsub = StreamManager.subscribe(cid, (entry) => {
+      // Non-fatal server warning (Auto Router fell back to its configured
+      // model). Reuses the error banner because that's the one surface the
+      // user can't miss — but it's raised as soon as it arrives, not at
+      // `done`, and it never suppresses the streaming answer.
+      if (entry.notice) setError(entry.notice);
       setMessages((prev) => {
         const hasLive = prev.some((m) => m.id === LIVE_ID);
         const liveMsg: UIMessage = {
@@ -1605,8 +1630,6 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     setModel: setModelAndPersist,
     globalModels,
     inferenceMode,
-    easyModel,
-    namedModels,
     showMetrics,
     hiddenModels,
     toggleModelHidden,

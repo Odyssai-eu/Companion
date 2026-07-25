@@ -110,13 +110,13 @@ The picker pulls capabilities from the Odyssai `x_odyssai` contract when present
 
 *Settings → Inference* (full page, not the cogwheel). What lives there:
 
-- **Default model** — pre-fills new conversations.
-- **Inference mode** — easy / advanced / expert. Drives the picker layout.
-- **Fallback model** — used in Easy mode only when the Auto Router add-on isn't configured. When the router is set up, Easy auto-routes to the best model per request.
-- **Named models** — the 4 slots for Advanced mode (conversation / analyse / engineer / expert).
+- **Default model** — pre-fills new conversations in Expert mode. Ignored in Auto mode.
+- **Inference mode** — **auto** or **expert**. Auto hides the chat's model selector and lets the Auto Router choose per message; Expert shows the full catalog. (The former *easy* and *advanced* modes were retired in migration `0058` — both became *auto*.)
 - **Hidden models** — eye-toggle hide list.
 - **Show metrics** — per-message stats row toggle.
 - **Debug verbose** — server-side log toggle (logs upstream request bodies). Off by default — produces a lot of stdout.
+
+The Auto Router's own settings (embedding service URL, one model per intent bucket, and the **fallback model** used when routing fails) live in *Settings → Add-ons → Auto Router*, not here. See *Semantic routing* (065).
 
 ## Related
 

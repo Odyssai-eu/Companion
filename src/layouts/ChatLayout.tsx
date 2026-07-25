@@ -14,52 +14,27 @@ import Sidebar from "~/components/chat/Sidebar";
 import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
 import { STYLE_PRESETS, useChat } from "~/hooks/useChat";
 import { usePiSession } from "~/hooks/usePiSession";
-import type { ApiGlobalModel } from "~/lib/api";
+import type { ApiGlobalModel, ApiInferenceMode } from "~/lib/api";
 import { StreamManager } from "~/lib/stream-manager";
 import { estimateMessageListTokens } from "~/lib/tokens";
 
 /**
  * Filter the model list down to what the user can pick, given their
- * inference mode (Settings → Inference). Easy mode hides the picker
- * entirely (TopBar prop), so this returns a single-entry list as a
- * safety net. Advanced exposes 4 named slots only. Expert lets the
- * full LiteLLM list through.
+ * inference mode (Settings → Inference).
+ *
+ *  - `auto`   — no picker at all. `Input` hides it via `hideModelPicker`;
+ *               returning [] here is the belt to that suspenders, so a
+ *               future surface that forgets the prop still can't offer a
+ *               choice the mode says doesn't exist.
+ *  - `expert` — the full catalog, unchanged.
+ *
+ * (0058 removed the `easy` and `advanced` branches along with the modes.)
  */
 function visibleModelsForMode(
   all: ApiGlobalModel[],
-  mode: "easy" | "advanced" | "expert",
-  easyModel: string | null,
-  namedModels: {
-    conversation?: string;
-    analyse?: string;
-    engineer?: string;
-    expert?: string;
-  },
+  mode: ApiInferenceMode,
 ): ApiGlobalModel[] {
-  if (mode === "expert") return all;
-  if (mode === "easy") {
-    if (!easyModel) return [];
-    const m = all.find((x) => x.id === easyModel);
-    return m ? [m] : [];
-  }
-  // advanced — keep order Conversation / Analyse / Engineer / Expert
-  const order: Array<["conversation" | "analyse" | "engineer" | "expert", string]> = [
-    ["conversation", "Conversation"],
-    ["analyse", "Analyse"],
-    ["engineer", "Engineer"],
-    ["expert", "Expert"],
-  ];
-  const out: ApiGlobalModel[] = [];
-  for (const [slot, label] of order) {
-    const id = namedModels[slot];
-    if (!id) continue;
-    const m = all.find((x) => x.id === id);
-    if (m) {
-      // Override display name with the slot label so the picker reads cleanly.
-      out.push({ ...m, name: label, tags: [...(m.tags ?? [])] });
-    }
-  }
-  return out;
+  return mode === "expert" ? all : [];
 }
 import { useGlobalShortcuts } from "~/hooks/useGlobalShortcuts";
 import { useIsMobile } from "~/hooks/useIsMobile";
@@ -391,15 +366,9 @@ export default function ChatLayout() {
             parserConfig={chat.parserConfig}
             model={chat.model}
             onModelChange={chat.setModel}
-            models={visibleModelsForMode(
-              chat.globalModels,
-              chat.inferenceMode,
-              chat.easyModel,
-              chat.namedModels,
-            )}
-            hideModelPicker={chat.inferenceMode === "easy"}
+            models={visibleModelsForMode(chat.globalModels, chat.inferenceMode)}
+            hideModelPicker={chat.inferenceMode === "auto"}
             hiddenModels={chat.hiddenModels}
-            inferenceMode={chat.inferenceMode}
             onToggleHidden={chat.toggleModelHidden}
             priorTokens={priorTokens}
           />

@@ -41,8 +41,31 @@ export type ApiGlobalModel = {
   odyssai?: OdyssaiModelCapabilities;
 };
 
-export type ApiInferenceMode = "easy" | "advanced" | "expert";
+/**
+ * Inference mode (migration 0058 — was easy | advanced | expert).
+ *
+ *  - `auto`   — no model picker in the chat. Every turn goes out on
+ *               {@link AUTO_ROUTER_MODEL_ID} and the Auto Router add-on
+ *               decides which model answers. Replaces the retired `easy`
+ *               and `advanced` modes; the server read-maps both to `auto`.
+ *  - `expert` — full catalog picker, user chooses per turn. Default.
+ */
+export type ApiInferenceMode = "auto" | "expert";
 
+/**
+ * The synthetic MODEL ID meaning "let the Auto Router decide".
+ *
+ * Careful: same word as the `auto` inference MODE, different thing. The
+ * mode is the per-user UX setting above; this is the value that goes on
+ * the wire in the chat request body. Auto mode always sends it, but an
+ * expert-mode user can also pick "Auto" from the picker.
+ * Server-side twin: AUTO_ROUTER_MODEL_ID in server/routes/chat.ts.
+ */
+export const AUTO_ROUTER_MODEL_ID = "auto";
+
+/** @deprecated 0058 — the advanced mode's 4 named slots. Nothing writes
+ *  these anymore; the column survives only so the migration is
+ *  reversible. */
 export type ApiNamedModels = {
   conversation?: string;
   analyse?: string;
@@ -57,7 +80,11 @@ export type ApiInferenceSettings = {
   hasApiKey: boolean;
   envDefaultUrl: string;
   inferenceMode: ApiInferenceMode;
+  /** @deprecated 0058 — the easy-mode single model. Its role moved to the
+   *  Auto Router's `fallbackModel`; still returned by the API so the
+   *  migration stays reversible, but no UI reads it. */
   easyModel: string | null;
+  /** @deprecated 0058 — the advanced-mode slots. Nothing reads them. */
   namedModels: ApiNamedModels;
   /** Direct URL to an Odyssai-compatible engine for capability discovery
    *  (distinct from litellmUrl which routes inference). */
@@ -1592,6 +1619,9 @@ export const api = {
       embeddingsModel: string;
       policy: { chat: string; deep: string; code: string };
       policyDefault: { chat: string; deep: string; code: string };
+      /** Model that answers when routing itself can't run (service down,
+       *  add-on not configured). "" = none → the chat fails loud instead. */
+      fallbackModel: string;
       anchorsBuiltAt: string | null;
     }>("/api/addons/router/info"),
   routerSetConfig: (body: {
@@ -1599,6 +1629,8 @@ export const api = {
     embeddingsUrl?: string;
     embeddingsModel?: string | null;
     policy?: { chat: string; deep: string; code: string };
+    /** "" / null clears the fallback (back to fail-loud). */
+    fallbackModel?: string | null;
     rebuildAnchors?: boolean;
   }) =>
     request<{
@@ -1608,6 +1640,7 @@ export const api = {
       embeddingsUrl: string;
       embeddingsModel: string;
       policy: { chat: string; deep: string; code: string };
+      fallbackModel: string;
       anchorsBuiltAt: string | null;
     }>("/api/addons/router/config", {
       method: "PUT",

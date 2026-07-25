@@ -706,10 +706,17 @@ function StatsRow({
   // routed the request, surface the decision so the user can verify
   // (and tune the policy if the choice was wrong).
   if (typeof stats.routedFrom === "string" && typeof stats.routedLabel === "string") {
-    const scoreStr = typeof stats.routedScore === "number"
-      ? ` ${stats.routedScore.toFixed(2)}`
-      : "";
-    items.push(["Routed", `${stats.routedLabel}${scoreStr}`]);
+    if (typeof stats.routedError === "string" && stats.routedError) {
+      // Routing failed and the Auto Router's fallback model answered. The
+      // live banner is long gone by the time the conversation is reopened,
+      // so the chip is what keeps the "this wasn't a routed pick" signal.
+      items.push(["Routed", "fallback (routing failed)"]);
+    } else {
+      const scoreStr = typeof stats.routedScore === "number"
+        ? ` ${stats.routedScore.toFixed(2)}`
+        : "";
+      items.push(["Routed", `${stats.routedLabel}${scoreStr}`]);
+    }
   }
   if (stats.cost) items.push(["Cost", stats.cost]);
 

@@ -45,6 +45,11 @@ export type StreamEntry = {
   done: boolean;
   /** Set when the pump rejected with a non-abort error. */
   error: string | null;
+  /** Non-fatal server-side warning received mid-stream (currently the
+   *  Auto Router fallback). Unlike `error` it does NOT mean the turn
+   *  failed — the answer still streams in. Surfaced by useChat in the
+   *  same banner as errors so the user can't miss it. */
+  notice: string | null;
   /** Filled when the pump resolved with `result.ok === true`. */
   stats: StreamChatResult | null;
   /** Used by stop() — opens the door for the user to cancel mid-stream. */
@@ -87,6 +92,7 @@ class StreamManagerImpl {
       toolCalls: [],
       done: false,
       error: null,
+      notice: null,
       stats: null,
       controller,
       startedAt: Date.now(),
@@ -129,6 +135,10 @@ class StreamManagerImpl {
         // entry state so we don't bother calling notify() for this.
         emitFileChanged(delta.path);
         return;
+      } else if (delta.type === "notice") {
+        // Non-fatal — record it and notify so the banner shows straight
+        // away, but leave `error` alone so the turn is still a success.
+        entry.notice = delta.message;
       }
       this.notify(entry.conversationId);
     };
