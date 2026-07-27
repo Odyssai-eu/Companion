@@ -27,6 +27,7 @@ import { pipeAndCollect, collectNonStream, stringifyForTool, summarizeResult } f
 import type { GuestTokenContext } from "../lib/guest-token";
 import type { OdyssaiModelCapabilities } from "../lib/odyssai-contract";
 import type { ChatBody, ChatTurn, Env } from "../routes/chat";
+import type { GuardVerdict } from "../lib/guard";
 
 // Dedicated undici Agent for upstream LLM calls. Node's default global
 // dispatcher has `bodyTimeout: 300_000` (5 min) which is too short for big
@@ -111,6 +112,10 @@ export type ChatStreamCtx = {
         error?: string;
       }
     | null;
+  /** Confidential Guard verdict for this turn (null = add-on off or clean).
+   *  Emitted to the client as an `_event:"guard_warning"` frame and folded
+   *  into the persisted message stats. */
+  guardVerdict: GuardVerdict | null;
   convKind: "chat" | "talk";
   convMemoryEnabled: boolean;
   projectGlobalReadOnly: boolean;
@@ -140,12 +145,32 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
     userRow,
     guest,
     routedDecision,
+    guardVerdict,
     convKind,
     convMemoryEnabled,
     projectGlobalReadOnly,
     projectDedicatedMemoryEnabled,
     c,
   } = ctx;
+
+  // Confidential Guard — surface the verdict to the client immediately,
+  // before any upstream byte, so the banner shows while the model streams.
+  // (The client SSE parser ignores unknown `_event` frames, so older
+  // clients are unaffected.)
+  if (guardVerdict?.sensitive) {
+    safeWrite(
+      encoder.encode(
+        `data: ${JSON.stringify({
+          _event: "guard_warning",
+          severity: guardVerdict.maxSeverity,
+          findings: guardVerdict.findings,
+          forcedLocal: guardVerdict.forcedLocal ?? false,
+          forcedModel: guardVerdict.forcedModel ?? null,
+          destinationLocal: guardVerdict.destinationLocal ?? false,
+        })}\n\n`,
+      ),
+    );
+  }
 
   let conversation: ChatTurn[] = withSystem as ChatTurn[];
 
@@ -682,12 +707,25 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
                   : {}),
               }
             : stats;
+          // Confidential Guard — persist the verdict on the message so the
+          // banner survives a reload (same pattern as the routing chip).
+          const statsWithGuard = guardVerdict?.sensitive
+            ? {
+                ...statsWithRouting,
+                guardFlagged: true,
+                guardSeverity: guardVerdict.maxSeverity,
+                guardCategories: guardVerdict.findings.map((f) => f.category),
+                guardForcedLocal: guardVerdict.forcedLocal ?? false,
+                guardForcedModel: guardVerdict.forcedModel ?? null,
+                guardDestinationLocal: guardVerdict.destinationLocal ?? false,
+              }
+            : statsWithRouting;
           try {
             await db.insert(messages).values({
               conversationId: convIdLocal,
               role: "assistant",
               content,
-              stats: statsWithRouting as Record<string, unknown>,
+              stats: statsWithGuard as Record<string, unknown>,
             });
             await db
               .update(conversations)

@@ -13,6 +13,7 @@ import { HermesAddonPanel } from "./addons/HermesAddonPanel";
 import { PiAddonPanel } from "./addons/PiAddonPanel";
 import { ComfyuiAddonPanel } from "./addons/ComfyuiAddonPanel";
 import { ParserAddonPanel } from "./addons/ParserAddonPanel";
+import { GuardAddonPanel } from "./addons/GuardAddonPanel";
 
 /** UI relabel hook (kept for future renames without touching DB rows). */
 function displayName(dbName: string): string {
@@ -220,7 +221,8 @@ function AddonCard({
       addon.name === "Hermes Agent" ||
       addon.name === "Pi Agent" ||
       addon.name === "ComfyUI Imager" ||
-      addon.name === "Parser");
+      addon.name === "Parser" ||
+      addon.name === "Confidential Guard");
 
   return (
     <div className="flex flex-col gap-0 rounded-xl border border-gray-200 bg-white">
@@ -277,6 +279,7 @@ function AddonCard({
           {addon.name === "Pi Agent" && <PiAddonPanel />}
           {addon.name === "ComfyUI Imager" && <ComfyuiAddonPanel />}
           {addon.name === "Parser" && <ParserAddonPanel />}
+          {addon.name === "Confidential Guard" && <GuardAddonPanel />}
         </div>
       )}
     </div>

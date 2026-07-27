@@ -36,7 +36,20 @@ export type StreamDelta =
    *  Auto Router fallback ("routing failed, answering with X instead").
    *  Distinct from the inline `error` channel: a notice does NOT mark the
    *  stream as failed — the answer still arrives. */
-  | { type: "notice"; level: "warn" | "info"; message: string };
+  | { type: "notice"; level: "warn" | "info"; message: string }
+  | {
+      type: "guard_warning";
+      severity: "low" | "medium" | "high";
+      findings: Array<{ category: string; severity: string; spans: string[] }>;
+      forcedLocal: boolean;
+      forcedModel: string | null;
+      destinationLocal: boolean;
+    }
+  | {
+      type: "guard_blocked";
+      severity: "low" | "medium" | "high";
+      findings: Array<{ category: string; severity: string; spans: string[] }>;
+    };
 
 export type InferencePayload = {
   temperature?: number;
@@ -214,6 +227,36 @@ export async function streamChat(
             type: "notice",
             level: chunk.level === "info" ? "info" : "warn",
             message: chunk.message,
+          });
+          continue;
+        }
+        if (chunk._event === "guard_warning") {
+          const g = chunk as unknown as {
+            severity?: string;
+            findings?: Array<{ category: string; severity: string; spans: string[] }>;
+            forcedLocal?: boolean;
+            forcedModel?: string | null;
+            destinationLocal?: boolean;
+          };
+          opts.onDelta({
+            type: "guard_warning",
+            severity: (g.severity ?? "medium") as "low" | "medium" | "high",
+            findings: Array.isArray(g.findings) ? g.findings : [],
+            forcedLocal: Boolean(g.forcedLocal),
+            forcedModel: g.forcedModel ?? null,
+            destinationLocal: Boolean(g.destinationLocal),
+          });
+          continue;
+        }
+        if (chunk._event === "guard_blocked") {
+          const g = chunk as unknown as {
+            severity?: string;
+            findings?: Array<{ category: string; severity: string; spans: string[] }>;
+          };
+          opts.onDelta({
+            type: "guard_blocked",
+            severity: (g.severity ?? "high") as "low" | "medium" | "high",
+            findings: Array.isArray(g.findings) ? g.findings : [],
           });
           continue;
         }

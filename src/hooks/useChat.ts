@@ -17,7 +17,12 @@ import {
 } from "~/lib/file-attach";
 import { getMemoryDefaultNewConv } from "~/lib/memory-prefs";
 import { estimateCost as lookupCost } from "~/lib/model-pricing";
-import { StreamManager, type StreamEntry } from "~/lib/stream-manager";
+import {
+  StreamManager,
+  type StreamEntry,
+  type GuardWarning,
+  type GuardBlock,
+} from "~/lib/stream-manager";
 
 /** Stable id for the in-flight assistant placeholder. The subscribe
  *  effect targets this id to patch content/reasoning/toolCalls as the
@@ -140,6 +145,13 @@ export type UIMessage = {
   model?: string;
   /** Tool invocations the assistant made during this turn (web_search, etc). */
   toolCalls?: ToolCallRecord[];
+  /** Confidential Guard verdict for the live turn (streaming only —
+   *  persisted messages carry it in stats.guard* instead). */
+  guard?: GuardWarning;
+  /** Set when the send was blocked (CoeOS router + sensitive). Rendered as
+   *  a switch-to-local prompt in place of an assistant reply. Live-only —
+   *  blocked turns never persist an assistant message. */
+  blocked?: GuardBlock;
   stats?: {
     ttft?: string;
     tokens?: number;
@@ -174,6 +186,14 @@ export type UIMessage = {
      *  on the message so reopening the conversation still explains why the
      *  answer came from that model. */
     routedError?: string;
+    /** Confidential Guard verdict — persisted flavour of UIMessage.guard
+     *  so the banner survives a reload. */
+    guardFlagged?: boolean;
+    guardSeverity?: "low" | "medium" | "high";
+    guardCategories?: string[];
+    guardForcedLocal?: boolean;
+    guardForcedModel?: string | null;
+    guardDestinationLocal?: boolean;
     /** #36 memory transparency — what memory was actually injected this turn.
      *  Set only when something WAS injected (>0). `memoryInjected` is the
      *  inspectable text (stable wiki/vault + per-turn RAG, labelled). */
@@ -767,6 +787,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           reasoning: entry.reasoning || undefined,
           toolCalls:
             entry.toolCalls.length > 0 ? entry.toolCalls : undefined,
+          guard: entry.guard ?? undefined,
+          blocked: entry.blocked ?? undefined,
           streaming: !entry.done,
           model: model ?? undefined,
         };
@@ -1537,6 +1559,56 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     [messages, sending, conversationId, conversation?.id],
   );
 
+  // Confidential Guard — after a blocked CoeOS turn, the user picks a local
+  // model from the filtered picker; we switch to it and re-stream the SAME
+  // (already-persisted) user message. We do NOT re-append the user turn:
+  // sendMessage persisted it before the block, so a second append would
+  // duplicate it. This just replaces the blocked placeholder with a live one.
+  const resendOnLocalModel = useCallback(
+    (localModelId: string) => {
+      if (sending) return;
+      const convId = conversationId ?? conversation?.id ?? null;
+      if (!convId) return;
+      setModelAndPersist(localModelId);
+      const kept = messages.filter((m) => m.id !== LIVE_ID);
+      const convo: ChatMessage[] = kept.map((m) => ({
+        role: m.role,
+        content: m.content,
+        createdAt: m.createdAt,
+      }));
+      setMessages([
+        ...kept,
+        {
+          id: LIVE_ID,
+          role: "assistant",
+          content: "",
+          streaming: true,
+          model: localModelId,
+        },
+      ]);
+      setSending(true);
+      const effectiveInference = inferenceToPayload(inference);
+      if (project?.systemPrompt && project.systemPrompt.trim()) {
+        effectiveInference.system_prompt = project.systemPrompt;
+      }
+      StreamManager.startStream({
+        conversationId: convId,
+        messages: convo,
+        model: localModelId,
+        inference: effectiveInference,
+      });
+    },
+    [
+      sending,
+      conversationId,
+      conversation?.id,
+      messages,
+      inference,
+      project,
+      setModelAndPersist,
+    ],
+  );
+
   const startNew = useCallback(() => {
     navigate("/");
   }, [navigate]);
@@ -1639,6 +1711,7 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     sendMessage,
     regenerate,
     editAndResend,
+    resendOnLocalModel,
     cancel,
     startNew,
     toggleMemoryEnabled,
@@ -1699,6 +1772,8 @@ function buildLivePlaceholder(
     content: entry.content,
     reasoning: entry.reasoning || undefined,
     toolCalls: entry.toolCalls.length > 0 ? entry.toolCalls : undefined,
+    guard: entry.guard ?? undefined,
+    blocked: entry.blocked ?? undefined,
     streaming: !entry.done,
     model: fallbackModel ?? undefined,
   };

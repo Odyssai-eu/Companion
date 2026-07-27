@@ -35,6 +35,11 @@ import {
   providerTarget,
   resolveUserSettings,
 } from "../lib/global-settings";
+import { loadGuardConfigForUser } from "./addon-guard";
+import { classifyText, lastUserText, type GuardVerdict } from "../lib/guard";
+import { classifyOrigin } from "../lib/model-origin";
+import { fetchEngineOrigins } from "../lib/odyssai-capabilities";
+import { logAuthEvent } from "../lib/auth-log";
 import { resolveChatTools } from "../lib/chat-tools";
 import { buildUpstreamBody } from "../lib/upstream-request";
 import { resolveConvContext } from "../lib/chat-context";
@@ -306,6 +311,121 @@ chatRoute.post("/completions", async (c) => {
 
   let target = providerTarget(conn, effectiveMode);
 
+  // ── 2b. Confidential Guard pre-hook ────────────────────────────────────
+  // Classify the outgoing user message against the guard service (GLiNER2
+  // PII sidecar) BEFORE it reaches the provider. Fail-soft: a guard error
+  // never blocks the turn. On a sensitive verdict, the action depends on
+  // where the TARGET model actually runs (owned_by-derived origin, NOT the
+  // provider mode — LiteLLM is never used so effectiveMode is always
+  // gateway; a gateway turn can still proxy a cloud model):
+  //   local  → nothing to force; informational banner ("stayed local").
+  //   cloud  → force-local policy re-routes to the configured local model;
+  //            warn policy just surfaces the banner and sends.
+  //   router → CoeOS full: it decides local/cloud downstream, so we CANNOT
+  //            guarantee local. Never auto-route (that breaks the router).
+  //            BLOCK the send and let the client prompt the user to switch
+  //            to a local engine.
+  let guardVerdict: GuardVerdict | null = null;
+  {
+    const guardCfg = await loadGuardConfigForUser(userId);
+    if (guardCfg) {
+      const guardText = lastUserText(body.messages);
+      if (guardText.trim()) {
+        guardVerdict = await classifyText(guardText.slice(0, 8_000), guardCfg);
+        if (guardVerdict?.sensitive) {
+          const categories = guardVerdict.findings.map((f) => f.category);
+          // Origin of the target model, from the engine's /v1/models
+          // (owned_by). Unknown / no engine → classifyOrigin fail-safes to
+          // cloud (except the coeos id), so we never treat unknown as local.
+          // `conn`, not `userRow`: the user columns are 0059 OVERRIDES and
+          // are NULL for an account that inherits the instance engine. The
+          // resolved connection is the only truthful "is there an engine".
+          let origin = classifyOrigin({ id: body.model });
+          if (conn.engineUrl) {
+            const origins = await fetchEngineOrigins(
+              conn.engineUrl,
+              conn.engineToken,
+            );
+            origin = origins.get(body.model.toLowerCase()) ?? origin;
+          }
+          console.log(
+            "[chat] guard flagged message (severity=%s categories=%s origin=%s) in %dms",
+            guardVerdict.maxSeverity,
+            categories.join(","),
+            origin,
+            guardVerdict.ms,
+          );
+
+          if (origin === "router") {
+            // CoeOS full — block. No assistant turn is produced; the client
+            // shows the switch-to-local prompt. Return a minimal SSE with a
+            // single guard_blocked frame (before opening any inference).
+            guardVerdict.blocked = true;
+            logAuthEvent({
+              userId,
+              event: "guard.blocked",
+              meta: {
+                severity: guardVerdict.maxSeverity,
+                categories,
+                model: body.model,
+                conversationId: body.conversationId ?? null,
+              },
+            });
+            c.header("Content-Type", "text/event-stream");
+            c.header("Cache-Control", "no-cache");
+            c.header("X-Accel-Buffering", "no");
+            return c.body(
+              `data: ${JSON.stringify({
+                _event: "guard_blocked",
+                severity: guardVerdict.maxSeverity,
+                findings: guardVerdict.findings,
+                model: body.model,
+              })}\n\ndata: [DONE]\n\n`,
+            );
+          }
+
+          if (origin === "cloud") {
+            if (
+              guardCfg.action === "force-local" &&
+              conn.engineUrl &&
+              guardCfg.localModel
+            ) {
+              body.model = guardCfg.localModel;
+              target = {
+                baseUrl: conn.engineUrl.replace(/\/+$/, ""),
+                apiKey: conn.engineToken,
+              };
+              guardVerdict.forcedLocal = true;
+              guardVerdict.forcedModel = guardCfg.localModel;
+              guardVerdict.destinationLocal = true;
+              console.log(
+                "[chat] guard forced local routing → %s",
+                guardCfg.localModel,
+              );
+            } else {
+              guardVerdict.destinationLocal = false;
+            }
+          } else {
+            // local — data stays on the engine, nothing to force.
+            guardVerdict.destinationLocal = true;
+          }
+
+          logAuthEvent({
+            userId,
+            event: guardVerdict.forcedLocal ? "guard.forced_local" : "guard.flagged",
+            meta: {
+              severity: guardVerdict.maxSeverity,
+              categories,
+              origin,
+              forcedModel: guardVerdict.forcedModel ?? null,
+              conversationId: body.conversationId ?? null,
+            },
+          });
+        }
+      }
+    }
+  }
+
   // ── 3. Resolve project + memory snapshot (frozen per-conversation) ────
   // The memory wiki is snapshot at conversation creation (or on explicit
   // "Remember now") and reused as-is on every turn. This keeps the system-
@@ -436,6 +556,7 @@ chatRoute.post("/completions", async (c) => {
     userRow,
     guest,
     routedDecision,
+    guardVerdict,
     convKind,
     convMemoryEnabled,
     projectGlobalReadOnly,

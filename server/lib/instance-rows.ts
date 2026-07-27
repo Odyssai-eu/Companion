@@ -167,6 +167,16 @@ export const ADDON_CATALOG: readonly AddonCatalogEntry[] = [
       "Slides are produced as HTML instead.",
     version: "0.1.0",
   },
+  {
+    name: "Confidential Guard",
+    kind: "plugin",
+    description:
+      "Detect confidential content (GDPR identifiers, health data, " +
+      "financials, credentials) in your message before it is sent, warn " +
+      "you, and optionally keep the turn on your local engine instead of " +
+      "a cloud provider. Points Companion at your Guardian endpoint.",
+    version: "0.1.0",
+  },
 ] as const;
 
 export function catalogEntry(name: string): AddonCatalogEntry | null {
@@ -208,6 +218,10 @@ const PAIRED_CONFIG_KEYS: Record<string, Readonly<Record<string, string>>> = {
   "Hermes Agent": { bridgeToken: "bridgeUrl" },
   "Pi Agent": { bridgeToken: "bridgeUrl" },
   "ComfyUI Imager": { bridgeToken: "bridgeUrl" },
+  // The stage-2 model id belongs to the LLM endpoint it is served from —
+  // a user pointing contextual detection at their own LLM must not keep
+  // the instance's model name. Same argument as Voice's ttsModel.
+  "Confidential Guard": { contextualLlmModel: "contextualLlmUrl" },
   "Auto Router": {
     embeddingsModel: "embeddingsUrl",
     anchorCentroids: "embeddingsUrl",
@@ -446,7 +460,7 @@ export async function resolveAddonForUser(
 }
 
 /**
- * Same, for one of the nine names in `ADDON_CATALOG` — which always
+ * Same, for one of the ten names in `ADDON_CATALOG` — which always
  * resolves, so the nine route modules do not each need a null branch they
  * can never hit. Throws on a name the build does not know, which is a
  * programming error rather than a runtime condition.

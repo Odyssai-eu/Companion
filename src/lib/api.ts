@@ -30,11 +30,17 @@ export type OdyssaiModelCapabilities = {
   kind?: string;
 };
 
+export type ApiModelOrigin = "local" | "cloud" | "router";
+
 export type ApiGlobalModel = {
   id: string;
   name: string;
   tags: string[];
   capabilities: { vision: boolean; tools: boolean };
+  /** Where the model runs — local pool, external cloud provider, or the
+   *  CoeOS router. Used by the Confidential Guard's local-only picker.
+   *  Optional for back-compat with older server responses. */
+  origin?: ApiModelOrigin;
   /** Rich per-model contract from an Odyssai-compatible engine. Present
    *  only when the user configured an engine URL AND the engine returned
    *  an `x_odyssai` block for this model id. */
@@ -1764,6 +1770,55 @@ export const api = {
       return { ok: false, error: `HTTP ${res.status}` };
     }
   },
+
+  // Confidential Guard add-on (PII/GDPR detection before send)
+  guardAddonInfo: () =>
+    request<{
+      addonId: string;
+      enabled: boolean;
+      url: string;
+      action: "warn" | "force-local";
+      localModel: string;
+      threshold: number;
+      contextualLlmUrl: string;
+      contextualLlmModel: string;
+      configured: boolean;
+    }>("/api/addons/guard/info"),
+  guardAddonSetConfig: (body: {
+    enabled?: boolean;
+    url?: string;
+    action?: "warn" | "force-local";
+    localModel?: string;
+    threshold?: number;
+    contextualLlmUrl?: string;
+    contextualLlmModel?: string;
+  }) =>
+    request<{
+      ok: true;
+      enabled: boolean;
+      url: string;
+      action: "warn" | "force-local";
+      localModel: string;
+      threshold: number;
+      contextualLlmUrl: string;
+      contextualLlmModel: string;
+      configured: boolean;
+    }>("/api/addons/guard/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  guardAddonTest: (text: string) =>
+    request<{
+      ok: boolean;
+      sensitive?: boolean;
+      maxSeverity?: string;
+      findings?: Array<{ category: string; severity: string; spans: string[] }>;
+      ms?: number;
+      error?: string;
+    }>("/api/addons/guard/test", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
 
   // Auto Router add-on (semantic routing via embeddings)
   routerInfo: () =>
