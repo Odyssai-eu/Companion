@@ -19,12 +19,14 @@ import {
   api,
   type ApiAdminUser,
   type ApiAuditEntry,
+  type ApiGlobalModel,
   type ApiGuestToken,
   type ApiInstanceSettings,
   type ApiTeam,
   type ApiTeamMember,
   type AuthRole,
 } from "~/lib/api";
+import { modelOptionLabel } from "~/lib/model-label";
 
 export default function AdminPage() {
   const auth = useAuth();
@@ -958,6 +960,7 @@ function InstanceSettingsSection() {
   const [litellmUrl, setLitellmUrl] = useState("");
   const [litellmDisabled, setLitellmDisabled] = useState(false);
   const [defaultModel, setDefaultModel] = useState("");
+  const [models, setModels] = useState<ApiGlobalModel[]>([]);
   // Secrets are never returned, so the inputs start blank and only travel
   // when the admin actually types (or explicitly clears).
   const [engineToken, setEngineToken] = useState("");
@@ -986,6 +989,12 @@ function InstanceSettingsSection() {
       .getInstanceSettings()
       .then(apply)
       .catch((e) => setError((e as Error).message));
+    // Same source as Settings → Inference: the effective /api/models list.
+    // Failure keeps the select usable (current value + "inherit" row only).
+    api
+      .listAllModels()
+      .then(({ models }) => setModels(models))
+      .catch(() => setModels([]));
   }, [apply]);
 
   async function save() {
@@ -1127,13 +1136,28 @@ function InstanceSettingsSection() {
           label="Default model"
           hint="Pre-fills the picker on a fresh chat for anyone who hasn't chosen one."
         >
-          <input
-            type="text"
+          <select
             value={defaultModel}
             onChange={(e) => setDefaultModel(e.target.value)}
-            placeholder="(none — pick first available)"
             className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-          />
+          >
+            <option value="">(none — pick first available)</option>
+            {/* The saved value can name a model the engine no longer
+                serves (stopped pool, renamed alias). A <select> without
+                its value's option silently displays the first row while
+                the state still holds the old id — surface it instead so
+                the admin SEES the stale default. */}
+            {defaultModel && !models.some((m) => m.id === defaultModel) && (
+              <option value={defaultModel}>
+                {defaultModel} (not currently served)
+              </option>
+            )}
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {modelOptionLabel(m)}
+              </option>
+            ))}
+          </select>
         </Field>
 
         <Field
