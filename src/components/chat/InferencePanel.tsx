@@ -50,6 +50,7 @@ export default function InferencePanel({ params, onChange, onClose }: Props) {
             value={params.thinking}
             onChange={(v) => onChange({ thinking: v })}
           />
+          <AntiLoopToggle />
           <SelectField
             label="Reasoning effort"
             value={params.reasoningEffort}
@@ -116,6 +117,41 @@ export default function InferencePanel({ params, onChange, onClose }: Props) {
 
       <SystemPromptSection params={params} onChange={onChange} />
     </section>
+  );
+}
+
+/**
+ * Anti-loop switch — lives here with the other inference dials because it
+ * shapes the generation, but its VALUE is the account-level preference
+ * (users.anti_loop, 0061): flipping it persists immediately and applies to
+ * every chat until flipped back, per spec. Not part of InferenceParams —
+ * a per-conversation copy would silently forget the choice on a new chat.
+ */
+function AntiLoopToggle() {
+  const [value, setValue] = useState(true);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    api
+      .inferenceSettings()
+      .then((s) => {
+        setValue(s.antiLoop);
+        setReady(true);
+      })
+      .catch(() => setReady(true));
+  }, []);
+  return (
+    <div title="Stop the reply cleanly when the model degenerates into repeating itself. Account-wide — keeps its state from one chat to the next.">
+      <Toggle
+        label="Anti-loop"
+        value={value}
+        onChange={(v) => {
+          if (!ready) return;
+          setValue(v);
+          // Optimistic; revert on failure so the switch never lies.
+          api.updateInferenceSettings({ antiLoop: v }).catch(() => setValue(!v));
+        }}
+      />
+    </div>
   );
 }
 
