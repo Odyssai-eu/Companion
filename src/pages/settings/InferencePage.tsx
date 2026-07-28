@@ -36,6 +36,7 @@ export default function InferencePage() {
   // Empty string = "inherit from the instance".
   const [showMetrics, setShowMetrics] = useState(false);
   const [debugVerbose, setDebugVerbose] = useState(false);
+  const [antiLoop, setAntiLoop] = useState(true);
   const [defaultModel, setDefaultModel] = useState("");
   const [timezone, setTimezone] = useState("");
   const [inferenceMode, setInferenceMode] =
@@ -56,6 +57,7 @@ export default function InferencePage() {
     setModels(ms.models);
     setShowMetrics(s.showMetrics);
     setDebugVerbose(s.debugVerbose);
+    setAntiLoop(s.antiLoop);
     setDefaultModel(s.overrides.defaultModel ?? "");
     // Bound to the OVERRIDE (0060), like defaultModel just above and for
     // the same reason: seeding it from the effective value would re-save
@@ -77,6 +79,7 @@ export default function InferencePage() {
       const patch: Parameters<typeof api.updateInferenceSettings>[0] = {
         showMetrics,
         debugVerbose,
+        antiLoop,
         // "" → null = drop the override and inherit the instance model.
         defaultModel: defaultModel.trim() || null,
         // "" → null = drop the override and inherit the instance zone.
@@ -431,6 +434,28 @@ export default function InferencePage() {
             Refresh
           </button>
         </div>
+      </Section>
+
+      <Section title="Anti-loop protection">
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 text-[13px] hover:bg-gray-50">
+          <input
+            type="checkbox"
+            checked={antiLoop}
+            onChange={(e) => setAntiLoop(e.target.checked)}
+            className="mt-0.5"
+          />
+          <div className="flex flex-col gap-0.5">
+            <span className="font-medium text-ink">Stop repetition loops</span>
+            <span className="text-[12px] text-gray-500">
+              When a local model degenerates into repeating the same words or
+              paragraph, the engine ends the reply cleanly instead of burning
+              tokens to the limit — you get the answer up to that point plus a
+              banner. On by default; turn it off if you deliberately want long
+              repetitive output (chants, stress tests). Applies to your
+              account everywhere, until you switch it back.
+            </span>
+          </div>
+        </label>
       </Section>
 
       <Section title="Display">

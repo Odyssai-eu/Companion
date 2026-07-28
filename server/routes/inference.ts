@@ -85,6 +85,7 @@ inferenceRoute.get("/settings", async (c) => {
       namedModels: users.namedModels,
       showMetrics: users.showMetrics,
       debugVerbose: users.debugVerbose,
+      antiLoop: users.antiLoop,
       hiddenModels: users.hiddenModels,
     })
     .from(users)
@@ -119,6 +120,7 @@ inferenceRoute.get("/settings", async (c) => {
     inferenceMode: normalizeInferenceMode(u.inferenceMode),
     showMetrics: u.showMetrics,
     debugVerbose: u.debugVerbose,
+    antiLoop: u.antiLoop,
     hiddenModels: u.hiddenModels ?? [],
 
     // ── The user's OWN overrides — what the forms edit ────────────────
@@ -204,6 +206,7 @@ const patchSchema = z.object({
   litellmDisabled: z.boolean().nullish(),
   showMetrics: z.boolean().optional(),
   debugVerbose: z.boolean().optional(),
+  antiLoop: z.boolean().optional(),
   // Picker hide list — full replacement on PATCH. Null clears it.
   hiddenModels: z.array(z.string().max(200)).max(200).nullish(),
 });
@@ -244,6 +247,9 @@ inferenceRoute.patch("/settings", zValidator("json", patchSchema), async (c) => 
   }
   if (data.debugVerbose !== undefined) {
     patch.debugVerbose = data.debugVerbose;
+  }
+  if (data.antiLoop !== undefined) {
+    patch.antiLoop = data.antiLoop;
   }
   if (data.hiddenModels !== undefined) {
     // null / empty array both mean "no hide list" — store as null so the

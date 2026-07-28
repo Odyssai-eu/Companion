@@ -185,6 +185,9 @@ export type ApiInferenceSettings = {
   /** Per-user toggle for verbose debug logging on chat.ts (logs upstream
    *  request bodies to docker logs). Off by default. */
   debugVerbose: boolean;
+  /** Anti-loop protection: the engine stops a generation that degenerates
+   *  into repetition. ON by default; per-user, persists until toggled. */
+  antiLoop: boolean;
   /** Model ids the user has hidden from the chat picker. `easy` mode
    *  filters them out entirely; advanced/expert gray them out so the
    *  user can un-hide via the eye toggle next to each row. */
@@ -729,6 +732,7 @@ export const api = {
       litellmDisabled: boolean | null;
       showMetrics: boolean;
       debugVerbose: boolean;
+      antiLoop: boolean;
       hiddenModels: string[] | null;
     }>,
   ) =>

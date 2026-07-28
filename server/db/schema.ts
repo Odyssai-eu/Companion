@@ -68,6 +68,11 @@ export const users = pgTable("users", {
   // shape issues, model id resolution, etc. Off by default — produces
   // a lot of stdout. Server-only sink (console.log → docker logs).
   debugVerbose: boolean("debug_verbose").notNull().default(false),
+  // Anti-loop protection (engine-side detect-and-stop on degenerate
+  // repetition). ON by default; per-user, NOT inherited — same class of
+  // plain preference as show_metrics. When off, chat sends
+  // `anti_loop: false` to the engine for this user's turns.
+  antiLoop: boolean("anti_loop").notNull().default(true),
   // Temporal awareness — fed into every inference as a context tag.
   // Nullable since 0060: it joined the inherited block, so NULL = "use the
   // instance timezone" (global_settings.timezone). Read it through

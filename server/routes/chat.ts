@@ -271,6 +271,7 @@ chatRoute.post("/completions", async (c) => {
         lastInteractionAt: users.lastInteractionAt,
         ...CONNECTION_COLUMNS,
         debugVerbose: users.debugVerbose,
+        antiLoop: users.antiLoop,
         memoryMode: users.memoryMode,
       })
       .from(users)
@@ -496,6 +497,13 @@ chatRoute.post("/completions", async (c) => {
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)
   const baseBody = buildUpstreamBody(body);
+  // Anti-loop opt-out: the engine protects by default, so the field only
+  // travels when this user turned the switch OFF — and only towards the
+  // engine (gateway mode). Cloud providers would 400 on the unknown param
+  // and have no detector anyway.
+  if (userRow.antiLoop === false && effectiveMode === "gateway") {
+    baseBody.anti_loop = false;
+  }
 
   const { modelCaps, tools, toolsEnabled, agentToolsEnabled, headers } = await resolveChatTools({ conn, body, convAgentMode, guest, userId, effectiveMode, baseBody, target });
 

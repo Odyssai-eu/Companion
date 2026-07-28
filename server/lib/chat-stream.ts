@@ -378,13 +378,30 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
         // undici's fetch returns its own Response type; structurally compatible
         // with the global Response that collectNonStream/pipeAndCollect expect.
         const upstreamResp = upstream as unknown as Response;
-        const { toolCalls, finishReason, assistantContent, usage, chunkCount, routed, responseModel } =
+        const { toolCalls, finishReason, assistantContent, usage, chunkCount, routed, responseModel, loopDetected } =
           useNonStream
             ? await collectNonStream(upstreamResp, writer, encoder, body.conversationId)
             : await pipeAndCollect(upstreamResp, writer, encoder, body.conversationId);
         totalChunkCount += chunkCount;
         if (routed) coeosRouted = routed;
         if (responseModel) responseModelSeen = responseModel;
+        // Engine anti-loop tripped: the turn was ended early because the
+        // model was cycling. Same non-fatal `notice` rail as the Auto Router
+        // fallback — the partial answer above is still real and kept.
+        if (loopDetected) {
+          await safeWrite(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                _event: "notice",
+                level: "warn",
+                message:
+                  "Generation stopped early — the model was repeating itself " +
+                  "in a loop. The answer above is kept up to that point. " +
+                  "(Anti-loop can be turned off in Settings → Inference.)",
+              })}\n\n`,
+            ),
+          );
+        }
         if (usage) {
           sawUpstreamUsage = true;
           totalPromptTokens += usage.promptTokens;

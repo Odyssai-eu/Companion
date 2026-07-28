@@ -43,6 +43,9 @@ export async function pipeAndCollect(
   routed: { routed_to?: string; category?: string; concrete?: string } | null;
   /** The model id the response actually reported (employed model, all paths). */
   responseModel: string | null;
+  /** OdyssAI-X anti-loop tripped: the engine ended the turn because the
+   *  model was cycling. Surfaced to the user as a notice banner. */
+  loopDetected: boolean;
 }> {
   const reader = upstream.body!.getReader();
   const decoder = new TextDecoder();
@@ -54,6 +57,7 @@ export async function pipeAndCollect(
   let chunkCount = 0;
   let routed: { routed_to?: string; category?: string; concrete?: string } | null = null;
   let responseModel: string | null = null;
+  let loopDetected = false;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -83,6 +87,7 @@ export async function pipeAndCollect(
           x_odyssai_routed?: {
             router?: string; routed_to?: string; category?: string; concrete?: string;
           };
+          x_mlx_cluster?: { loop_detected?: boolean };
           choices?: Array<{
             delta?: {
               content?: string | null;
@@ -110,6 +115,7 @@ export async function pipeAndCollect(
           };
         };
         if (parsed.x_odyssai_routed?.routed_to) routed = parsed.x_odyssai_routed;
+        if (parsed.x_mlx_cluster?.loop_detected) loopDetected = true;
         if (parsed.model && !responseModel) responseModel = parsed.model;
         if (parsed.usage) {
           // mlx-vlm reports usage under input_tokens/output_tokens; LiteLLM
@@ -175,6 +181,7 @@ export async function pipeAndCollect(
     chunkCount,
     routed,
     responseModel,
+    loopDetected,
   };
 }
 
@@ -203,6 +210,7 @@ export async function collectNonStream(
   chunkCount: number;
   routed: { routed_to?: string; category?: string; concrete?: string } | null;
   responseModel: string | null;
+  loopDetected: boolean;
 }> {
   let chunkCountForReturn = 0;
   const text = await upstream.text();
@@ -211,6 +219,7 @@ export async function collectNonStream(
     x_odyssai_routed?: {
       router?: string; routed_to?: string; category?: string; concrete?: string;
     };
+    x_mlx_cluster?: { loop_detected?: boolean };
     choices?: Array<{
       message?: {
         content?: string | null;
@@ -239,7 +248,7 @@ export async function collectNonStream(
     await writer.write(
       encoder.encode(`data: ${JSON.stringify({ error: "invalid_json_from_upstream" })}\n\n`),
     ).catch(() => undefined);
-    return { toolCalls: [], finishReason: null, assistantContent: "", usage: null, chunkCount: 0, routed: null, responseModel: null };
+    return { toolCalls: [], finishReason: null, assistantContent: "", usage: null, chunkCount: 0, routed: null, responseModel: null, loopDetected: false };
   }
 
   const routed = parsed.x_odyssai_routed?.routed_to ? parsed.x_odyssai_routed : null;
@@ -364,6 +373,7 @@ export async function collectNonStream(
     chunkCount: chunkCountForReturn,
     routed,
     responseModel,
+    loopDetected: Boolean(parsed.x_mlx_cluster?.loop_detected),
   };
 }
 
