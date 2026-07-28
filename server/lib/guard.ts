@@ -44,6 +44,23 @@ export type GuardVerdict = {
 const GUARD_TIMEOUT_MS = 6_000;
 const CONTEXTUAL_TIMEOUT_MS = 25_000;
 
+/** Append the conventional path when the operator pasted a bare host:port.
+ *  "/guard" for the classifier endpoint, "/v1" for the OpenAI-compatible
+ *  base (the SDK appends nothing): both 404 without it, and the failure is
+ *  invisible — the classifier one surfaced as "guard_service_unreachable",
+ *  the LLM one as a stage 2 that silently never ran (Guardian fail-opens).
+ *  A URL that already carries a path is left untouched (reverse-proxy or
+ *  custom-mount setups). */
+function withDefaultPath(raw: string, path: string): string {
+  try {
+    const u = new URL(raw);
+    if (!u.pathname || u.pathname === "/") u.pathname = path;
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return raw;
+  }
+}
+
 /** Classify one user message against the guard service. Returns null on
  *  any failure (service down, timeout, bad payload) — fail-soft. */
 export async function classifyText(
@@ -59,7 +76,7 @@ export async function classifyText(
     // endpoint in the add-on. We relay it to Guardian per request — Guardian
     // stores no URL (no hardcoded IP; the add-on is the single config surface).
     const contextual = Boolean(cfg.contextualLlmUrl);
-    const res = await fetch(cfg.url as string, {
+    const res = await fetch(withDefaultPath(cfg.url as string, "/guard"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -68,7 +85,7 @@ export async function classifyText(
         contextual,
         ...(contextual
           ? {
-              llm_base: cfg.contextualLlmUrl,
+              llm_base: withDefaultPath(cfg.contextualLlmUrl as string, "/v1"),
               llm_model: cfg.contextualLlmModel || "tele-fast",
             }
           : {}),

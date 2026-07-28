@@ -226,19 +226,43 @@ export function GuardAddonPanel() {
           placeholder="http://your-engine:8000/v1  (empty = stage 2 off)"
           className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
         />
-        <input
-          type="text"
-          value={contextualLlmModel}
-          onChange={(e) => setContextualLlmModel(e.target.value)}
-          placeholder="tele-fast"
-          className="mt-2 w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
-        />
+        {models && models.length > 0 ? (
+          <select
+            value={contextualLlmModel}
+            onChange={(e) => setContextualLlmModel(e.target.value)}
+            className="mt-2 w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          >
+            <option value="">(server default — tele-fast)</option>
+            {/* A saved id the engine no longer lists stays visible instead
+                of the select silently snapping to another row. */}
+            {contextualLlmModel && !models.includes(contextualLlmModel) && (
+              <option value={contextualLlmModel}>
+                {contextualLlmModel} (not currently served)
+              </option>
+            )}
+            {models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="text"
+            value={contextualLlmModel}
+            onChange={(e) => setContextualLlmModel(e.target.value)}
+            placeholder="tele-fast"
+            className="mt-2 w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-cyan"
+          />
+        )}
         <p className="mt-2 text-[11px] text-gray-500">
           A small instruct LLM (OpenAI-compatible) for stage 2 — catches
           contextual confidential content (business secrets, health narrative,
           HR, legal) that the PII pass misses. Relayed to the guard service per
           request; leave empty to run PII detection only. Adds ~1&nbsp;s of
-          latency to messages that pass the PII stage.
+          latency to messages that pass the PII stage. The picker lists local
+          models only — this judge reads your message, so a cloud judge would
+          defeat the purpose.
         </p>
       </Field>
 
