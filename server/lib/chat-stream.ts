@@ -387,7 +387,11 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
           );
         }
 
-        const upstream = await undiciFetch(
+        // Transient-failure retry (v2.1): CoeOS relays to hosted
+        // providers that can 429/502/503 mid-loop (observed: ring-2.6-1t
+        // 429 at step 19 of an eval run). Two retries with short backoff
+        // — a rate-limit blip must not kill a 19-step turn.
+        let upstream = await undiciFetch(
           `${target.baseUrl}/v1/chat/completions`,
           {
             method: "POST",
@@ -396,6 +400,24 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
             dispatcher: upstreamDispatcher,
           },
         );
+        for (const delayMs of [2000, 5000]) {
+          if (upstream.ok || ![429, 502, 503].includes(upstream.status)) break;
+          console.warn(
+            "[chat] upstream %d — retrying in %dms",
+            upstream.status,
+            delayMs,
+          );
+          await new Promise((r) => setTimeout(r, delayMs));
+          upstream = await undiciFetch(
+            `${target.baseUrl}/v1/chat/completions`,
+            {
+              method: "POST",
+              headers,
+              body: bodyJson,
+              dispatcher: upstreamDispatcher,
+            },
+          );
+        }
 
         if (!upstream.ok || !upstream.body) {
           const text = await upstream.text().catch(() => "");

@@ -287,12 +287,23 @@ export async function runTask(args: TaskRunArgs): Promise<TaskRunResult> {
       };
 
       const llmStart = Date.now();
-      const upstream = await undiciFetch(`${target.baseUrl}/v1/chat/completions`, {
+      let upstream = await undiciFetch(`${target.baseUrl}/v1/chat/completions`, {
         method: "POST",
         headers,
         body: JSON.stringify(requestBody),
         dispatcher: taskDispatcher,
       });
+      // Same transient-failure retry as the primary loop (429/502/503).
+      for (const delayMs of [2000, 5000]) {
+        if (upstream.ok || ![429, 502, 503].includes(upstream.status)) break;
+        await new Promise((r) => setTimeout(r, delayMs));
+        upstream = await undiciFetch(`${target.baseUrl}/v1/chat/completions`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(requestBody),
+          dispatcher: taskDispatcher,
+        });
+      }
       if (!upstream.ok) {
         const text = await upstream.text().catch(() => "");
         finalText = `Upstream error ${upstream.status}: ${text.slice(0, 200)}`;

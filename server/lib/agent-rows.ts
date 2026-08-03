@@ -230,9 +230,14 @@ export async function buildTaskToolDef(
     function: {
       name: "task",
       description:
-        "Delegate a self-contained job to a specialized subagent. The " +
-        "subagent runs in its own sub-conversation with its own tools " +
-        "and reports back. Write the prompt SELF-CONTAINED — the " +
+        "Delegate a self-contained job to a specialized subagent. " +
+        "MANDATORY usage rules: research spanning MORE THAN ONE source " +
+        "(memory+files, memory+web, several connected sources) MUST go " +
+        "to 'explore' — do not chain direct lookups yourself. Any " +
+        "deliverable that is a document (report, article, synthesis) " +
+        "MUST go to 'writer'. The subagent runs in its own " +
+        "sub-conversation with its own tools and reports back; the user " +
+        "watches it live. Write the prompt SELF-CONTAINED — the " +
         "subagent sees nothing of this conversation. Available " +
         "subagents:\n" +
         catalog,
