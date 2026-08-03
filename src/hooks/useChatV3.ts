@@ -31,24 +31,26 @@ import {
   type UseChatOptions,
 } from "./useChat";
 
-/** localStorage flag + `?v3=1|0` URL override. Per-device, enough for the
- *  beta; the per-user server toggle lands in V3-d. */
+/** localStorage flag + `?v3=1|0` URL override. Per-device.
+ *  Default ON since 2026-08-04 (V3-e): v3 is the rail unless a device
+ *  explicitly opted out ("0"). v1 stays alive behind the pill until the
+ *  old rail is removed. Toggle OFF writes "0" (not remove) so the opt-out
+ *  survives the default-on flip. */
 const V3_LS_KEY = "companion:chatV3";
 export function readV3Flag(): boolean {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined") return true;
   try {
     const p = new URLSearchParams(window.location.search).get("v3");
     if (p === "1") localStorage.setItem(V3_LS_KEY, "1");
-    if (p === "0") localStorage.removeItem(V3_LS_KEY);
+    if (p === "0") localStorage.setItem(V3_LS_KEY, "0");
   } catch {
     /* ignore */
   }
-  return localStorage.getItem(V3_LS_KEY) === "1";
+  return localStorage.getItem(V3_LS_KEY) !== "0";
 }
 export function setV3Flag(on: boolean): void {
   try {
-    if (on) localStorage.setItem(V3_LS_KEY, "1");
-    else localStorage.removeItem(V3_LS_KEY);
+    localStorage.setItem(V3_LS_KEY, on ? "1" : "0");
   } catch {
     /* ignore */
   }
@@ -232,6 +234,25 @@ function useV3Runtime(
         }
         if (t.state === "guard_blocked") {
           setSending(false);
+          // Parity with v1: a sensitive turn on the router is BLOCKED (no
+          // assistant reply persisted). Surface a live-only switch-to-local
+          // prompt in place of the answer.
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `blocked-${prev.length}`,
+              role: "assistant",
+              content: "",
+              blocked: {
+                severity: (t.severity as "low" | "medium" | "high") ?? "medium",
+                findings: (t.findings ?? []).map((f) => ({
+                  category: f.category,
+                  severity: String(t.severity ?? "medium"),
+                  spans: [],
+                })),
+              },
+            },
+          ]);
           return;
         }
         // done | stopped | error → finalize the streaming message.
@@ -403,6 +424,31 @@ function useV3Runtime(
     ],
   );
 
+  // After a guard block, the user picks a local model — drop the blocked
+  // placeholder and re-fire the turn on the v3 rail with that model.
+  const resendOnLocalModel = useCallback(
+    async (modelId: string) => {
+      if (!conversationId) return;
+      setMessages((prev) => prev.filter((m) => !m.blocked));
+      const history = messages
+        .filter((m) => !m.blocked && m.role !== "system" && m.messageType !== "task")
+        .map((m) => ({ role: m.role, content: m.content }));
+      setError(null);
+      setSending(true);
+      const params = inferenceToPayload(base.inference ?? DEFAULT_INFERENCE);
+      await fetch("/api/v3/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ conversationId, model: modelId, messages: history, params }),
+      }).catch(() => {
+        setSending(false);
+        setError("send_failed");
+      });
+    },
+    [conversationId, messages, base.inference],
+  );
+
   const cancel = useCallback(async () => {
     if (!conversationId) return;
     await fetch(`/api/v3/conversations/${conversationId}/stop`, {
@@ -429,7 +475,7 @@ function useV3Runtime(
     await fire(conversationId, history);
   }, [conversationId, messages, fire]);
 
-  return { messages, sending, error, sendMessage, cancel, regenerate, chatV3: true as const };
+  return { messages, sending, error, sendMessage, cancel, regenerate, resendOnLocalModel, chatV3: true as const };
 }
 
 export function useChatV3(opts: UseChatOptions = {}) {
@@ -447,6 +493,7 @@ export function useChatV3(opts: UseChatOptions = {}) {
     sendMessage: v3.sendMessage,
     cancel: v3.cancel,
     regenerate: v3.regenerate,
+    resendOnLocalModel: v3.resendOnLocalModel,
     chatV3: true,
   };
 }
