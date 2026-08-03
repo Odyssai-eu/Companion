@@ -27,7 +27,7 @@
  * that conversation as the source context for the compile pass.
  */
 
-import { and, desc, eq, gte, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/index";
 import { conversations, users } from "../db/schema";
 import { compileNow } from "./memory";
@@ -241,9 +241,46 @@ async function inactivityTick(): Promise<void> {
 }
 
 /** Start the scheduler. Idempotent — calling twice is a no-op. */
+// ── v2.0 retention purge ──────────────────────────────────────────────
+// run_events + agent_spans keep 30 days. Batched deletes (LIMIT via
+// id-subquery — Postgres DELETE has no LIMIT) so a backlog never takes a
+// long lock; the BRIN index on created_at keeps the scan cheap. Runs
+// every 6h; a missing table (pre-migration boot order) is ignored.
+const PURGE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const PURGE_BATCH = 10_000;
+const RETENTION_DAYS = 30;
+
+async function purgeAgentTelemetry(): Promise<void> {
+  const targets = [
+    { table: "run_events", pk: "id" },
+    { table: "agent_spans", pk: "span_id" },
+  ] as const;
+  for (const { table, pk } of targets) {
+    try {
+      // Loop batches until a pass deletes fewer than the batch size.
+      for (let i = 0; i < 50; i++) {
+        const res = await db.execute(sql`
+          DELETE FROM ${sql.raw(table)} WHERE ${sql.raw(pk)} IN (
+            SELECT ${sql.raw(pk)} FROM ${sql.raw(table)}
+            WHERE created_at < now() - interval '${sql.raw(String(RETENTION_DAYS))} days'
+            LIMIT ${PURGE_BATCH}
+          )`);
+        const n = (res as unknown as { rowCount?: number }).rowCount ?? 0;
+        if (n > 0) console.log(`[purge] ${table}: deleted ${n}`);
+        if (n < PURGE_BATCH) break;
+      }
+    } catch (err) {
+      // Table absent (fresh install mid-migration) or transient — skip.
+      console.warn(`[purge] ${table} skipped:`, (err as Error).message);
+    }
+  }
+}
+
 export function startMemoryScheduler(): void {
   if (started) return;
   started = true;
+  void purgeAgentTelemetry();
+  setInterval(() => void purgeAgentTelemetry(), PURGE_INTERVAL_MS);
   console.log(
     `[memory-scheduler] started (tz=${SCHEDULE_TZ}, slots=${SLOTS.map(
       (s) => `${s.label}/${s.kind}`,

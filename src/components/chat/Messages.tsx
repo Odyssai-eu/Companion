@@ -14,6 +14,8 @@ import { renderMarkdown } from "~/lib/markdown";
 import { tts } from "~/lib/tts";
 import { ComfyuiAttachments } from "./ComfyuiAttachments";
 import SpaceInvaders from "./SpaceInvaders";
+import TaskCard from "./TaskCard";
+import type { TaskLiveState } from "~/hooks/useRunEvents";
 
 const ATARI_SEQ = ["a", "t", "a", "r", "i"];
 
@@ -25,9 +27,13 @@ export default function Messages({
   showMetrics = false,
   localModels = [],
   onSwitchLocal,
+  taskLive,
 }: {
   messages: UIMessage[];
   error: string | null;
+  /** Live task narration state (useRunEvents), keyed by sub-conversation
+   *  id. Undefined when the conv has no run-events stream open. */
+  taskLive?: Map<string, TaskLiveState>;
   onRegenerate?: (assistantId: string) => void;
   onEdit?: (messageId: string, newText: string) => void;
   /** Per-user toggle for the per-message stats box. Defaults off when
@@ -149,7 +155,15 @@ export default function Messages({
           </div>
         )}
         {messages.map((m) =>
-          m.role === "user" ? (
+          m.messageType === "task" ? (
+            <TaskCard
+              key={m.id}
+              message={m}
+              live={taskLive?.get(
+                String((m.payload as { sub_conversation_id?: string })?.sub_conversation_id ?? ""),
+              )}
+            />
+          ) : m.role === "user" ? (
             <UserBubble
               key={m.id}
               content={m.content}
@@ -168,6 +182,43 @@ export default function Messages({
             />
           ),
         )}
+        {/* v2.0 — tasks currently running whose persistent card row
+         *  hasn't reached the client yet (it lands in the DB mid-turn;
+         *  the client only refetches at turn end). Render synthetic
+         *  cards from the live SSE state so the delegation is visible
+         *  the moment it starts. */}
+        {taskLive &&
+          [...taskLive.entries()]
+            .filter(
+              ([subId, t]) =>
+                t.status === "running" &&
+                !messages.some(
+                  (m) =>
+                    m.messageType === "task" &&
+                    String(
+                      (m.payload as { sub_conversation_id?: string })
+                        ?.sub_conversation_id,
+                    ) === subId,
+                ),
+            )
+            .map(([subId, t]) => (
+              <TaskCard
+                key={`live-${subId}`}
+                message={{
+                  id: `live-${subId}`,
+                  role: "assistant",
+                  messageType: "task",
+                  content: "",
+                  payload: {
+                    sub_conversation_id: subId,
+                    agent: t.agent,
+                    description: t.description,
+                    status: "running",
+                  },
+                }}
+                live={t}
+              />
+            ))}
         <div ref={bottomRef} />
       </div>
     </div>

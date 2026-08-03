@@ -38,6 +38,7 @@ function visibleModelsForMode(
 }
 import { useGlobalShortcuts } from "~/hooks/useGlobalShortcuts";
 import { useIsMobile } from "~/hooks/useIsMobile";
+import { useRunEvents } from "~/hooks/useRunEvents";
 import { useVoiceMode } from "~/hooks/useVoiceMode";
 import { api } from "~/lib/api";
 import { transcribeWav } from "~/lib/transcribe";
@@ -46,6 +47,8 @@ import { WavRecorder } from "~/lib/wav-recorder";
 export default function ChatLayout() {
   const { id } = useParams<{ id?: string }>();
   const chat = useChat({ conversationId: id });
+  // v2.0 — live task narration (SSE run-events keyed on this conv).
+  const taskLive = useRunEvents(id ?? null);
   const [style, setStyle] = useState<ChatStyle>("Normal");
   const [panelOpen, setPanelOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -303,6 +306,7 @@ export default function ChatLayout() {
           showMetrics={chat.showMetrics}
           localModels={chat.globalModels.filter((m) => m.origin === "local")}
           onSwitchLocal={chat.resendOnLocalModel}
+          taskLive={taskLive}
         />
         {/* Agent sub-thread (/hermes etc.) — terminal-style inline panel
          *  pinned below the message list. Renders only when there's a

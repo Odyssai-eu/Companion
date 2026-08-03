@@ -3,7 +3,8 @@ import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
-import { conversations, messages, projects, users } from "../db/schema";
+import { conversations, messages, projects, runEvents, users } from "../db/schema";
+import { subscribeRunEvents } from "../lib/run-events";
 import {
   clearInference,
   getInferenceStatus,
@@ -223,6 +224,70 @@ conversationsRoute.get("/:id", async (c) => {
   // still running server-side. Missing or finished → { active: false }.
   const inference = getInferenceStatus(id, userId);
   return c.json({ conversation, messages: msgs, inference });
+});
+
+/**
+ * v2.0 run-events SSE — the live narration rail for task cards. One
+ * EventSource per OPEN conversation; the broker key is the root conv id
+ * (sub-conversation events are published under their root). Auth at
+ * subscribe: the conversation must belong to the session user (PLAN.md
+ * rd4 pt 10). Replay: recent persisted events first (page reloads
+ * mid-task pick the state back up), then live.
+ */
+conversationsRoute.get("/:id/run-events", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const [conv] = await db
+    .select({ id: conversations.id, userId: conversations.userId })
+    .from(conversations)
+    .where(eq(conversations.id, id))
+    .limit(1);
+  if (!conv || conv.userId !== userId) {
+    return c.json({ error: "not_found" }, 404);
+  }
+
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array>();
+  const writer = writable.getWriter();
+  let closed = false;
+  const write = (line: string) => {
+    if (closed) return;
+    writer.write(encoder.encode(line)).catch(() => {
+      closed = true;
+    });
+  };
+
+  // Replay the last 200 persisted events of this root conversation.
+  const recent = await db
+    .select()
+    .from(runEvents)
+    .where(eq(runEvents.conversationId, id))
+    .orderBy(desc(runEvents.createdAt))
+    .limit(200);
+  for (const ev of recent.reverse()) {
+    write(
+      `data: ${JSON.stringify({ type: ev.type, payload: ev.payload, createdAt: ev.createdAt })}\n\n`,
+    );
+  }
+
+  const unsubscribe = subscribeRunEvents(id, (ev) => {
+    write(
+      `data: ${JSON.stringify({ type: ev.type, payload: ev.payload, createdAt: ev.createdAt })}\n\n`,
+    );
+  });
+  const keepAlive = setInterval(() => write(`: ping\n\n`), 25_000);
+
+  c.req.raw.signal.addEventListener("abort", () => {
+    closed = true;
+    clearInterval(keepAlive);
+    unsubscribe();
+    writer.close().catch(() => {});
+  });
+
+  c.header("Content-Type", "text/event-stream");
+  c.header("Cache-Control", "no-cache");
+  c.header("Connection", "keep-alive");
+  return c.body(readable);
 });
 
 /**

@@ -128,6 +128,11 @@ export type ComfyuiAttachment = {
 export type UIMessage = {
   id: string;
   role: "user" | "assistant" | "system";
+  /** v2.0 — 'task' rows render as task cards, not chat bubbles. */
+  messageType?: "chat" | "task";
+  /** Task card payload: {sub_conversation_id, agent, description,
+   *  status, result_summary}. */
+  payload?: Record<string, unknown> | null;
   content: string;
   reasoning?: string;
   streaming?: boolean;
@@ -1869,6 +1874,8 @@ function toUIMessage(m: ApiMessage): UIMessage {
   return {
     id: m.id,
     role: m.role,
+    messageType: m.messageType ?? "chat",
+    payload: m.payload ?? undefined,
     content: m.content,
     reasoning: m.reasoning ?? undefined,
     createdAt: m.createdAt,

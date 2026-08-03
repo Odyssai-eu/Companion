@@ -540,6 +540,11 @@ export type ApiMessage = {
   id: string;
   conversationId: string;
   role: "user" | "assistant" | "system";
+  /** v2.0 — 'task' rows render as task cards, not chat bubbles. */
+  messageType?: "chat" | "task";
+  /** Task card payload (messageType='task'):
+   *  {sub_conversation_id, agent, description, status, result_summary}. */
+  payload?: Record<string, unknown> | null;
   content: string;
   reasoning: string | null;
   stats: Record<string, unknown> | null;
