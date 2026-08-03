@@ -397,6 +397,7 @@ function AssistantMessage({
           <ReasoningBlock
             reasoning={message.reasoning}
             thinking={thinking}
+            streaming={!!message.streaming}
           />
         )}
         {message.toolCalls && message.toolCalls.length > 0 && (
@@ -651,14 +652,28 @@ const THINKING_STATUS_SENTENCES = [
 function ReasoningBlock({
   reasoning,
   thinking,
+  streaming = false,
 }: {
   reasoning: string;
   thinking: boolean;
+  /** Whole-turn liveness (message.streaming). The block stays OPEN while
+   *  the turn runs — you watch the work — and auto-collapses to "Thought"
+   *  once it finishes (CodeOS feel: pendant, tu vois ; fini, le résultat).
+   *  A manual toggle wins over the auto behaviour for the rest of the turn. */
+  streaming?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  // Open by default while the turn is live; a persisted message (streaming
+  // false on mount) starts collapsed — just the result.
+  const [open, setOpen] = useState(streaming);
+  const userTouched = useRef(false);
   const [statusIdx, setStatusIdx] = useState(() =>
     Math.floor(Math.random() * THINKING_STATUS_SENTENCES.length),
   );
+  // Auto-collapse when the turn ends — unless the user took manual control.
+  useEffect(() => {
+    if (userTouched.current) return;
+    setOpen(streaming);
+  }, [streaming]);
   // #35: pendant que ça pense ET que le bloc est replié, on fait tourner une
   // phrase de statut — l'utilisateur voit que quelque chose se passe sans
   // avoir à déplier la fenêtre.
@@ -674,7 +689,10 @@ function ReasoningBlock({
     <div className="rounded-lg border border-gray-200 bg-gray-50/60">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          userTouched.current = true;
+          setOpen((v) => !v);
+        }}
         className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left"
       >
         <span className="flex min-w-0 flex-col gap-1">
