@@ -570,7 +570,12 @@ export async function runTurnV3(req: TurnRequest): Promise<TurnOutcome> {
     }
 
     await settleTurn(conversationId, stopped ? "stopped" : "done");
-    emitLive(conversationId, { v3: "turn", state: stopped ? "stopped" : "done" });
+    emitLive(conversationId, {
+      v3: "turn",
+      state: stopped ? "stopped" : "done",
+      messageId: assistantRow.id,
+      stats,
+    });
     return {
       status: stopped ? "stopped" : "done",
       messageId: assistantRow.id,

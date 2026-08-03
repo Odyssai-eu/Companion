@@ -1586,7 +1586,7 @@ function toUIMessage(m: ApiMessage): UIMessage {
 // `lookupCost` from model-pricing.ts is still available there.
 void lookupCost;
 
-function inferenceToPayload(i: InferenceParams) {
+export function inferenceToPayload(i: InferenceParams) {
   return {
     temperature: i.temperature,
     max_tokens: i.maxTokens,
