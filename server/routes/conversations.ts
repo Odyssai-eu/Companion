@@ -36,7 +36,7 @@ const createSchema = z.object({
    *  on send. The legacy 'hermes' kind was retired 2026-05-19; the
    *  schema enum keeps it only to tolerate stale clients (we coerce
    *  to 'chat' below). */
-  kind: z.enum(["chat", "talk", "hermes"]).optional(),
+  kind: z.enum(["chat", "talk"]).optional(),
   /** Legacy field from the Hermes era. Accepted but ignored. */
   repoPath: z.string().min(1).max(500).optional(),
   /** Explicit memory-toggle override. Without this, the conversation

@@ -119,25 +119,9 @@ export const ADDON_CATALOG: readonly AddonCatalogEntry[] = [
     version: "0.1.0",
   },
   {
-    name: "Hermes Agent",
-    kind: "plugin",
-    description:
-      "Type /hermes in chat to open an agent sub-thread that can read " +
-      "files, write files, and run shell commands on your machine. " +
-      "Requires a Hermes ACP bridge endpoint reachable from Companion.",
-    version: "0.1.0",
-  },
-  {
-    name: "Pi Agent",
-    kind: "plugin",
-    description:
-      "Type /pi in chat to open a Pi coding-agent sub-thread. Pi can " +
-      "read, write, edit files and run shell commands on its host " +
-      "machine. Requires a thecompai-pi-bridge HTTP endpoint " +
-      "reachable from Companion.",
-    version: "0.1.0",
-  },
-  {
+    // Hermes Agent + Pi Agent removed 2026-08-03 (v2.0 γb1) — replaced
+    // by the native agent runtime (task tool + ops subagent). See
+    // docs/v2/audit-hermes-pi.md.
     name: "ComfyUI Imager",
     kind: "plugin",
     description:
@@ -215,8 +199,6 @@ const NEVER_INHERITED_CONFIG_KEYS: Record<string, readonly string[]> = {
  *     Same argument as `engineMeta` following `engineUrl` in 0059.
  */
 const PAIRED_CONFIG_KEYS: Record<string, Readonly<Record<string, string>>> = {
-  "Hermes Agent": { bridgeToken: "bridgeUrl" },
-  "Pi Agent": { bridgeToken: "bridgeUrl" },
   "ComfyUI Imager": { bridgeToken: "bridgeUrl" },
   // The stage-2 model id belongs to the LLM endpoint it is served from —
   // a user pointing contextual detection at their own LLM must not keep

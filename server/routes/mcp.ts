@@ -128,7 +128,7 @@ async function createUserConversation(
     title?: string;
     projectId?: string;
     model?: string;
-    kind?: "chat" | "talk" | "hermes";
+    kind?: "chat" | "talk";
     repoPath?: string;
     memoryEnabled?: boolean;
   },
@@ -392,7 +392,7 @@ function buildServer(opts: {
         title: z.string().min(1).max(200).optional(),
         projectId: z.string().uuid().optional(),
         model: z.string().max(200).optional(),
-        kind: z.enum(["chat", "talk", "hermes"]).optional(),
+        kind: z.enum(["chat", "talk"]).optional(),
         repoPath: z.string().min(1).max(500).optional(),
         memoryEnabled: z.boolean().optional(),
       },
