@@ -20,6 +20,7 @@ import {
   getToolDefs,
   toolsForUser,
 } from "./tools";
+import { buildTaskToolDef } from "./agent-rows";
 import { loadRouterConfigForUser } from "../routes/addon-router";
 import { detectToolIntent } from "./semantic-router";
 import { authHeaders } from "./litellm";
@@ -127,6 +128,14 @@ export async function resolveChatTools(args: {
   const alwaysOnEnabled = !isGuest && supportsTools &&
     (convAgentMode || process.env.ALWAYS_ON_TOOLS === "1");
   const alwaysOn = alwaysOnEnabled ? alwaysOnTools() : [];
+  // v2.0 delegation — the `task` tool rides the SAME gate as the
+  // always-on group (PLAN.md decision 4: the skills always-on revert
+  // applies identically; a delegation tool visible to a small model on a
+  // bare "hello" loops the same way). Null when no subagent is enabled.
+  if (alwaysOnEnabled) {
+    const taskDef = await buildTaskToolDef(userId);
+    if (taskDef) alwaysOn.push(taskDef);
+  }
 
   // ── Automatic tool routing ───────────────────────────────────────────
   // Detect which tools the user's last message needs WITHOUT requiring the

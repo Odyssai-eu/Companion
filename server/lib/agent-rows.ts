@@ -155,4 +155,50 @@ export async function resolvePrimaryAgent(
   return row?.enabled ? row : null;
 }
 
+/** OpenAI tool definition for `task`, with the live subagent catalog in
+ *  the description (progressive disclosure — kept short: name + one-line
+ *  description each). Returns null when the user has no enabled
+ *  subagents (no point exposing a tool that can only fail). */
+export async function buildTaskToolDef(
+  userId: string,
+): Promise<unknown | null> {
+  const subs = await resolveSubagentsForUser(userId);
+  if (subs.length === 0) return null;
+  const catalog = subs
+    .map((a) => `- ${a.name}: ${a.description}`)
+    .join("\n");
+  return {
+    type: "function" as const,
+    function: {
+      name: "task",
+      description:
+        "Delegate a self-contained job to a specialized subagent. The " +
+        "subagent runs in its own sub-conversation with its own tools " +
+        "and reports back. Write the prompt SELF-CONTAINED — the " +
+        "subagent sees nothing of this conversation. Available " +
+        "subagents:\n" +
+        catalog,
+      parameters: {
+        type: "object",
+        properties: {
+          subagent: {
+            type: "string",
+            description: "Name of the subagent (from the list above).",
+          },
+          prompt: {
+            type: "string",
+            description:
+              "Full task instructions, self-contained (facts, paths, constraints).",
+          },
+          description: {
+            type: "string",
+            description: "Short human-readable label for the task card (≤80 chars).",
+          },
+        },
+        required: ["subagent", "prompt", "description"],
+      },
+    },
+  };
+}
+
 export { NARRATION_CONTRACT };

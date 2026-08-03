@@ -23,6 +23,7 @@ import {
   markInferenceError,
 } from "../lib/inference-state";
 import { executeTool } from "../lib/tools";
+import { newTurnBudget, runTask } from "../lib/task-runner";
 import { pipeAndCollect, collectNonStream, stringifyForTool, summarizeResult } from "../lib/stream-collector";
 import type { GuestTokenContext } from "../lib/guest-token";
 import type { OdyssaiModelCapabilities } from "../lib/odyssai-contract";
@@ -88,6 +89,9 @@ export type ChatStreamCtx = {
   headers: Record<string, string>;
   userId: string;
   projectCwd: string | null;
+  /** Resolved default model (user override ∘ instance) — the task
+   *  runner's last-resort fallback when the parent model is 'auto'. */
+  defaultModel: string | null;
   /** The memory actually injected this turn (#36 transparency). Both can be
    *  "" when nothing was injected. `memoryBlock` = the stable per-conversation
    *  wiki/vault prefix (system prompt); `ragBlock` = the per-turn semantic
@@ -139,6 +143,7 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
     headers,
     userId,
     projectCwd,
+    defaultModel,
     memoryBlock,
     ragBlock,
     body,
@@ -201,6 +206,9 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
     // answer (tool_choice:"none" below), so hitting the cap always yields a
     // real synthesis instead of an error.
     const MAX_TOOL_ITERATIONS = 20;
+    // v2.0 delegation guards — ONE budget per primary turn: max 3 tasks,
+    // 30 cumulative sub-conversation LLM steps (PLAN.md §4 garde-fous).
+    const turnBudget = newTurnBudget();
     // Aggregate usage across tool-loop iterations — guests are billed for
     // every upstream call, not just the final one.
     let totalPromptTokens = 0;
@@ -430,12 +438,45 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
             ),
           );
 
-          // Execute tools in parallel
-          const results = await Promise.all(
-            toolCalls.map((tc) =>
-              executeTool(tc.name, tryParseJson(tc.argumentsRaw), userId, projectCwd),
-            ),
-          );
+          // Execute tools. `task` calls (v2.0 delegation) run
+          // SEQUENTIALLY — parallel sub-conversation spawns would stack
+          // cold starts on the upstream and starve the SSE heartbeat
+          // (PLAN.md F10). Everything else keeps the parallel path.
+          const results: Awaited<ReturnType<typeof executeTool>>[] =
+            new Array(toolCalls.length);
+          const plainIdx: number[] = [];
+          for (let i = 0; i < toolCalls.length; i++) {
+            if (toolCalls[i].name === "task") {
+              const a = tryParseJson(toolCalls[i].argumentsRaw);
+              const run = await runTask({
+                userId,
+                parentConversationId: body.conversationId ?? "",
+                subagent: String(a.subagent ?? ""),
+                prompt: String(a.prompt ?? ""),
+                description: String(a.description ?? ""),
+                parentModel: String(baseBody.model ?? ""),
+                defaultModel,
+                target,
+                headers,
+                budget: turnBudget,
+              });
+              results[i] = run.ok
+                ? { ok: true, data: { status: run.status, result: run.text, sub_conversation_id: run.subConversationId } }
+                : { ok: false, error: run.text };
+            } else {
+              plainIdx.push(i);
+            }
+          }
+          if (plainIdx.length > 0) {
+            const plainResults = await Promise.all(
+              plainIdx.map((i) =>
+                executeTool(toolCalls[i].name, tryParseJson(toolCalls[i].argumentsRaw), userId, projectCwd),
+              ),
+            );
+            plainIdx.forEach((i, k) => {
+              results[i] = plainResults[k];
+            });
+          }
 
           await safeWrite(
             encoder.encode(

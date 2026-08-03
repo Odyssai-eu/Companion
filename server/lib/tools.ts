@@ -1470,12 +1470,62 @@ async function executeNativeTool(
   }
 }
 
+// ── tools_allow enforcement (v2.0 agent runtime) ─────────────────────────
+// Grammar: exact tool name, or a trailing-star PREFIX pattern ('fs_*',
+// 'mcp_qdrant_*'). Nothing else — no lone '*', no infix/suffix stars.
+// Patterns resolve against the catalog of the moment at spawn; a tool
+// that appears mid-run (MCP cache refresh) is absent from the resolved
+// Set and rejected fail-closed by design.
+export function matchesAllowPatterns(
+  name: string,
+  patterns: readonly string[],
+): boolean {
+  for (const p of patterns) {
+    if (p.endsWith("*")) {
+      if (name.startsWith(p.slice(0, -1))) return true;
+    } else if (name === p) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Resolve an agent's tools_allow patterns against the user's full tool
+ *  catalog (always-on skills + fs/rag/web/mcp). Returns the tool DEFS to
+ *  hand the sub-conversation's LLM and the name Set for enforcement. */
+export async function resolveAllowedToolDefs(
+  userId: string,
+  patterns: readonly string[],
+): Promise<{ defs: unknown[]; allowed: Set<string> }> {
+  const catalog = [...alwaysOnTools(), ...(await toolsForUser(userId))];
+  const defs = catalog.filter((t) => {
+    const n = (t as { function?: { name?: string } })?.function?.name ?? "";
+    return matchesAllowPatterns(n, patterns);
+  });
+  const allowed = new Set(
+    defs.map(
+      (t) => (t as { function: { name: string } }).function.name,
+    ),
+  );
+  return { defs, allowed };
+}
+
 export async function executeTool(
   name: string,
   args: ToolArgs,
   userId: string,
   cwd?: string | null,
+  /** v2.0 sub-conversation context — when present, ONLY tools in this
+   *  Set may run (fail-closed). Absent on primary chat = behaviour
+   *  unchanged. */
+  allowedTools?: Set<string>,
 ): Promise<ToolResult> {
+  if (allowedTools && !allowedTools.has(name)) {
+    return {
+      ok: false,
+      error: `tool '${name}' is not in this agent's allow-list`,
+    };
+  }
   // Route to local agent if connected — bash + fs tools run on user's Mac,
   // in the resolved working directory (project.working_dir or ~/companion).
   // Server-side execution is the fallback when no local agent is connected.

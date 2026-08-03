@@ -558,6 +558,7 @@ chatRoute.post("/completions", async (c) => {
     headers,
     userId,
     projectCwd,
+    defaultModel: conn.defaultModel,
     memoryBlock,
     ragBlock,
     body,
