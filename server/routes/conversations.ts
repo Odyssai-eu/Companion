@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "../db/index";
 import { conversations, messages, projects, runEvents, users } from "../db/schema";
 import { subscribeRunEvents } from "../lib/run-events";
+import { getTurnState, getV3InferenceStatus } from "../lib/v3/processor";
 import {
   clearInference,
   getInferenceStatus,
@@ -27,6 +28,17 @@ import {
 } from "../lib/prompt-builder";
 
 const conversationsRoute = new Hono();
+
+/** Reconstruct the reasoning text from a v3 parts array (the `reasoning`
+ *  column is only populated on the v1 rail). Returns "" when there is no
+ *  reasoning part. */
+function reasoningFromParts(parts: unknown): string {
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .filter((p) => (p as { type?: string })?.type === "reasoning")
+    .map((p) => String((p as { text?: string }).text ?? ""))
+    .join("");
+}
 
 const createSchema = z.object({
   title: z.string().min(1).max(200).optional(),
@@ -308,7 +320,15 @@ conversationsRoute.get("/:id/inference", async (c) => {
   if (!row || row.userId !== userId) {
     return c.json({ active: false }, 404);
   }
-  return c.json(getInferenceStatus(id, userId));
+  const v1 = getInferenceStatus(id, userId);
+  // v3 rail has no in-memory buffer — its live state lives in turn_state +
+  // the assistant row's parts. Fall back to it so this endpoint (and the
+  // MCP get_inference_status that polls it) reports a v3 turn too.
+  if (!v1.active && v1.done === undefined) {
+    const v3 = await getV3InferenceStatus(id);
+    if (v3) return c.json(v3);
+  }
+  return c.json(v1);
 });
 
 /**
@@ -449,10 +469,14 @@ conversationsRoute.get("/:id/export.md", async (c) => {
       m.role === "user" ? "## You" : m.role === "assistant" ? "## Assistant" : "## System",
     );
     lines.push("");
-    if (m.reasoning) {
+    // v3 stores reasoning in `parts` (the `reasoning` column stays null);
+    // v1 uses the column. Prefer the column, fall back to parts so a v3
+    // conversation exports its Thought instead of dropping it.
+    const reasoning = m.reasoning || reasoningFromParts(m.parts);
+    if (reasoning) {
       lines.push("<details><summary>Thought</summary>");
       lines.push("");
-      lines.push(m.reasoning);
+      lines.push(reasoning);
       lines.push("");
       lines.push("</details>");
       lines.push("");
@@ -711,7 +735,10 @@ conversationsRoute.post(
     // the redundant prewarm clears the queue and the real chat lands
     // immediately.
     const inflight = getInferenceStatus(id, userId);
-    if (inflight.active) {
+    // A v3 turn has no v1 buffer — check turn_state too so we don't prewarm
+    // a prefix while the parts core is mid-turn on the same conversation.
+    const v3Turn = inflight.active ? null : await getTurnState(id);
+    if (inflight.active || v3Turn?.status === "active") {
       console.log(
         `[prewarm] conv=${id.slice(0, 8)} skipped — inference in flight`,
       );

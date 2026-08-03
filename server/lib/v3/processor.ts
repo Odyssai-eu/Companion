@@ -154,6 +154,41 @@ export async function getTurnState(conversationId: string) {
   return row ?? null;
 }
 
+/** v1-shaped inference status derived from the v3 turn_state + the latest
+ *  assistant row's parts. Lets the existing /inference endpoint (and the
+ *  MCP get_inference_status that polls it) report a v3 turn without a v1
+ *  buffer. Returns null when this conversation has no v3 turn at all so
+ *  the caller can keep the v1 answer. */
+export async function getV3InferenceStatus(conversationId: string): Promise<{
+  active: boolean;
+  done: boolean;
+  content: string;
+  reasoning: string;
+  error: string | null;
+} | null> {
+  const state = await getTurnState(conversationId);
+  if (!state) return null;
+  const [asst] = await db
+    .select({ content: messages.content, parts: messages.parts })
+    .from(messages)
+    .where(and(eq(messages.conversationId, conversationId), eq(messages.role, "assistant")))
+    .orderBy(dsql`${messages.createdAt} DESC`)
+    .limit(1);
+  const parts = Array.isArray(asst?.parts) ? (asst!.parts as Part[]) : [];
+  const reasoning = parts
+    .filter((p) => p.type === "reasoning")
+    .map((p) => String((p as { text?: string }).text ?? ""))
+    .join("");
+  const active = state.status === "active";
+  return {
+    active,
+    done: !active,
+    content: asst?.content ?? "",
+    reasoning,
+    error: state.error ?? null,
+  };
+}
+
 // ── Message conversion (OpenAI shape → AI SDK ModelMessage) ────────────
 
 function toModelMessages(

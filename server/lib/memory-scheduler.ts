@@ -274,6 +274,27 @@ async function purgeAgentTelemetry(): Promise<void> {
       console.warn(`[purge] ${table} skipped:`, (err as Error).message);
     }
   }
+
+  // v3 turn_states: one durable row per conversation (cascade-deleted with
+  // the conv, so already bounded), but a SETTLED row for a conversation
+  // untouched for RETENTION_DAYS is dead weight — it is re-created on the
+  // next turn. Purge terminal rows by updated_at; NEVER touch an active one.
+  try {
+    for (let i = 0; i < 50; i++) {
+      const res = await db.execute(sql`
+        DELETE FROM turn_states WHERE conversation_id IN (
+          SELECT conversation_id FROM turn_states
+          WHERE status <> 'active'
+            AND updated_at < now() - interval '${sql.raw(String(RETENTION_DAYS))} days'
+          LIMIT ${PURGE_BATCH}
+        )`);
+      const n = (res as unknown as { rowCount?: number }).rowCount ?? 0;
+      if (n > 0) console.log(`[purge] turn_states: deleted ${n}`);
+      if (n < PURGE_BATCH) break;
+    }
+  } catch (err) {
+    console.warn(`[purge] turn_states skipped:`, (err as Error).message);
+  }
 }
 
 export function startMemoryScheduler(): void {
