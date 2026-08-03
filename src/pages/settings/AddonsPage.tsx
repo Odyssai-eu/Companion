@@ -9,8 +9,6 @@ import { ObsidianPanel } from "./addons/ObsidianPanel";
 import { TavilyPanel } from "./addons/TavilyPanel";
 import { VoiceLivePanel } from "./addons/VoiceLivePanel";
 import { RouterPanel } from "./addons/RouterPanel";
-import { HermesAddonPanel } from "./addons/HermesAddonPanel";
-import { PiAddonPanel } from "./addons/PiAddonPanel";
 import { ComfyuiAddonPanel } from "./addons/ComfyuiAddonPanel";
 import { ParserAddonPanel } from "./addons/ParserAddonPanel";
 import { GuardAddonPanel } from "./addons/GuardAddonPanel";
@@ -218,8 +216,6 @@ function AddonCard({
       addon.name === "Web Search" ||
       addon.name === "Voice" ||
       addon.name === "Auto Router" ||
-      addon.name === "Hermes Agent" ||
-      addon.name === "Pi Agent" ||
       addon.name === "ComfyUI Imager" ||
       addon.name === "Parser" ||
       addon.name === "Confidential Guard");
@@ -275,8 +271,6 @@ function AddonCard({
           {addon.name === "Web Search" && <TavilyPanel />}
           {addon.name === "Voice" && <VoiceLivePanel />}
           {addon.name === "Auto Router" && <RouterPanel />}
-          {addon.name === "Hermes Agent" && <HermesAddonPanel />}
-          {addon.name === "Pi Agent" && <PiAddonPanel />}
           {addon.name === "ComfyUI Imager" && <ComfyuiAddonPanel />}
           {addon.name === "Parser" && <ParserAddonPanel />}
           {addon.name === "Confidential Guard" && <GuardAddonPanel />}

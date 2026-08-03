@@ -7,13 +7,10 @@ import {
 import InferencePanel from "~/components/chat/InferencePanel";
 import Input from "~/components/chat/Input";
 import Messages from "~/components/chat/Messages";
-import { AgentBubble } from "~/components/chat/AgentBubble";
-import { HermesPanel } from "~/components/chat/HermesPanel";
 // RepoBindingBar (Hermes-only) retired 2026-05-19.
 import Sidebar from "~/components/chat/Sidebar";
 import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
 import { STYLE_PRESETS, useChat } from "~/hooks/useChat";
-import { usePiSession } from "~/hooks/usePiSession";
 import type { ApiGlobalModel, ApiInferenceMode } from "~/lib/api";
 import { StreamManager } from "~/lib/stream-manager";
 import { estimateMessageListTokens } from "~/lib/tokens";
@@ -55,22 +52,6 @@ export default function ChatLayout() {
   const navigate = useNavigate();
   const voiceMode = useVoiceMode();
   const isMobile = useIsMobile();
-  const pi = usePiSession();
-
-  // Drive the persistent Pi terminal (mounted at App level). When the chat on
-  // screen is in /pi mode, reveal the live omp iframe; otherwise hide it — but
-  // never unmount it, so switching chats keeps the session alive. The exit
-  // handler is re-supplied here so the host's quit button clears activeAgent
-  // on the conversation currently on screen.
-  useEffect(() => {
-    if (chat.activeAgent === "pi" && chat.piBridgeUrl) {
-      pi.show(chat.piBridgeUrl, () => void chat.sendMessage("/exit", []));
-    } else {
-      pi.hide();
-    }
-    // pi.* are stable (useMemo); intentionally re-sync only on agent/url change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat.activeAgent, chat.piBridgeUrl]);
 
   // Union of client-side StreamManager active ids + server-side
   // `/conversations/active` poll. Drives the per-row pulsing dot in the
@@ -308,46 +289,8 @@ export default function ChatLayout() {
           onSwitchLocal={chat.resendOnLocalModel}
           taskLive={taskLive}
         />
-        {/* Agent sub-thread (/hermes etc.) — terminal-style inline panel
-         *  pinned below the message list. Renders only when there's a
-         *  transcript, a live stream, or an error to surface. */}
-        {/* Pi runs in the persistent <PiTerminalHost> overlay (mounted at
-         *  App level), NOT inline — so the omp session survives chat
-         *  navigation. ChatLayout only drives show/hide via usePiSession
-         *  (effect above); nothing renders inline for /pi. */}
-        {chat.activeAgent === "pi" ? null : chat.activeAgent === "hermes" &&
-          chat.hermesBridgeUrl ? (
-          /* #25 — enterprise Hermes runs as a shared TUI in the dashboard
-           *  iframe, same as Pi. Falls back to the ACP bubble below only when
-           *  no Hermes iframe URL is configured. */
-          <HermesPanel url={chat.hermesBridgeUrl} />
-        ) : (
-          <AgentBubble
-            messages={chat.agentMessages}
-            streaming={chat.agentStreaming}
-            error={chat.agentError}
-            onReset={chat.hermesReset}
-            agentLabel="Hermes"
-          />
-        )}
-        {/* Persistent agent-mode chip. Reminds the user that every
-         *  message in the composer goes to the agent (not the LLM),
-         *  and provides a one-click exit. */}
-        {chat.activeAgent && (
-          <div className="mx-auto my-2 flex w-full max-w-3xl items-center justify-between rounded-md border border-amber-700/60 bg-amber-950/40 px-3 py-1.5 font-mono text-[11px] text-amber-200">
-            <span>
-              ▶ <strong className="text-amber-100">{chat.activeAgent}</strong> mode — every message routes to the agent
-            </span>
-            <button
-              type="button"
-              onClick={() => chat.sendMessage("/exit", [])}
-              className="text-[11px] text-amber-300 hover:text-amber-100"
-              title="Exit agent mode and return to normal chat"
-            >
-              /exit
-            </button>
-          </div>
-        )}
+        {/* Hermes/Pi bridge panels removed 2026-08-03 (v2.0 γb2) —
+         *  delegation renders as task cards inside <Messages>. */}
         {chat.conversation?.kind === "talk" ? (
           <TalkInput
             talkAvailable={voiceMode.enabled}
@@ -360,14 +303,8 @@ export default function ChatLayout() {
             onCancel={chat.cancel}
             sending={chat.sending}
             injectText={composerInject ?? undefined}
-            disabled={chat.activeAgent ? false : !chat.model}
-            placeholder={
-              chat.activeAgent
-                ? `Talk to ${chat.activeAgent}… (/exit to leave)`
-                : chat.model
-                  ? "Ask anything…"
-                  : "Pick a model first"
-            }
+            disabled={!chat.model}
+            placeholder={chat.model ? "Ask anything…" : "Pick a model first"}
             modelHasVision={chat.activeModelCapabilities.vision}
             parserConfig={chat.parserConfig}
             model={chat.model}

@@ -54,9 +54,6 @@ You denied a scope. Reconnect and grant all requested scopes — Companion needs
 **`/comfyui` opens the modal but generation fails immediately**
 Check the bridge URL in *Settings → Add-ons → ComfyUI Imager*. The bridge must be reachable from Companion's server (not the browser) — on the same LAN or via tunnel. Click **Test connection** to verify.
 
-**`/hermes` enters mode but the terminal panel stays blank**
-Either the bridge is down or unreachable. Open *Settings → Add-ons → Hermes Agent* → **Test connection**. If it returns 503, the Hermes bridge process isn't running on your workstation. Restart it.
-
 **`/help` returns "no articles matched"**
 The BM25 index wasn't loaded at server startup (missing `src/content/user-guide/` in the container). Check `GET /api/help/status` — if `indexed` is 0, the corpus path is wrong. Set `HELP_CORPUS_DIR` env var to the correct path.
 

@@ -228,28 +228,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Agent sub-thread (`/hermes`) — transcript loaded on conv switch,
-  // accumulates locally as user invokes more prompts.
-  const [agentMessages, setAgentMessages] = useState<
-    Array<{
-      id: string;
-      role: "user" | "agent" | "tool";
-      content: string;
-      stats?: Record<string, unknown> | null;
-      createdAt?: string;
-    }>
-  >([]);
-  const [agentStreaming, setAgentStreaming] = useState(false);
-  const [agentError, setAgentError] = useState<string | null>(null);
-  // Pi Agent — TUI variant. When the user enters `/pi` mode we render
-  // a full-height iframe pointed at this URL (typically the ttyd
-  // process running `tmux attach -t pi` on the Pi host). Fetched once
-  // from the Pi Agent add-on config.
-  const [piBridgeUrl, setPiBridgeUrl] = useState<string>("");
-  // #25 — Hermes runs as a shared enterprise TUI embedded via iframe (the
-  // Hermes web dashboard), same as Pi. URL from the Hermes Agent add-on config.
-  // When set, `/hermes` opens the iframe instead of the (retired) ACP bubble.
-  const [hermesBridgeUrl, setHermesBridgeUrl] = useState<string>("");
+  // Hermes/Pi bridge state removed 2026-08-03 (v2.0 γb2) — delegation
+  // now runs through the native task tool (task cards in the thread).
   // Parser add-on (Docling). Governs how document attachments are routed by
   // the composer: when enabled, docs (and PDFs in text mode) upload their
   // raw bytes for server-side parsing instead of being rasterized / inlined.
@@ -467,35 +447,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
   // Fetch the LiteLLM model list + the user's default model on mount. If the
   // user hasn't picked a model, default to inferenceSettings.defaultModel,
   // else the first available LiteLLM model.
-  // Fetch the Pi Agent ttyd URL once on mount. Cheap, optional —
-  // if the add-on isn't configured we just leave the URL empty and
-  // the /pi panel won't render (the slash command surfaces an error
-  // instead).
   useEffect(() => {
     let cancelled = false;
-    api
-      .piAddonInfo()
-      .then((info) => {
-        if (cancelled) return;
-        if (info.enabled && info.bridgeUrl) {
-          setPiBridgeUrl(info.bridgeUrl);
-        }
-      })
-      .catch(() => {
-        /* not configured — leave piBridgeUrl empty */
-      });
-    // #25 — same for Hermes (enterprise dashboard iframe).
-    api
-      .hermesAddonInfo()
-      .then((info) => {
-        if (cancelled) return;
-        if (info.enabled && info.bridgeUrl) {
-          setHermesBridgeUrl(info.bridgeUrl);
-        }
-      })
-      .catch(() => {
-        /* not configured — leave hermesBridgeUrl empty (falls back to bubble) */
-      });
     // Parser add-on — cheap, optional. When unconfigured we keep the default
     // (disabled) so the composer falls back to the pdf.js / inline-text path.
     api
@@ -582,8 +535,6 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     if (!conversationId) {
       setMessages([]);
       setConversation(null);
-      setAgentMessages([]);
-      setAgentError(null);
       // Clear any pre-conversation memory override when the user
       // returns to the "new chat" entry, so the next conv starts from
       // its project default (or true) instead of a stale pending flip.
@@ -612,30 +563,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       setMessages([]);
       setConversation(null);
       setProject(null);
-      setAgentMessages([]);
-      setAgentError(null);
       setError(null);
     }
-    // Load the Hermes agent transcript ONCE per conv — gated behind the
-    // loaded-id ref above so it doesn't re-fire on every render. Without
-    // this guard, the load races the live stream (when /hermes was just
-    // sent on a new conv, navigate(/c/:id) re-triggers this effect; the
-    // server doesn't have the persisted messages yet, so the empty
-    // response would wipe the optimistic state mid-stream).
-    api
-      .hermesTranscript(conversationId)
-      .then(({ messages: agentMsgs }) => {
-        // Skip if a stream landed first OR if we got more messages
-        // locally than the server reports (the server persists at the
-        // END of the stream, not chunk-by-chunk).
-        setAgentMessages((prev) =>
-          prev.length > agentMsgs.length ? prev : agentMsgs,
-        );
-      })
-      .catch(() => {
-        /* not configured or 404 — leave empty */
-      });
-
     loadedIdRef.current = conversationId;
     let serverPollAbort: (() => void) | null = null;
 
@@ -912,141 +841,6 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     globalModels.find((m) => m.id === model)?.capabilities ??
     { vision: true, tools: false };
 
-  /**
-   * Generic agent-bridge invocation. Streams SSE chunks into the local
-   * agentMessages state. Used by both `/hermes` and `/pi` — they speak
-   * the same `sessionUpdate: agent_message_chunk | tool_call` SSE shape
-   * thanks to translation in their respective backend routes.
-   */
-  const invokeAgent = useCallback(
-    async (endpoint: string, convId: string, prompt: string) => {
-      setAgentError(null);
-      setAgentStreaming(true);
-
-      // Optimistic user line — server will mirror it but local feedback
-      // beats the round-trip.
-      const userLineId = `local-user-${Date.now()}`;
-      setAgentMessages((prev) => [
-        ...prev,
-        { id: userLineId, role: "user", content: prompt },
-      ]);
-
-      const agentLineId = `local-agent-${Date.now()}`;
-      let agentText = "";
-      // Placeholder agent line we'll grow as chunks arrive
-      setAgentMessages((prev) => [
-        ...prev,
-        { id: agentLineId, role: "agent", content: "" },
-      ]);
-
-      try {
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversationId: convId, prompt }),
-        });
-        if (!res.ok || !res.body) {
-          const err = await res.json().catch(() => ({
-            detail: res.statusText || `bridge error ${res.status}`,
-          }));
-          setAgentError(
-            (err as { detail?: string; error?: string }).detail ??
-              (err as { error?: string }).error ??
-              `bridge error ${res.status}`,
-          );
-          // Drop the placeholder agent line
-          setAgentMessages((prev) => prev.filter((m) => m.id !== agentLineId));
-          return;
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const blocks = buffer.split("\n\n");
-          buffer = blocks.pop() ?? "";
-          for (const block of blocks) {
-            let event = "message";
-            let data = "";
-            for (const line of block.split("\n")) {
-              if (line.startsWith("event:")) event = line.slice(6).trim();
-              else if (line.startsWith("data:")) data += line.slice(5).trim();
-            }
-            if (!data) continue;
-            try {
-              const parsed = JSON.parse(data);
-              if (event === "update") {
-                const kind = parsed.sessionUpdate;
-                if (kind === "agent_message_chunk") {
-                  agentText += parsed.content?.text ?? "";
-                  setAgentMessages((prev) =>
-                    prev.map((m) =>
-                      m.id === agentLineId ? { ...m, content: agentText } : m,
-                    ),
-                  );
-                } else if (kind === "tool_call") {
-                  // ACP `tool_call` is flat — `title` is the human-readable
-                  // action ("write: /tmp/foo.txt"). `locations` lists the
-                  // paths involved. We dedup-insert on toolCallId so a
-                  // future `tool_call_update` (status change) doesn't add
-                  // a second line.
-                  const callId = parsed.toolCallId ?? `${Date.now()}-${Math.random()}`;
-                  setAgentMessages((prev) => {
-                    if (prev.some((m) => m.id === `tool-${callId}`)) return prev;
-                    return [
-                      ...prev,
-                      {
-                        id: `tool-${callId}`,
-                        role: "tool",
-                        content:
-                          parsed.title ?? parsed.kind ?? "(unknown)",
-                        stats: {
-                          kind: parsed.kind,
-                          args:
-                            parsed.locations ??
-                            parsed.content ??
-                            null,
-                        },
-                      },
-                    ];
-                  });
-                }
-                // bridge_auto_approved is auto-permission metadata, not
-                // a user-visible tool action. The preceding `tool_call`
-                // already shows the action — skip to avoid noise.
-              } else if (event === "error") {
-                setAgentError(
-                  (parsed as { message?: string }).message ?? "stream error",
-                );
-              }
-            } catch {
-              /* non-JSON SSE chunk, ignore */
-            }
-          }
-        }
-      } catch (e) {
-        setAgentError((e as Error).message);
-      } finally {
-        setAgentStreaming(false);
-      }
-    },
-    [],
-  );
-
-  const hermesInvoke = useCallback(
-    (convId: string, prompt: string) =>
-      invokeAgent("/api/agents/hermes/invoke", convId, prompt),
-    [invokeAgent],
-  );
-
-  const piInvoke = useCallback(
-    (convId: string, prompt: string) =>
-      invokeAgent("/api/agents/pi/invoke", convId, prompt),
-    [invokeAgent],
-  );
 
   /**
    * /help <question> — RAG against the user-guide wiki.
@@ -1178,58 +972,27 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     [],
   );
 
-  /**
-   * Drop the Hermes session for the current conv. Next /hermes opens a
-   * fresh ACP session on the bridge.
-   */
-  const piReset = useCallback(async () => {
-    const convId = conversationId ?? conversation?.id;
-    if (!convId) return;
-    try {
-      await api.piReset(convId);
-      setAgentMessages([]);
-      setAgentError(null);
-    } catch (e) {
-      setAgentError((e as Error).message);
-    }
-  }, [conversationId, conversation?.id]);
-
-  const hermesReset = useCallback(async () => {
-    const convId = conversationId ?? conversation?.id;
-    if (!convId) return;
-    try {
-      await api.hermesReset(convId);
-      setAgentMessages([]);
-      setAgentError(null);
-    } catch (e) {
-      setAgentError((e as Error).message);
-    }
-  }, [conversationId, conversation?.id]);
-
   const sendMessage = useCallback(
     async (text: string, attachments: Attachment[] = []) => {
       if (sending) return;
       const trimmed = text.trim();
       if (!trimmed && attachments.length === 0) return;
 
-      // ── Slash commands + persistent agent mode ────────────────────────
-      // `/hermes` enters Hermes mode (with or without a prompt to run
-      // immediately). Once in mode, every message routes to the Hermes
-      // bridge until `/exit` (or `/hermes_off`) clears it.
+      // ── Slash commands ────────────────────────────────────────────────
       const slashMatch =
         trimmed.match(/^\/([a-z][\w-]*)\s+([\s\S]+)$/i) ??
         trimmed.match(/^\/([a-z][\w-]*)\s*$/i);
-      const currentAgent = conversation?.activeAgent ?? null;
 
       if (slashMatch) {
         const cmd = slashMatch[1].toLowerCase();
         const rest = (slashMatch[2] ?? "").trim();
 
-        // Exit any active agent mode. Works for `/exit` (universal) and
-        // the agent-specific `/<kind>_off` (e.g. `/hermes_off`).
+        // `/exit` clears a stale bridge-era activeAgent flag on old
+        // conversations (the Hermes/Pi runtimes are gone; the flag only
+        // survives as legacy data).
         if (cmd === "exit" || cmd.endsWith("_off")) {
           const convId = conversationId ?? conversation?.id;
-          if (convId && currentAgent) {
+          if (convId && conversation?.activeAgent) {
             try {
               await api.setConversationActiveAgent(convId, null);
               setConversation((prev) =>
@@ -1269,49 +1032,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           return;
         }
 
-        if (cmd === "hermes" || cmd === "pi") {
-          const kind = cmd as "hermes" | "pi";
-          // Need a conv before invoking; create one if this is a fresh chat
-          let convId = conversationId ?? conversation?.id ?? null;
-          if (!convId) {
-            try {
-              const created = await api.createConversation({
-                title:
-                  (rest || `${kind === "hermes" ? "Hermes" : "Pi"} session`).slice(0, 80),
-                ...(model ? { model } : {}),
-              });
-              convId = created.conversation.id;
-              setConversation(created.conversation);
-              navigate(`/c/${convId}`, { replace: true });
-            } catch (e) {
-              setError((e as Error).message);
-              return;
-            }
-          }
-          // Enter agent mode (persistent — stays until /exit)
-          if (currentAgent !== kind) {
-            try {
-              await api.setConversationActiveAgent(convId, kind);
-              setConversation((prev) =>
-                prev ? { ...prev, activeAgent: kind } : prev,
-              );
-            } catch (e) {
-              setError((e as Error).message);
-              return;
-            }
-          }
-          // Hermes runs through the SSE bridge — fire the rest as a
-          // prompt now. Pi runs in a TUI iframe — the composer doesn't
-          // route there, the user types directly in the terminal. So
-          // we just enter mode and ignore any `rest` for /pi.
-          // When a Hermes iframe is configured, the dashboard handles the
-          // interaction directly — only fall back to the (retired) ACP bubble
-          // invoke when there's no iframe URL (#25).
-          if (kind === "hermes" && rest && !hermesBridgeUrl) {
-            await hermesInvoke(convId, rest);
-          }
-          return;
-        }
+        // `/hermes` and `/pi` removed 2026-08-03 (v2.0 γb2) — delegation
+        // is native now (Nemo's task tool). The commands fall through to
+        // normal chat like any unknown slash.
 
         if (cmd === "comfyui") {
           // Slash command with or without a prompt. The chat composer
@@ -1340,30 +1063,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
         // Unknown slash — fall through to normal chat.
       }
 
-      // Persistent agent mode: every plain message goes to the agent
-      // until `/exit`. Hermes uses the SSE bridge; Pi runs in a TUI
-      // iframe so plain composer text doesn't route to it (the user
-      // types directly in the terminal). We silently no-op for Pi so
-      // accidentally-typed composer text doesn't hit normal chat with
-      // the wrong context.
-      if (currentAgent === "hermes" && !hermesBridgeUrl) {
-        // Legacy ACP-bubble path — only when no Hermes iframe is configured.
-        const convId = conversationId ?? conversation?.id;
-        if (convId) {
-          await hermesInvoke(convId, trimmed);
-          return;
-        }
-      } else if (
-        currentAgent === "pi" ||
-        (currentAgent === "hermes" && hermesBridgeUrl)
-      ) {
-        // iframe TUI (Pi terminal or the enterprise Hermes dashboard) — the
-        // user types directly in the window above; composer text doesn't route
-        // here. Silently no-op so stray text doesn't hit normal chat (#25).
-        const label = currentAgent === "pi" ? "Pi terminal" : "Hermes window";
-        setError(`Type directly in the ${label} above. Use /exit to return.`);
-        return;
-      }
+      // Persistent bridge agent-mode routing removed with Hermes/Pi
+      // (v2.0 γb2). A stale activeAgent value on an old conversation is
+      // simply ignored — messages route to normal chat.
 
       if (!model) {
         setError(
@@ -1722,23 +1424,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     toggleMemoryEnabled,
     toggleAgentMode,
     reload,
-    // Agent sub-thread (/hermes)
-    agentMessages,
-    agentStreaming,
-    agentError,
-    hermesInvoke,
-    hermesReset,
-    piInvoke,
-    piReset,
-    piBridgeUrl,
-    hermesBridgeUrl,
     /** Parser add-on state — passed to the composer so document attachments
      *  route to the server-side Docling parser when enabled. */
     parserConfig,
-    /** Persistent agent mode for this conv ('hermes' | null). When set,
-     *  every plain message in the composer routes to that agent's
-     *  bridge instead of the LLM chat path. `/exit` clears it. */
-    activeAgent: conversation?.activeAgent ?? null,
     /** Effective memory toggle: persisted conv value when the conv exists,
      *  else the pre-conversation pending override, else the per-device
      *  default for a new personal chat (project chats fall back to false —

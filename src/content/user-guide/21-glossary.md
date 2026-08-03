@@ -74,7 +74,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## H
 
-**Hermes Agent** — Standalone CLI agent that runs on your workstation. Companion connects to it via the ACP bridge (`Settings → Add-ons → Hermes Agent`) so the `/hermes` slash command can drive it from chat. See *Slash commands & agents* (066).
+**Hermes Agent** — Retired (v2.0). Was the bridge-era workstation coding agent behind `/hermes`; replaced by the native agent runtime (task tool + Agents registry).
 
 **Hybrid mode** — Engine mode where caps come from the engine, inference goes through LiteLLM. Transitional. See *Engine pairing* (16).
 
@@ -136,7 +136,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## P
 
-**Pi** — Add-on that enables the `/pi` slash command. A reflective conversational agent that runs as a TUI in an iframe. See *Add-ons* (13b).
+**Pi** — Retired (v2.0). Was the bridge-era reflective TUI agent behind `/pi`.
 
 **Prefix cache** — Same as KV prefix cache. OdyssAI-X reuses it across turns of the same conversation via `session_id`.
 

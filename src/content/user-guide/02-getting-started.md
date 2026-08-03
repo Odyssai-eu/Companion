@@ -63,7 +63,8 @@ The chat header shows model picker, agent-mode toggle, memory toggle, voice icon
 
 Once chat works, the rest is opt-in:
 
-- **Settings → Extensions → Add-ons** — LiteLLM (legacy inference rail), Auto Router, Obsidian vault sync, Web Search (Tavily), Voice Live, **Hermes Agent** (`/hermes`), **Pi** (`/pi`), **ComfyUI Imager** (`/comfyui`). See *Add-ons* (13b) for the full guide.
+- **Settings → Extensions → Add-ons** — LiteLLM (legacy inference rail), Auto Router, Obsidian vault sync, Web Search (Tavily), Voice Live, **ComfyUI Imager** (`/comfyui`). See *Add-ons* (13b) for the full guide.
+- **Settings → Extensions → Agents** — the delegation roster (Némo + explore/writer/ops). Ask naturally; Némo dispatches via the task tool.
 - **Settings → Extensions → MCP servers** — Notion, GitHub, Tavily, Linear, Obsidian, Filesystem presets. Or roll your own URL.
 - **Settings → Extensions → Skills** — agentskills.io packages the model can load on demand.
 - **Settings → Extensions → API access** — `hms_…` tokens for external IDE agents to call back into Companion's memory + skills + conversations.

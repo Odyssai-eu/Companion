@@ -104,16 +104,16 @@ Not yet. Push-to-talk (input) works today; auto-speak (output) and the full-scre
 Type `/comfyui <your prompt>` in any chat. It opens the ComfyUI Imager modal — set the template, size, steps, and send. Requires the ComfyUI Imager add-on configured in *Settings → Add-ons*. See *Slash commands* (066).
 
 **How do I use a coding agent on my machine?**
-Type `/hermes <task>` and Hermes takes over the turn — it reads and writes files, runs shell, streams all actions live. Requires the Hermes Agent add-on (bridge URL). See *Slash commands* (066) and *Add-ons* (13b).
+Delegation is native in v2.0: ask Némo and it dispatches specialized subagents (explore, writer, ops) via the task tool — live task cards show every step. For a coding agent on your own machine, use an IDE agent wired to Companion's MCP brain (*API access*, 13).
 
-**What is /pi?**
-Pi is a reflective conversational TUI agent embedded as an iframe in chat. Type `/pi` to enter Pi mode; type `/exit` to return to LLM chat. Requires the Pi add-on. Less agentic than Hermes — designed for slow thinking and journaling.
+**What happened to /hermes and /pi?**
+Retired in v2.0 — delegation is native now. Némo dispatches subagents via the task tool; the Agents registry lives in Settings → Extensions → Agents.
 
 **How do I search the user guide?**
 Type `/help <question>` in any chat. Returns a synthesised answer with source chips linking to the relevant articles.
 
 **What slash commands are available?**
-`/help`, `/comfyui`, `/hermes`, `/pi`, `/exit`. See *Slash commands* (066) for the full reference.
+`/help`, `/comfyui`, `/exit`. See *Slash commands* (066) for the full reference.
 
 ## MCP / agents tokens
 

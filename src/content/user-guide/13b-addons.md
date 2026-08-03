@@ -11,8 +11,6 @@ Add-ons are optional integrations that extend what Companion can do. Configure t
 | **Obsidian** | Vault sync for the memory wiki | — |
 | **Web Search (Tavily)** | Live web search tool for the agent | — |
 | **Voice Live** | Full-duplex voice via Gemini Live | — |
-| **Hermes Agent** | Real-machine coding agent | `/hermes` |
-| **Pi** | Reflective conversational TUI agent | `/pi` |
 | **ComfyUI Imager** | Flux image generation | `/comfyui` |
 
 ---
@@ -76,26 +74,8 @@ This is separate from push-to-talk (which is always available, browser-side, no 
 
 ---
 
-## Hermes Agent
-
-Gives you the `/hermes` slash command — a real coding agent that runs on your workstation (reads files, writes files, runs shell).
-
-Fields:
-- **Bridge URL** — `http://<your-workstation>:<port>` (default 8003). Companion's server must reach this URL.
-- **Bridge token** — optional static bearer when the bridge isn't on a trusted LAN.
-
-**Setting up the bridge**: install Hermes + the ACP bridge on your workstation, then paste the bridge URL here. Click **Test connection** to confirm. Detailed setup: see *Slash commands* (066).
-
----
-
-## Pi
-
-Gives you the `/pi` slash command — a reflective conversational agent that runs in a TUI iframe.
-
-Fields:
-- **Pi URL** — the bridge endpoint for your Pi instance.
-
----
+> The Hermes Agent and Pi add-ons were retired in v2.0 — delegation is
+> native now (Némo's task tool + the Agents registry in Settings).
 
 ## ComfyUI Imager
 
@@ -111,7 +91,7 @@ Generation runs on your hardware. The resulting images land directly in the conv
 
 ## Related
 
-- *Slash commands* (066) — `/hermes`, `/pi`, `/comfyui` in detail
+- *Slash commands* (066) — `/help`, `/comfyui` in detail
 - *Engine pairing* (16) — LiteLLM vs gateway mode
 - *Memory* (10) — Obsidian vault sync and the wiki
 - *Voice & talk* (08) — push-to-talk vs Voice Live

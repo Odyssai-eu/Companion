@@ -1,6 +1,11 @@
 # Slash commands
 
-Type a slash command in the chat composer to go beyond plain LLM chat — search the guide, generate images, or hand control to an agent that acts on your machine.
+Type a slash command in the chat composer to go beyond plain LLM chat — search the guide or generate images.
+
+> The `/hermes` and `/pi` bridge modes were retired in v2.0. Delegation is
+> native now: Némo calls specialized subagents (explore, writer, ops) via
+> the task tool, and the work shows up as live task cards in the thread.
+> See *Agents* in Settings.
 
 ## Quick reference
 
@@ -8,9 +13,7 @@ Type a slash command in the chat composer to go beyond plain LLM chat — search
 |---|---|---|
 | `/help <question>` | Search the user guide, get a synthesised answer | — |
 | `/comfyui [prompt]` | Open the Flux image generator | ComfyUI Imager add-on |
-| `/hermes [prompt]` | Enter Hermes mode — real shell + filesystem access | Hermes Agent add-on |
-| `/pi` | Enter Pi TUI mode — reflective conversational agent | Pi add-on |
-| `/exit` | Leave any active agent mode, return to LLM chat | — |
+| `/exit` | Clear a legacy agent-mode flag on an old conversation | — |
 
 ---
 
@@ -46,70 +49,21 @@ The resulting images are pushed directly into the conversation as image blocks. 
 
 ---
 
-## /hermes — real-machine agent
+## Delegation (no slash needed)
 
-```
-/hermes refactor auth.ts to use JWT instead of sessions
-/hermes   ← enters mode without sending anything yet
-```
+Ask Némo naturally — "cherche dans ma mémoire ce qu'on a décidé sur X",
+"écris-moi un rapport complet sur Y dans le workspace". When the request
+matches a subagent's specialty, Némo delegates via the task tool and the
+thread shows a live card: agent name, current action, tool calls. Click
+the card to open the **Trace** — the full sub-conversation, every step.
 
-Enters **Hermes** mode. Hermes is a coding agent that runs on your workstation — it reads files, writes files, runs shell commands, browses — and streams its actions into an inline terminal panel below the messages.
-
-Mode is **persistent**: every message you send routes to Hermes until you type `/exit`. The model picker is still there but Hermes brings its own brain.
-
-**The agent panel shows:**
-
-| Line style | Meaning |
-|---|---|
-| `$ <your prompt>` in cyan | What you sent |
-| White text | Agent tokens, streamed |
-| `⚒ tool · <action>` in amber | Every file/shell action — nothing is silent |
-| `⟲ reset` button | Drops the ACP session, next `/hermes` starts clean |
-
-The transcript is persisted. Reload the page, switch conversations and come back — the panel reappears with full history.
-
-**Requires** *Settings → Add-ons → Hermes Agent* → bridge URL (+ optional token).  
-**For Hermes → Companion memory**: mint an `hms_…` token in *Settings → Extensions → API access* and wire it to the bridge. See *API access* (13).
-
----
-
-## /pi — conversational TUI agent
-
-```
-/pi
-```
-
-Enters **Pi** mode. Pi is a reflective, conversational agent that opens as a TUI embedded in an iframe below the messages. Unlike Hermes, Pi isn't a shell agent — it's designed for slow thinking, journaling, long-form planning.
-
-Once in mode, type directly in the Pi terminal (not in the main composer). The composer doesn't route to Pi. Use `/exit` to return to normal LLM chat.
-
-**Requires** *Settings → Add-ons → Pi* → bridge URL.
-
----
-
-## /exit — leave agent mode
-
-```
-/exit
-/hermes_off
-/pi_off
-```
-
-Universal. Works for any active agent mode. The agent transcript stays visible — scroll back any time. The conversation returns to normal LLM chat.
-
----
-
-## Rules that apply to all modes
-
-- **One agent per conversation.** Can't have Hermes and Pi active in the same chat simultaneously.
-- **Conversations are independent.** Mode is per-conversation, not global. A second tab has its own mode.
-- **Memory still works.** The wiki snapshot is in the chat's system prompt — the agent sees what Némo knows.
-- **Tools are always visible.** Every file write, shell command, and browse surfaces in the amber lines. No silent tool use.
+Requirements: a tool-capable model (⚒ chip) and the conversation's
+agent-mode toggle on.
 
 ---
 
 ## Related
 
-- *Add-ons* (13b) — configure Hermes, Pi, and ComfyUI bridges
-- *API access* (13) — wire Hermes back to Companion's memory via MCP
+- *Agents* (Settings → Extensions → Agents) — the subagent roster
+- *API access* (13) — wire external IDE agents to Companion's memory via MCP
 - *Chat basics* (05) — normal LLM chat, no slash
