@@ -13,11 +13,13 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.20",
     "@google/genai": "^2.0.1",
     "@hono/node-server": "^1.13.7",
     "@hono/zod-validator": "^0.4.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/dompurify": "^3.0.5",
+    "ai": "^7.0.48",
     "bcryptjs": "^2.4.3",
     "dompurify": "^3.4.7",
     "drizzle-orm": "^0.38.3",
