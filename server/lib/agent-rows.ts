@@ -22,10 +22,14 @@ import {
 } from "./agent-prompts";
 
 // ── Builtin seeds ──────────────────────────────────────────────────────
-// Idempotent: insert-if-missing by (instance namespace, name). We never
-// overwrite an existing row — an admin edit to a builtin must survive
-// deploys. Changing a seed prompt therefore only affects fresh installs;
-// evolutions on live instances go through the Agents settings page.
+// CONTRACT (revised v2.1): builtin rows TRACK the shipped seeds — the
+// boot sync upserts prompt/description/tools/model on every deploy, so
+// prompt evolutions actually reach live instances (the v2.0
+// insert-if-missing contract silently stranded them). Personalization
+// does NOT edit builtins anymore: it creates a user-level shadow row
+// with the same name (resolution already gives user rows precedence).
+// Only `enabled` is preserved on sync — disabling a builtin is an
+// instance-level choice that survives deploys.
 
 type SeedAgent = {
   name: string;
@@ -60,7 +64,7 @@ const BUILTIN_AGENTS: SeedAgent[] = [
       "Read-only research across memory, RAG, workspace files, web search and MCP sources. Delegate when the user needs facts gathered, prior decisions recalled, or sources compared.",
     mode: "subagent",
     systemPrompt: EXPLORE_PROMPT,
-    model: "tele-fast",
+    model: null, // v2.1 — CoeOS classification decides
     toolsAllow: [
       "rag_search",
       "web_*",
@@ -89,7 +93,7 @@ const BUILTIN_AGENTS: SeedAgent[] = [
       "Executes well-scoped actions on the user's connected sources (Notion, Linear, infra MCP…). Delegate explicit, bounded operations — never open-ended exploration.",
     mode: "subagent",
     systemPrompt: OPS_PROMPT,
-    model: "tele-fast",
+    model: null, // v2.1 — CoeOS classification decides
     toolsAllow: ["mcp_*", "skill_*"],
     maxSteps: 15,
   },
@@ -98,25 +102,51 @@ const BUILTIN_AGENTS: SeedAgent[] = [
 export async function seedBuiltinAgents(): Promise<void> {
   for (const seed of BUILTIN_AGENTS) {
     const [existing] = await db
-      .select({ id: agents.id })
+      .select({ id: agents.id, systemPrompt: agents.systemPrompt })
       .from(agents)
-      .where(and(isNull(agents.userId), eq(agents.name, seed.name)))
+      .where(
+        and(
+          isNull(agents.userId),
+          eq(agents.name, seed.name),
+          eq(agents.source, "builtin"),
+        ),
+      )
       .limit(1);
-    if (existing) continue;
-    await db.insert(agents).values({
-      userId: null,
-      name: seed.name,
-      displayName: seed.displayName,
-      description: seed.description,
-      mode: seed.mode,
-      systemPrompt: seed.systemPrompt,
-      model: seed.model,
-      toolsAllow: seed.toolsAllow,
-      maxSteps: seed.maxSteps,
-      source: "builtin",
-      enabled: true,
-    });
-    console.log(`[agents] seeded builtin '${seed.name}'`);
+    if (!existing) {
+      await db.insert(agents).values({
+        userId: null,
+        name: seed.name,
+        displayName: seed.displayName,
+        description: seed.description,
+        mode: seed.mode,
+        systemPrompt: seed.systemPrompt,
+        model: seed.model,
+        toolsAllow: seed.toolsAllow,
+        maxSteps: seed.maxSteps,
+        source: "builtin",
+        enabled: true,
+      });
+      console.log(`[agents] seeded builtin '${seed.name}'`);
+      continue;
+    }
+    // Sync pass — builtins track the code (see contract above). `enabled`
+    // is deliberately left alone.
+    await db
+      .update(agents)
+      .set({
+        displayName: seed.displayName,
+        description: seed.description,
+        mode: seed.mode,
+        systemPrompt: seed.systemPrompt,
+        model: seed.model,
+        toolsAllow: seed.toolsAllow,
+        maxSteps: seed.maxSteps,
+        updatedAt: new Date(),
+      })
+      .where(eq(agents.id, existing.id));
+    if (existing.systemPrompt !== seed.systemPrompt) {
+      console.log(`[agents] builtin '${seed.name}' synced to shipped seed`);
+    }
   }
 }
 

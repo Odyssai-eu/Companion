@@ -21,6 +21,9 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index";
 import { conversations, messages } from "../db/schema";
 import { resolveAgentByName } from "./agent-rows";
+import { COEOS_MODEL_ID } from "../routes/chat";
+import { loadGuardConfigForUser } from "../routes/addon-guard";
+import { classifyText } from "./guard";
 import { buildSystemPrompt } from "./prompt-builder";
 import { emitRunEvent } from "./run-events";
 import { recordSpan } from "./agent-spans";
@@ -83,6 +86,7 @@ export async function runTask(args: TaskRunArgs): Promise<TaskRunResult> {
     userId, parentConversationId, subagent, prompt, description,
     parentModel, defaultModel, target, headers, budget,
   } = args;
+  void parentModel; // v2.1: CoeOS decides — kept in the signature for call-site stability
 
   // ── Guards ──────────────────────────────────────────────────────────
   if (budget.tasksStarted >= MAX_TASKS_PER_TURN) {
@@ -143,13 +147,44 @@ export async function runTask(args: TaskRunArgs): Promise<TaskRunResult> {
   if (parent.parentId) rootId = parent.parentId; // depth ≤ 2 ⇒ parent's parent is the root
 
   // ── Model resolution (frozen at spawn, never "auto") ────────────────
-  let model = agent.model ?? parentModel;
-  if (!model || model === "auto") model = defaultModel ?? "";
-  if (!model) {
-    return {
-      ok: false, status: "error",
-      text: "No resolvable model for this task (agent has none, parent model unavailable).",
-    };
+  // v2.1: the classification decides — an agent without a pinned model
+  // runs on CoeOS (the gateway federates it). Pinned agent.model keeps
+  // the direct rail (custom agents, banc d'essai).
+  let model = agent.model ?? COEOS_MODEL_ID;
+  if (model === "auto") model = defaultModel ?? COEOS_MODEL_ID;
+
+  // ── Guard — runtime surface (v2.1 P1.4) ─────────────────────────────
+  // A sub-conversation has no UI to prompt mid-task, so the semantics
+  // differ from chat (block+prompt): sensitive → force-local
+  // automatically; no local rail available → FAIL CLOSED (task_error,
+  // the content is never sent). Classification happens here at spawn on
+  // the task prompt — the single entry point of external content into
+  // the sub-conversation.
+  try {
+    const guardCfg = await loadGuardConfigForUser(userId);
+    if (guardCfg) {
+      const verdict = await classifyText(prompt.slice(0, 8_000), guardCfg);
+      if (verdict?.sensitive) {
+        const localModel = guardCfg.localModel?.trim() ?? "";
+        if (localModel) {
+          console.log(
+            "[task] guard flagged prompt (severity=%s) → force-local %s",
+            verdict.maxSeverity,
+            localModel,
+          );
+          model = localModel;
+        } else {
+          return {
+            ok: false, status: "error",
+            text:
+              "This task contains sensitive content and no local model is " +
+              "configured to run it (Confidential Guard). Content not sent.",
+          };
+        }
+      }
+    }
+  } catch {
+    /* guard fail-soft on classification errors, same as chat */
   }
 
   budget.tasksStarted += 1;
@@ -276,6 +311,15 @@ export async function runTask(args: TaskRunArgs): Promise<TaskRunResult> {
           finish_reason?: string;
         }>;
         usage?: { prompt_tokens?: number; completion_tokens?: number };
+        model?: string;
+        /** CoeOS/OdyssAI routing metadata (same field the stream
+         *  collector reads) — feeds the P0 table via the llm span. */
+        x_odyssai_routed?: {
+          router?: string;
+          routed_to?: string;
+          category?: string;
+          concrete?: string;
+        };
       };
       tokensIn += json.usage?.prompt_tokens ?? 0;
       tokensOut += json.usage?.completion_tokens ?? 0;
@@ -292,7 +336,13 @@ export async function runTask(args: TaskRunArgs): Promise<TaskRunResult> {
         tokensOut: json.usage?.completion_tokens ?? null,
         durationMs: Date.now() - llmStart,
         status: "ok",
-        payload: { step, tool_calls: toolCalls.length },
+        payload: {
+          step,
+          tool_calls: toolCalls.length,
+          model,
+          response_model: json.model ?? null,
+          routed: json.x_odyssai_routed ?? null,
+        },
       });
 
       // Narration step → event + persisted assistant message in sub-conv.

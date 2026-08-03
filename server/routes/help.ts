@@ -37,7 +37,6 @@ import {
 } from "../lib/global-settings";
 import { authHeaders } from "../lib/litellm";
 import { searchCorpus, corpusInfo, type HelpHit } from "../lib/help-search";
-import { loadRouterConfigForUser } from "./addon-router";
 
 type Env = { Variables: { userId: string } };
 const helpRoute = new Hono<Env>();
@@ -93,19 +92,16 @@ async function resolveHelpModel(userId: string): Promise<{
   baseUrl: string;
   apiKey: string | null;
 }> {
-  // 1. Prefer the user's Auto Router chat-bucket model. That's the
-  //    most "this is a question, give me a fast answer" model.
-  const routerCfg = await loadRouterConfigForUser(userId);
-  // Effective settings — user overrides on top of the instance defaults
-  // (0059). Help must work for a user who has configured nothing.
+  // v2.1 — CoeOS is the router: help answers go to the CoeOS virtual
+  // model when an engine is paired (it classifies "quick doc question"
+  // onto a fast axis itself), else the resolved default model.
   const u = await resolveUserSettingsById(userId);
   if (!u) throw new Error("user_not_found");
 
-  const model =
-    routerCfg?.policy?.chat ||
-    u.defaultModel ||
-    process.env.HELP_DEFAULT_MODEL ||
-    "auto";
+  const model = u.engineUrl
+    ? "CoeOS"
+    : u.defaultModel || process.env.HELP_DEFAULT_MODEL || "";
+  if (!model) throw new Error("no_model_for_help");
 
   // Route through the same target the chat route uses: engine when
   // gateway mode, else LiteLLM.

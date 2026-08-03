@@ -24,11 +24,6 @@ import { Hono } from "hono";
 import { db } from "../db/index";
 import { users } from "../db/schema";
 import {
-  routeMessage,
-  EmbeddingServiceError,
-} from "../lib/semantic-router";
-import { loadRouterAddonForUser } from "./addon-router";
-import {
   CONNECTION_COLUMNS,
   effectiveProviderMode,
   hasNoProvider,
@@ -66,6 +61,11 @@ const chatRoute = new Hono<Env>();
  * the picker, so neither one owns the other.
  */
 export const AUTO_ROUTER_MODEL_ID = "auto";
+
+/** The CoeOS virtual model id as listed by the engine catalog
+ *  (owned_by=odyssai-coeos → origin "router"). v2.1: every `auto` turn
+ *  and every agent-runtime turn without a pinned model goes here. */
+export const COEOS_MODEL_ID = "CoeOS";
 
 // ── Types from the client ─────────────────────────────────────────────────
 
@@ -145,109 +145,6 @@ chatRoute.post("/completions", async (c) => {
         error?: string;
       }
     | null = null;
-  if (body.model === AUTO_ROUTER_MODEL_ID) {
-    const { cfg: routerCfg, ready, reason } = await loadRouterAddonForUser(userId);
-
-    // Find the latest user message — that's what we route on. Going further
-    // back risks classifying on stale context (the conversation may have
-    // pivoted from a deep analysis to "tu te sens comment").
-    const lastUser = [...body.messages]
-      .reverse()
-      .find((m) => m.role === "user");
-    if (!lastUser) {
-      // Not a routing failure — a malformed request. No fallback for this
-      // one; there is nothing to answer.
-      return c.json({ error: "auto_router_no_user_message" }, 400);
-    }
-    const userText = typeof lastUser.content === "string"
-      ? lastUser.content
-      : Array.isArray(lastUser.content)
-        ? lastUser.content
-            .map((p) => (typeof p === "string" ? p : (p as { text?: string }).text ?? ""))
-            .join("\n")
-        : "";
-
-    // routeFailure stays null on the happy path. Anything else falls
-    // through to the shared fallback block below, so "add-on not
-    // configured" and "embedding service died" behave identically from
-    // the user's point of view: same visible error, same fallback.
-    let routeFailure: string | null = null;
-    if (!ready || !routerCfg) {
-      routeFailure =
-        `Auto Router couldn't pick a model — ${reason ?? "it is not configured"}. ` +
-        "Open Settings → Add-ons → Auto Router to set the embeddings URL and " +
-        "pick a model per bucket.";
-    } else {
-      try {
-        const decision = await routeMessage(userText.slice(0, 4000), routerCfg);
-        // A "ready" router can still classify into an EMPTY bucket:
-        // DEFAULT_POLICY is { chat: "", deep: "", code: "" } by design
-        // (semantic-router.ts — the user must name each model), and
-        // `ready` only checks the embeddings URL + the anchors. Without
-        // this guard `body.model` becomes "" and goes upstream as-is —
-        // the missing_model check above already ran — so the user gets an
-        // opaque provider error instead of the routing error. Route it
-        // through the same failure path as everything else: visible
-        // reason, then the configured fallback (or the 503).
-        if (!decision.model || !decision.model.trim()) {
-          routeFailure =
-            `Auto Router classified this message as "${decision.label}" but no ` +
-            "model is mapped to that bucket. Set one in Settings → Add-ons → " +
-            "Auto Router.";
-        } else {
-          console.log(
-            "[chat] auto-router → %s (label=%s score=%.3f) in %dms",
-            decision.model,
-            decision.label,
-            decision.score,
-            decision.ms,
-          );
-          body.model = decision.model;
-          routedDecision = {
-            from: AUTO_ROUTER_MODEL_ID,
-            to: decision.model,
-            label: decision.label,
-            score: decision.score,
-            ms: decision.ms,
-          };
-        }
-      } catch (e) {
-        routeFailure =
-          e instanceof EmbeddingServiceError
-            ? `Auto Router couldn't reach its embedding service — ${e.message}.`
-            : `Auto Router failed — ${(e as Error).message}.`;
-      }
-    }
-
-    if (routeFailure) {
-      const fallback = routerCfg?.fallbackModel?.trim() ?? "";
-      if (!fallback) {
-        // No fallback configured → the pre-0058 contract: fail loud rather
-        // than guess a model the user never approved.
-        return c.json(
-          {
-            error: "auto_router_unavailable",
-            detail:
-              `${routeFailure} No fallback model is configured either, so ` +
-              "there is nothing to answer with. Set one in Settings → " +
-              "Add-ons → Auto Router.",
-          },
-          503,
-        );
-      }
-      console.warn("[chat] auto-router fallback → %s (%s)", fallback, routeFailure);
-      body.model = fallback;
-      routedDecision = {
-        from: AUTO_ROUTER_MODEL_ID,
-        to: fallback,
-        label: "fallback",
-        score: 0,
-        ms: 0,
-        error: routeFailure,
-      };
-    }
-  }
-
   // Guest budget pre-check — short-circuit before we stream anything.
   // tokenBudget = 0 means unlimited.
   if (guest && guest.tokenBudget > 0 && guest.tokensUsed >= guest.tokenBudget) {
@@ -311,6 +208,53 @@ chatRoute.post("/completions", async (c) => {
   }
 
   let target = providerTarget(conn, effectiveMode);
+
+  // ── Auto → CoeOS (v2.1 P1) ────────────────────────────────────────────
+  // CoeOS IS the autorouter: an `auto` turn goes to the CoeOS virtual
+  // model on the engine target (the gateway federates CoeOS —
+  // owned_by=odyssai-coeos in /v1/models). CoeOS classifies the request
+  // into a skill axis and relays to the proven-best model. The Guard
+  // pre-hook below keeps absolute priority — router-origin sensitive
+  // turns are BLOCKED before anything is sent.
+  if (body.model === AUTO_ROUTER_MODEL_ID) {
+    if (conn.engineUrl) {
+      body.model = COEOS_MODEL_ID;
+      routedDecision = {
+        from: AUTO_ROUTER_MODEL_ID,
+        to: COEOS_MODEL_ID,
+        label: "coeos",
+        score: 1,
+        ms: 0,
+      };
+    } else {
+      // Legacy without a paired engine — no CoeOS rail. Fall back to the
+      // resolved default model (visible notice) or fail loud.
+      const fallback = conn.defaultModel?.trim() ?? "";
+      if (!fallback) {
+        return c.json(
+          {
+            error: "auto_router_unavailable",
+            detail:
+              "Auto mode routes through CoeOS, which needs a paired engine. " +
+              "No engine is paired and no default model is configured.",
+          },
+          503,
+        );
+      }
+      console.warn("[chat] auto → no engine, fallback %s", fallback);
+      body.model = fallback;
+      routedDecision = {
+        from: AUTO_ROUTER_MODEL_ID,
+        to: fallback,
+        label: "fallback",
+        score: 0,
+        ms: 0,
+        error:
+          "Auto mode routes through CoeOS, which needs a paired engine. " +
+          "Answering with the default model instead.",
+      };
+    }
+  }
 
   // ── 2b. Confidential Guard pre-hook ────────────────────────────────────
   // Classify the outgoing user message against the guard service (GLiNER2

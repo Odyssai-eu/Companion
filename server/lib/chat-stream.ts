@@ -24,6 +24,7 @@ import {
 } from "../lib/inference-state";
 import { executeTool } from "../lib/tools";
 import { newTurnBudget, runTask } from "../lib/task-runner";
+import { emitRunEvent } from "../lib/run-events";
 import { pipeAndCollect, collectNonStream, stringifyForTool, summarizeResult } from "../lib/stream-collector";
 import type { GuestTokenContext } from "../lib/guest-token";
 import type { OdyssaiModelCapabilities } from "../lib/odyssai-contract";
@@ -209,6 +210,29 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
     // v2.0 delegation guards — ONE budget per primary turn: max 3 tasks,
     // 30 cumulative sub-conversation LLM steps (PLAN.md §4 garde-fous).
     const turnBudget = newTurnBudget();
+    // v2.1 P3 — the PRIMARY narrates like a task: its tool chains show as
+    // a live working block in the thread (same run_events machinery the
+    // sub-conversations use; the UI keys the synthetic card on
+    // sub_conversation_id, so the primary uses its own conv id). Ephemeral
+    // by design — the durable record is the assistant message itself.
+    const primaryNarration = body.conversationId
+      ? { rootId: body.conversationId, started: false }
+      : null;
+    const narrate = (
+      type: "task_started" | "step" | "tool_call" | "tool_result" | "task_done",
+      payload: Record<string, unknown>,
+    ) => {
+      if (!primaryNarration) return;
+      void emitRunEvent({
+        conversationId: primaryNarration.rootId,
+        type,
+        payload: {
+          sub_conversation_id: primaryNarration.rootId,
+          agent: "nemo",
+          ...payload,
+        },
+      });
+    };
     // Aggregate usage across tool-loop iterations — guests are billed for
     // every upstream call, not just the final one.
     let totalPromptTokens = 0;
@@ -437,6 +461,16 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
               })}\n\n`,
             ),
           );
+          if (primaryNarration && !primaryNarration.started) {
+            primaryNarration.started = true;
+            narrate("task_started", { description: "Working…" });
+          }
+          if (assistantContent && assistantContent.trim()) {
+            narrate("step", { text: assistantContent.trim().slice(0, 300) });
+          }
+          for (const tc of toolCalls) {
+            narrate("tool_call", { name: tc.name });
+          }
 
           // Execute tools. `task` calls (v2.0 delegation) run
           // SEQUENTIALLY — parallel sub-conversation spawns would stack
@@ -489,6 +523,12 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
               })}\n\n`,
             ),
           );
+          for (let i = 0; i < toolCalls.length; i++) {
+            narrate("tool_result", {
+              name: toolCalls[i].name,
+              ok: results[i]?.ok ?? false,
+            });
+          }
 
           // For workspace-mutating fs_* tools, push a file_changed event so
           // the FilesPage hook (useWorkspaceFiles) can refresh in live.
@@ -631,6 +671,9 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
       );
       await safeWrite(encoder.encode("data: [DONE]\n\n"));
     } finally {
+      if (primaryNarration?.started) {
+        narrate("task_done", { status: "done" });
+      }
       clearInterval(heartbeat);
       try {
         await writer.close();
