@@ -45,8 +45,11 @@ export async function assembleMessages(args: {
   identityBlock: string | null;
   /** Agent mode — gates the skills catalogue (useless without the skill_get tool). */
   convAgentMode: boolean;
+  /** v2.0 agent socle (conversations.agent_prompt_snapshot). Null on
+   *  pre-v2 conversations — composition stays byte-identical for them. */
+  agentPromptSnapshot?: string | null;
 }): Promise<{ withSystem: ChatTurn[] }> {
-  const { body, timezone, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock, convAgentMode } =
+  const { body, timezone, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock, convAgentMode, agentPromptSnapshot } =
     args;
 
   const tz = timezone;
@@ -70,6 +73,7 @@ export async function assembleMessages(args: {
   // memory-off + agent-off conversation is a truly clean slate (e.g. benchmarks).
   const skillsIndex = convAgentMode ? await buildSkillsIndex(userId) : null;
   const composedSystem = buildSystemPrompt({
+    agentSystemPrompt: agentPromptSnapshot,
     userSystemPrompt: body.system_prompt,
     identity: identityBlock,
     // Today chat.ts already collapsed project + global into a single

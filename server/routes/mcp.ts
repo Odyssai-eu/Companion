@@ -35,7 +35,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { and, asc, desc, eq, gte, ilike } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
@@ -75,6 +75,8 @@ async function getUserProject(userId: string, id: string) {
 }
 
 async function listUserConversations(userId: string, projectId?: string) {
+  // v2.0: sub-conversations (parent_id set) are excluded from listings —
+  // external MCP clients see them only through their parent's task cards.
   if (projectId) {
     return db
       .select()
@@ -83,6 +85,7 @@ async function listUserConversations(userId: string, projectId?: string) {
         and(
           eq(conversations.userId, userId),
           eq(conversations.projectId, projectId),
+          isNull(conversations.parentId),
         ),
       )
       .orderBy(desc(conversations.updatedAt));
@@ -90,7 +93,7 @@ async function listUserConversations(userId: string, projectId?: string) {
   return db
     .select()
     .from(conversations)
-    .where(eq(conversations.userId, userId))
+    .where(and(eq(conversations.userId, userId), isNull(conversations.parentId)))
     .orderBy(desc(conversations.updatedAt));
 }
 

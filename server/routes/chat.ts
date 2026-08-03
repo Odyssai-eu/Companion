@@ -438,7 +438,7 @@ chatRoute.post("/completions", async (c) => {
   const {
     projectCwd, memoryBlock, ragBlock, convKind,
     projectGlobalReadOnly, projectDedicatedMemoryEnabled, convMemoryEnabled,
-    convAgentMode,
+    convAgentMode, agentPromptSnapshot,
   } = await resolveConvContext(
     userId,
     body,
@@ -493,7 +493,7 @@ chatRoute.post("/completions", async (c) => {
   // nullable override of the instance zone now, and the row is already
   // resolved above — so this costs nothing and cannot silently fall back to
   // a hardcoded UTC for an inheriting account.
-  const { withSystem } = await assembleMessages({ body, timezone: conn.timezone, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock, convAgentMode });
+  const { withSystem } = await assembleMessages({ body, timezone: conn.timezone, userId, now, convMemoryEnabled, memoryBlock, ragBlock, identityBlock, convAgentMode, agentPromptSnapshot });
 
   // ── 6. Build upstream body (without `messages` — set per iteration below)
   const baseBody = buildUpstreamBody(body);

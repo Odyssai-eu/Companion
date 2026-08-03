@@ -65,6 +65,8 @@ export type ConvContext = {
   projectDedicatedMemoryEnabled: boolean;
   convMemoryEnabled: boolean;
   convAgentMode: boolean;
+  /** v2.0 agent socle frozen at conv creation. Null on pre-v2 convs. */
+  agentPromptSnapshot: string | null;
 };
 
 export async function resolveConvContext(
@@ -97,6 +99,12 @@ export async function resolveConvContext(
   // streaming works on jaccl, ~250-token prompts. User flips on per-conv
   // when they want agentic behaviour (fs / rag / web / mcp).
   let convAgentMode = false;
+  // v2.0 agent socle — the primary agent's system prompt frozen at conv
+  // creation. Null on pre-v2 conversations (they keep the old prompt
+  // composition, byte-stable) — no lazy backfill: injecting a socle into
+  // an existing conv mid-life would shift its prompt prefix and dump its
+  // KV cache for no user-visible gain.
+  let agentPromptSnapshot: string | null = null;
   if (body.conversationId) {
     try {
       const [conv] = await db
@@ -107,12 +115,14 @@ export async function resolveConvContext(
           memoryEnabled: conversations.memoryEnabled,
           agentMode: conversations.agentMode,
           kind: conversations.kind,
+          agentPromptSnapshot: conversations.agentPromptSnapshot,
         })
         .from(conversations)
         .where(eq(conversations.id, body.conversationId))
         .limit(1);
       if (conv && conv.userId === userId) {
         projectId = conv.projectId;
+        agentPromptSnapshot = conv.agentPromptSnapshot;
         // Defensive: legacy rows with kind='hermes' are treated as
         // regular 'chat' now that the Hermes integration is retired.
         // Migration 0037 normalises the column, but we coerce here in
@@ -230,6 +240,6 @@ export async function resolveConvContext(
   return {
     projectId, projectCwd, memoryBlock, ragBlock, convKind,
     projectGlobalReadOnly, projectDedicatedMemoryEnabled, convMemoryEnabled,
-    convAgentMode,
+    convAgentMode, agentPromptSnapshot,
   };
 }

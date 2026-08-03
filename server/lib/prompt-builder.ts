@@ -142,6 +142,11 @@ export function tagUserMessages<M extends TaggableMessage>(
  * integration was retired 2026-05-19 — see CHANGELOG.
  */
 export function buildSystemPrompt(opts: {
+  /** v2.0 agent socle — the primary agent's system prompt, snapshotted
+   *  per conversation (conversations.agent_prompt_snapshot). ALWAYS the
+   *  first segment when present; does not touch the semantics of
+   *  userSystemPrompt (projects / presets / conv overrides). */
+  agentSystemPrompt?: string | null;
   userSystemPrompt?: string | null;
   /** Always-on user identity block (who the assistant is talking to). Injected
    *  independently of the memory toggle / RAG / persona kind — see
@@ -163,6 +168,7 @@ export function buildSystemPrompt(opts: {
     if (trimmed.length === 0) return;
     segments.push(trimmed);
   };
+  push(opts.agentSystemPrompt);
   push(opts.userSystemPrompt);
   push(opts.identity);
   push(opts.skillsIndex);

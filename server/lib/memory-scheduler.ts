@@ -27,7 +27,7 @@
  * that conversation as the source context for the compile pass.
  */
 
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull } from "drizzle-orm";
 import { db } from "../db/index";
 import { conversations, users } from "../db/schema";
 import { compileNow } from "./memory";
@@ -156,6 +156,10 @@ async function runGlobalSlot(slotLabel: string): Promise<void> {
         inArray(conversations.userId, userIds),
         eq(conversations.memoryEnabled, true),
         eq(conversations.kind, "chat"),
+        // v2.0: a sub-conversation NEVER compiles its own memory — its
+        // content reaches the wiki only through the parent's task card
+        // summary if at all.
+        isNull(conversations.parentId),
       ),
     )
     .orderBy(conversations.userId, desc(conversations.updatedAt));

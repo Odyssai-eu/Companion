@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { runMigrations } from "./db/migrate";
 import { ensureAdminExists, seedIfEmpty } from "./db/seed";
+import { seedBuiltinAgents } from "./lib/agent-rows";
 import { startMemoryScheduler } from "./lib/memory-scheduler";
 import { requireUser, sessionLoader } from "./middleware/auth";
 import { guestSessionLoader, requireUserOrGuest } from "./middleware/guest";
@@ -222,6 +223,7 @@ async function main() {
   await runMigrations();
   await seedIfEmpty();
   await ensureAdminExists();
+  await seedBuiltinAgents();
   // Index the user-guide corpus for `/help` BM25 search. Cheap (~22 .md
   // files, ~50 KB total) — done once at boot, cached in process memory.
   loadHelpCorpus();

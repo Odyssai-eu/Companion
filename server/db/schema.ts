@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   date,
@@ -405,7 +406,21 @@ export const conversations = pgTable(
     // Persistent agent mode — when set, the composer routes every
     // message to this agent's bridge instead of the chat-completions
     // path. `/exit` (or `/<kind>_off`) clears it. Null = normal chat.
+    // ALWAYS NULL on sub-conversations (forced at spawn).
     activeAgent: text("active_agent"),
+    // v2.0 sub-conversation columns. parent_id set = this conversation is
+    // a task sub-conversation spawned by the `task` tool; it never shows
+    // in the sidebar (listings filter parent_id IS NULL) and cascades on
+    // parent delete. agent_name = the agents.name that runs it.
+    parentId: uuid("parent_id").references(
+      (): AnyPgColumn => conversations.id,
+      { onDelete: "cascade" },
+    ),
+    agentName: text("agent_name"),
+    // Agent socle snapshot — frozen ONCE at conversation creation (same
+    // rationale as memorySnapshot: byte-stable prompt prefix for the KV
+    // cache). Never re-read from the agents row afterwards.
+    agentPromptSnapshot: text("agent_prompt_snapshot"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
@@ -455,6 +470,16 @@ export const messages = pgTable(
       .notNull()
       .references(() => conversations.id, { onDelete: "cascade" }),
     role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
+    // 'chat' = normal dialogue; 'task' = persistent task card in the
+    // parent thread (v2.0). Named message_type — NOT kind — to avoid any
+    // confusion with conversations.kind. Task cards are excluded from
+    // memory compilation.
+    messageType: text("message_type", { enum: ["chat", "task"] })
+      .notNull()
+      .default("chat"),
+    /** Task card payload: {sub_conversation_id, agent, description,
+     *  status: 'running'|'done'|'error'|'truncated', result_summary}. */
+    payload: jsonb("payload").$type<Record<string, unknown>>(),
     content: text("content").notNull().default(""),
     reasoning: text("reasoning"),
     stats: jsonb("stats").$type<Record<string, unknown>>(),
@@ -1177,6 +1202,119 @@ export const agentSkills = pgTable(
 
 export type AgentSkillRow = typeof agentSkills.$inferSelect;
 export type NewAgentSkillRow = typeof agentSkills.$inferInsert;
+
+// ── v2.0 « Cowork » agent runtime ────────────────────────────────────────
+
+// Agents — configured executors (PLAN.md 2026-08-03). user_id NULL =
+// instance row (builtin or admin-defined) inherited by every user;
+// user_id set = personal agent. Same asymmetric pattern as addons:
+// NEVER query with bare eq(agents.userId, …) — go through
+// server/lib/agent-rows.ts (resolveAgentsForUser / resolveAgentByName).
+//
+// mode 'primary' = holds a conversation facing the user (nemo).
+// mode 'subagent' = only reachable via the `task` tool.
+// tools_allow = allow-list patterns (exact name or trailing-star prefix,
+// e.g. 'fs_*', 'mcp_qdrant_*') resolved to an explicit Set at spawn and
+// enforced fail-closed in executeTool.
+export const agents = pgTable(
+  "agents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
+    name: text("name").notNull(),
+    displayName: text("display_name").notNull(),
+    /** When to delegate to this agent — read by the LLM in the task
+     *  tool's live catalog. Keep it one line. */
+    description: text("description").notNull().default(""),
+    mode: text("mode", { enum: ["primary", "subagent"] })
+      .notNull()
+      .default("subagent"),
+    systemPrompt: text("system_prompt").notNull(),
+    /** NULL = inherit the effective model of the parent turn. */
+    model: text("model"),
+    toolsAllow: text("tools_allow").array().notNull().default(sql`'{}'::text[]`),
+    maxSteps: integer("max_steps").notNull().default(15),
+    source: text("source", { enum: ["builtin", "instance", "user"] })
+      .notNull()
+      .default("user"),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    userIdx: index("agents_user_id_idx").on(t.userId),
+  }),
+);
+
+export type AgentRow = typeof agents.$inferSelect;
+export type NewAgentRow = typeof agents.$inferInsert;
+
+// Run events — append-only live-UI stream per conversation (task_started,
+// tool_call, step, heartbeat, task_done, error). SSE-relayed through the
+// in-process broker keyed by ROOT conversation. Never a source of truth —
+// the thread is. 30-day retention (purge job ships in β).
+export const runEvents = pgTable(
+  "run_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    payload: jsonb("payload")
+      .notNull()
+      .default(sql`'{}'::jsonb`)
+      .$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    convCreatedIdx: index("run_events_conv_created_idx").on(
+      t.conversationId,
+      t.createdAt,
+    ),
+  }),
+);
+
+export type RunEventRow = typeof runEvents.$inferSelect;
+export type NewRunEventRow = typeof runEvents.$inferInsert;
+
+// Agent spans — post-hoc tracing (llm/tool/task). OTLP-inspired NAMING
+// only, no W3C trace-context conformance. Feeds the admin traces page (δ).
+// 30-day retention, batched purge (LIMIT N loops, never full-table).
+export const agentSpans = pgTable(
+  "agent_spans",
+  {
+    spanId: uuid("span_id").primaryKey().defaultRandom(),
+    parentSpanId: uuid("parent_span_id"),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    agent: text("agent").notNull(),
+    type: text("type", { enum: ["llm", "tool", "task"] }).notNull(),
+    tokensIn: integer("tokens_in"),
+    tokensOut: integer("tokens_out"),
+    durationMs: integer("duration_ms"),
+    status: text("status").notNull().default("ok"),
+    payload: jsonb("payload").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    convIdx: index("agent_spans_conv_idx").on(t.conversationId, t.createdAt),
+  }),
+);
+
+export type AgentSpanRow = typeof agentSpans.$inferSelect;
+export type NewAgentSpanRow = typeof agentSpans.$inferInsert;
 
 // Hermes tokens — bearer credentials used by the Hermes Agent and Cowork
 // dispatch (via the companion-mcp MCP server) to call back into Companion

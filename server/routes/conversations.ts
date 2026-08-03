@@ -1,5 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/index";
@@ -18,6 +18,7 @@ import {
 } from "../lib/global-settings";
 import { authHeaders } from "../lib/litellm";
 import { compileNow, getMemoryContext, isNemoAvailable } from "../lib/memory";
+import { resolvePrimaryAgent } from "../lib/agent-rows";
 import { buildTag } from "../lib/timetag";
 import {
   buildSystemPrompt,
@@ -112,7 +113,9 @@ conversationsRoute.get("/", async (c) => {
       lastMessage: lastMsg,
     })
     .from(conversations)
-    .where(eq(conversations.userId, userId))
+    // v2.0: sub-conversations (parent_id set) never appear in listings —
+    // they are reachable only through their task card / Trace panel.
+    .where(and(eq(conversations.userId, userId), isNull(conversations.parentId)))
     // Pinned first, then most-recently created (NOT updated — renaming
     // shouldn't shuffle a 3-day-old conversation back to the top of "Today").
     .orderBy(desc(conversations.pinned), desc(conversations.createdAt));
@@ -157,6 +160,12 @@ conversationsRoute.post(
     // to plain 'chat' — Hermes integration retired 2026-05-19.
     const kind = data.kind === "talk" ? "talk" : "chat";
     const defaultTitle = kind === "talk" ? "New talk" : "New conversation";
+    // v2.0 agent socle — snapshot the primary agent's system prompt ONCE
+    // at creation (byte-stable prefix, same rationale as memorySnapshot).
+    // Never re-read from the agents row afterwards. Null when the seed
+    // is missing (pre-migration boot): the prompt path degrades to the
+    // pre-v2 composition.
+    const primary = await resolvePrimaryAgent(userId);
     const [row] = await db
       .insert(conversations)
       .values({
@@ -171,6 +180,7 @@ conversationsRoute.post(
         agentMode: data.agentMode ?? false,
         memorySnapshot: memorySnapshot || null,
         memorySnapshotAt: memorySnapshot ? new Date() : null,
+        agentPromptSnapshot: primary?.systemPrompt ?? null,
       })
       .returning();
     return c.json({ conversation: row }, 201);
@@ -675,6 +685,7 @@ conversationsRoute.post(
     // by construction, no more "must match chat.ts" comment to enforce
     // by hand. Builder details in server/lib/prompt-builder.ts.
     const composedSystem = buildSystemPrompt({
+      agentSystemPrompt: conv.agentPromptSnapshot,
       userSystemPrompt: opts.system_prompt,
       projectMemory: memoryBlock,
       globalMemory: null,
