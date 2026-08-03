@@ -712,6 +712,16 @@ async function collectMcpTools(userId: string): Promise<unknown[]> {
  * server didn't ship a schema, fall back to a permissive "any object"
  * shape so the model can still pass arbitrary args.
  */
+/** OpenAI-strict tool-name charset. Some providers relayed by CoeOS
+ *  enforce ^[a-zA-Z0-9_-]+$ and 400 the whole request on one bad name
+ *  ("Invalid 'tools[18].name'", eval 2026-08-03). MCP tool names can
+ *  carry dots/colons/spaces — sanitize at the definition boundary and
+ *  resolve back to the original at execution (executeMcpTool matches by
+ *  sanitized form against the server's live tool list). */
+export function sanitizeToolName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+}
+
 function toOpenAiTool(serverSlug: string, t: McpToolSpec): unknown {
   // MCP inputSchema is already JSON Schema = exactly what OpenAI's
   // `parameters` wants. Pass it through verbatim.
@@ -725,7 +735,7 @@ function toOpenAiTool(serverSlug: string, t: McpToolSpec): unknown {
   return {
     type: "function" as const,
     function: {
-      name: `mcp_${serverSlug}_${t.name}`,
+      name: `mcp_${serverSlug}_${sanitizeToolName(t.name)}`,
       description: t.description ?? `${t.name} (via ${serverSlug})`,
       parameters: t.inputSchema ?? { type: "object", properties: {} },
     },
@@ -1574,7 +1584,16 @@ async function executeMcpTool(
   if (!row.enabled) {
     return { ok: false, error: `MCP server disabled: ${parsed.slug}` };
   }
-  const res = await callMcpTool(row, parsed.tool, args);
+  // Reverse the definition-side sanitization: the model calls the
+  // sanitized name; the remote server needs the original. Match against
+  // the cached tool list (same source the defs were built from).
+  let remoteTool = parsed.tool;
+  const cached = (row.toolsCache ?? []) as Array<{ name?: string }>;
+  const orig = cached.find(
+    (t) => t.name && sanitizeToolName(t.name) === parsed.tool,
+  );
+  if (orig?.name) remoteTool = orig.name;
+  const res = await callMcpTool(row, remoteTool, args);
   if (!res.ok) {
     // Persist last_error so the Settings UI surfaces the failure — but
     // only on a row of the caller's own. A failed INVOCATION is a fact
