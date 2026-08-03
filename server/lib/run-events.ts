@@ -26,7 +26,8 @@ export type RunEvent = {
     | "tool_result"
     | "heartbeat"
     | "task_done"
-    | "task_error";
+    | "task_error"
+    | "v3";
   payload: Record<string, unknown>;
 };
 
@@ -51,6 +52,31 @@ export function subscribeRunEvents(
     set!.delete(fn);
     if (set!.size === 0) listeners.delete(rootConversationId);
   };
+}
+
+/** v3 — publish a LIVE-ONLY frame to a conversation's subscribers.
+ *  Nothing is persisted: the durable record of a v3 turn is the parts
+ *  log on the message row. Used by the processor for streaming deltas
+ *  (part-delta/part/turn events) at token granularity. */
+export function emitLive(
+  conversationId: string,
+  frame: Record<string, unknown>,
+): void {
+  const set = listeners.get(conversationId);
+  if (!set) return;
+  const live = {
+    conversationId,
+    type: "v3" as RunEvent["type"],
+    payload: frame,
+    createdAt: new Date().toISOString(),
+  };
+  for (const fn of set) {
+    try {
+      fn(live as RunEvent & { createdAt: string });
+    } catch {
+      /* subscriber's problem */
+    }
+  }
 }
 
 /** Emit an event: persist (except heartbeats — pure liveness, no replay

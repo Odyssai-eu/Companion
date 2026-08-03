@@ -480,6 +480,10 @@ export const messages = pgTable(
     /** Task card payload: {sub_conversation_id, agent, description,
      *  status: 'running'|'done'|'error'|'truncated', result_summary}. */
     payload: jsonb("payload").$type<Record<string, unknown>>(),
+    /** v3 — typed parts log (text/reasoning/tool-call/tool-result/
+     *  step-start…), THE source of truth under the v3 rail. `content`
+     *  stays mirrored (concat of text parts) for downstream consumers. */
+    parts: jsonb("parts").$type<Array<Record<string, unknown>>>(),
     content: text("content").notNull().default(""),
     reasoning: text("reasoning"),
     stats: jsonb("stats").$type<Record<string, unknown>>(),
@@ -1254,6 +1258,38 @@ export const agentSpans = pgTable(
 
 export type AgentSpanRow = typeof agentSpans.$inferSelect;
 export type NewAgentSpanRow = typeof agentSpans.$inferInsert;
+
+// Turn states — durable per-conversation turn record (v3). Owned by the
+// processor: single-flight, sidebar badge, MCP status, cross-tab
+// placeholder, prewarm in-flight guard, STOP (cancel_requested checked
+// between parts; partial parts stay persisted, turn marked 'stopped').
+// NEVER in-memory — restart amnesia is a documented bug class.
+export const turnStates = pgTable(
+  "turn_states",
+  {
+    conversationId: uuid("conversation_id")
+      .primaryKey()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    status: text("status", {
+      enum: ["active", "done", "error", "stopped"],
+    })
+      .notNull()
+      .default("active"),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => ({
+    statusIdx: index("turn_states_status_idx").on(t.status),
+  }),
+);
+
+export type TurnStateRow = typeof turnStates.$inferSelect;
 
 // Hermes tokens — bearer credentials used by the Hermes Agent and Cowork
 // dispatch (via the companion-mcp MCP server) to call back into Companion

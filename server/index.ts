@@ -42,6 +42,7 @@ import { localAgentRoute } from "./routes/local-agent";
 import { teamsRoute } from "./routes/teams";
 import authRoute from "./routes/auth";
 import chatRoute from "./routes/chat";
+import chatV3Route from "./routes/chat-v3";
 import conversationsRoute from "./routes/conversations";
 import filesRoute from "./routes/files";
 import guestRoute from "./routes/guest";
@@ -101,6 +102,12 @@ app.use(
   guestSessionLoader,
   requireUserOrGuest,
 );
+app.use(
+  "/api/v3/*",
+  hermesBearerLoader,
+  guestSessionLoader,
+  requireUserOrGuest,
+);
 app.use("/api/projects/*", hermesBearerLoader, requireUser);
 app.use("/api/profile/*", requireUser);
 app.use("/api/profile", requireUser);
@@ -154,6 +161,7 @@ app.use("/api/agent-tokens/*", requireUser);
 
 app.route("/api/conversations", conversationsRoute);
 app.route("/api/chat", chatRoute);
+app.route("/api/v3", chatV3Route);
 app.route("/api/projects", projectsRoute);
 // Project memory + decisions routes share the /api/projects/:id prefix.
 app.route("/api/projects", projectMemoryRoute);
