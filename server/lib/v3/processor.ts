@@ -374,21 +374,23 @@ export async function runTurnV3(req: TurnRequest): Promise<TurnOutcome> {
             description: fn.description ?? "",
             inputSchema: jsonSchema<Record<string, unknown>>(fn.parameters as never),
             execute: async (args: Record<string, unknown>) =>
-              runTaskV3({
-                userId,
-                parentConversationId: conversationId,
-                args: args as { subagent?: string; prompt?: string; description?: string },
-                target,
-                conn,
-                budget,
-              }),
+              jsonSafe(
+                await runTaskV3({
+                  userId,
+                  parentConversationId: conversationId,
+                  args: args as { subagent?: string; prompt?: string; description?: string },
+                  target,
+                  conn,
+                  budget,
+                }),
+              ),
           });
         } else {
           aiTools[fn.name] = aiTool({
             description: fn.description ?? "",
             inputSchema: jsonSchema<Record<string, unknown>>((fn.parameters ?? { type: "object", properties: {} }) as never),
             execute: async (args: Record<string, unknown>) =>
-              executeTool(fn.name, args as never, userId, ctx.projectCwd),
+              jsonSafe(await executeTool(fn.name, args as never, userId, ctx.projectCwd)),
           });
         }
       }
@@ -592,6 +594,20 @@ export async function runTurnV3(req: TurnRequest): Promise<TurnOutcome> {
   }
 }
 
+/** The AI SDK feeds a tool's execute() return value back to the model as
+ *  the tool result on the next step, and validates it — Date instances
+ *  (fs_* mtimes, row timestamps) blow up its Zod content schema
+ *  ("expected string, received Date"). Round-trip through JSON so Dates
+ *  become ISO strings and the value is guaranteed serialisable. */
+function jsonSafe(v: unknown): unknown {
+  if (v === undefined) return null;
+  try {
+    return JSON.parse(JSON.stringify(v));
+  } catch {
+    return { ok: false, error: "unserializable tool output" };
+  }
+}
+
 function summarizeOutput(output: unknown): unknown {
   const s = JSON.stringify(output);
   if (s && s.length > 2000) return { truncated: s.slice(0, 2000) };
@@ -790,7 +806,7 @@ async function runSubTurn(opts: {
           type: "tool_result",
           payload: { sub_conversation_id: conversationId, name: fn.name, ok: r.ok },
         });
-        return r;
+        return jsonSafe(r);
       },
     });
   }
