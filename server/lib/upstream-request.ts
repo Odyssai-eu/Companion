@@ -31,7 +31,15 @@ export function buildUpstreamBody(body: ChatBody): Record<string, unknown> {
     const v = body[k];
     if (v !== undefined) baseBody[k] = v;
   }
-  baseBody.enable_thinking = body.thinking === true;
+  // v2.1: CoeOS turns THINK by default — the models it routes to are
+  // thinking-natives (kimi-k3, glm, ring…) and the visible reasoning
+  // stream IS the CodeOS experience ("aucune progression de la réflexion"
+  // report, 2026-08-03). The per-conv thinking toggle can't express
+  // "unset" (the client always sends false), so CoeOS ignores it rather
+  // than letting a stale default mute every auto turn. Expert-mode
+  // pinned models keep the explicit toggle semantics.
+  baseBody.enable_thinking =
+    model.toLowerCase() === "coeos" ? true : body.thinking === true;
   // reasoning_effort is independent of the thinking toggle — forward whenever
   // the client sent a concrete level ("none"/empty → engine default decides).
   if (body.reasoning_effort && body.reasoning_effort !== "none") {
