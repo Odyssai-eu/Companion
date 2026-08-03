@@ -9,13 +9,14 @@
 // a project, memory is governed by the project settings and this toggle is
 // ignored (see useChat.ts createConversation / toggleMemoryEnabled).
 //
-// Default = false (memory off by default for new chats).
+// Default = TRUE (memory ON by default for new chats — CodeOS parity,
+// 2026-08-03). Only an explicit OFF in Settings → Profile disables it.
 
 const KEY = "companion:memoryDefaultNewConv";
 
 export function getMemoryDefaultNewConv(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.localStorage.getItem(KEY) === "true";
+  if (typeof window === "undefined") return true;
+  return window.localStorage.getItem(KEY) !== "false";
 }
 
 export function setMemoryDefaultNewConv(enabled: boolean): void {

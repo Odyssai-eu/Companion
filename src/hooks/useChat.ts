@@ -1099,10 +1099,10 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
                 ? {}
                 : { memoryEnabled: getMemoryDefaultNewConv() }),
             // #28 — same for the agent-mode (tools) toggle flipped on the
-            // blank chat before the first message.
-            ...(pendingAgentMode !== null
-              ? { agentMode: pendingAgentMode }
-              : {}),
+            // blank chat before the first message. Default ON (CodeOS
+            // parity, 2026-08-03): a fresh chat starts with tools unless
+            // the user explicitly turned them off before sending.
+            agentMode: pendingAgentMode ?? true,
           });
           convId = created.conversation.id;
           setConversation(created.conversation);
@@ -1436,10 +1436,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       pendingMemoryEnabled ??
       (project ? false : getMemoryDefaultNewConv()),
     /** Effective agent-mode (tools) toggle: persisted conv value when the
-     *  conv exists, else the pre-conversation pending override, else false.
+     *  conv exists, else the pre-conversation pending override, else TRUE
+     *  (default ON — CodeOS parity, 2026-08-03).
      *  Lets the TopBar tools button reflect a pre-first-message flip. (#28) */
     agentMode:
-      conversation?.agentMode ?? pendingAgentMode ?? false,
+      conversation?.agentMode ?? pendingAgentMode ?? true,
     /** ComfyUI Imager enriched-prompt modal trigger. When this is set, the
      *  chat composer opens a modal with the form. Generation lands back in
      *  `messages` via `pushComfyuiResult`. */
