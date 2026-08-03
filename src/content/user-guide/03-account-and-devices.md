@@ -84,4 +84,4 @@ If you just want to clear conversations without deleting the account, use the bu
 
 - *Engine pairing* (16) — pairing your engine after sign-in
 - *Privacy & data* (18) — what travels with the account
-- *Agents tokens* (13) — minting `hms_…` for IDE agents (distinct from guest tokens)
+- *API access* (13) — minting `hms_…` for IDE agents (distinct from guest tokens)

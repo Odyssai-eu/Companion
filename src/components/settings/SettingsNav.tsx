@@ -8,7 +8,7 @@ type NavSection = { title: string; items: NavItem[] };
 //   - dropped: Security / Devices & sync / Learning Center
 //   - renamed: Inference → "Inference & gateway" (Provider section becomes
 //              "OdyssAI-X Gateway", LiteLLM moves out to Add-ons)
-//   - renamed: External agents → "Agents tokens"
+//   - renamed: External agents → "API access"
 //   - kept:    MCP servers (the hub for Notion/Obsidian/Tavily/…)
 // Guest tokens (previously surfaced under Devices) stay accessible via
 // the Admin link (admin role only).
@@ -37,9 +37,10 @@ const baseSections: NavSection[] = [
     title: "Extensions",
     items: [
       { to: "/settings/add-ons", label: "Add-ons" },
+      { to: "/settings/agents", label: "Agents" },
       { to: "/settings/mcp-servers", label: "MCP servers" },
       { to: "/settings/skills", label: "Skills" },
-      { to: "/settings/external-agents", label: "Agents tokens" },
+      { to: "/settings/api-access", label: "API access" },
     ],
   },
 ];

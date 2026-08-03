@@ -69,7 +69,7 @@ Mode is **persistent**: every message you send routes to Hermes until you type `
 The transcript is persisted. Reload the page, switch conversations and come back — the panel reappears with full history.
 
 **Requires** *Settings → Add-ons → Hermes Agent* → bridge URL (+ optional token).  
-**For Hermes → Companion memory**: mint an `hms_…` token in *Settings → Extensions → Agents tokens* and wire it to the bridge. See *Agents tokens* (13).
+**For Hermes → Companion memory**: mint an `hms_…` token in *Settings → Extensions → API access* and wire it to the bridge. See *API access* (13).
 
 ---
 
@@ -111,5 +111,5 @@ Universal. Works for any active agent mode. The agent transcript stays visible �
 ## Related
 
 - *Add-ons* (13b) — configure Hermes, Pi, and ComfyUI bridges
-- *Agents tokens* (13) — wire Hermes back to Companion's memory via MCP
+- *API access* (13) — wire Hermes back to Companion's memory via MCP
 - *Chat basics* (05) — normal LLM chat, no slash

@@ -54,6 +54,7 @@ import mcpServersRoute, { handleOauthCallback } from "./routes/mcp-servers";
 import modelsRoute from "./routes/models";
 import profileRoute from "./routes/profile";
 import skillsRoute from "./routes/skills";
+import agentsRoute from "./routes/agents";
 import projectMemoryRoute from "./routes/project-memory";
 import projectsRoute from "./routes/projects";
 import { decisionsRoute } from "./routes/decisions";
@@ -120,6 +121,8 @@ app.use("/api/mcp-servers/*", requireUser);
 app.use("/api/mcp-servers", requireUser);
 app.use("/api/skills/*", requireUser);
 app.use("/api/skills", requireUser);
+app.use("/api/agents/*", requireUser);
+app.use("/api/agents", requireUser);
 app.use("/api/saved-prompts/*", requireUser);
 app.use("/api/saved-prompts", requireUser);
 app.use("/api/agents/*", requireUser);
@@ -191,6 +194,7 @@ app.route("/api/saved-prompts", savedPromptsRoute);
 app.route("/api/providers", providersRoute);
 app.route("/api/mcp-servers", mcpServersRoute);
 app.route("/api/skills", skillsRoute);
+app.route("/api/agents", agentsRoute);
 // Public OAuth callback — gated only by `state` (PKCE + 10-min TTL).
 // Notion's redirect lands here as a cross-origin top-level navigation
 // without our session cookie, so it can't sit under /api/mcp-servers/*.

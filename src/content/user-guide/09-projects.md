@@ -86,7 +86,7 @@ Conversations within a project show up:
 
 - In the project page's conversation list.
 - In the sidebar with a project badge.
-- In *Settings → Extensions → Agents tokens* MCP catalogue (filterable by project).
+- In *Settings → Extensions → API access* MCP catalogue (filterable by project).
 
 Moving a conversation out of a project (drop the tag): hover in sidebar → menu → Move to project → **(none)**.
 

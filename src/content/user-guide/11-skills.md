@@ -113,7 +113,7 @@ External coding agents (Claude Desktop, Cline, Continue.dev, Cowork) hitting Com
 - `companion_delete_skill`
 - `companion_import_skill_md`
 
-See *Agents tokens* (13).
+See *API access* (13).
 
 ## When to use a skill vs other prompt mechanisms
 
@@ -159,6 +159,6 @@ Rule of thumb: if the model should always see it → wiki. If the model should s
 
 ## Related
 
-- *Agents tokens* (13) — how Cline / Continue.dev / Claude Desktop see your skill library
+- *API access* (13) — how Cline / Continue.dev / Claude Desktop see your skill library
 - *Presets vs skills vs prompts* (15) — the canonical decision tree
 - *Memory* (10) — the wiki (always-injected) counterpart

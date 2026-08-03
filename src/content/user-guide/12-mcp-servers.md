@@ -129,6 +129,6 @@ Click **Reconnect** to re-run the OAuth dance.
 
 ## Related
 
-- *Agents tokens* (13) — the flip side: Companion exposing itself as an MCP server
+- *API access* (13) — the flip side: Companion exposing itself as an MCP server
 - *Inference settings* (14) — agent mode lives in the cogwheel + chat header
 - *Privacy & data* (18) — how MCP tokens are stored

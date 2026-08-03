@@ -13,7 +13,13 @@
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { db } from "../db/index";
 import { agents, type AgentRow } from "../db/schema";
-import { NARRATION_CONTRACT, NEMO_SOCLE, EXPLORE_PROMPT } from "./agent-prompts";
+import {
+  NARRATION_CONTRACT,
+  NEMO_SOCLE,
+  EXPLORE_PROMPT,
+  WRITER_PROMPT,
+  OPS_PROMPT,
+} from "./agent-prompts";
 
 // ── Builtin seeds ──────────────────────────────────────────────────────
 // Idempotent: insert-if-missing by (instance namespace, name). We never
@@ -63,6 +69,28 @@ const BUILTIN_AGENTS: SeedAgent[] = [
       "skill_*",
       "mcp_*",
     ],
+    maxSteps: 15,
+  },
+  {
+    name: "writer",
+    displayName: "Writer",
+    description:
+      "Produces complete long-form documents (reports, articles, syntheses) in the workspace. Delegate when the deliverable is a written file, not a chat answer.",
+    mode: "subagent",
+    systemPrompt: WRITER_PROMPT,
+    model: null, // quality of prose → inherit the parent's model
+    toolsAllow: ["fs_*", "rag_search", "skill_*"],
+    maxSteps: 15,
+  },
+  {
+    name: "ops",
+    displayName: "Ops",
+    description:
+      "Executes well-scoped actions on the user's connected sources (Notion, Linear, infra MCP…). Delegate explicit, bounded operations — never open-ended exploration.",
+    mode: "subagent",
+    systemPrompt: OPS_PROMPT,
+    model: "tele-fast",
+    toolsAllow: ["mcp_*", "skill_*"],
     maxSteps: 15,
   },
 ];

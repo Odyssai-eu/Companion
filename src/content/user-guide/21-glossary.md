@@ -6,7 +6,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Agent mode** — Per-conversation toggle (chat header) that injects the full agentic toolset into the model's context. Default off. See *Inference settings* (14).
 
-**Agents tokens** — `hms_…` bearer tokens that external coding agents (Cline, Continue.dev, Claude Desktop, Cowork) use to call Companion's MCP brain endpoint. See *Agents tokens* (13).
+**API access** — `hms_…` bearer tokens that external coding agents (Cline, Continue.dev, Claude Desktop, Cowork) use to call Companion's MCP brain endpoint. See *API access* (13).
 
 **Auto mode** — Inference mode where the chat shows no model selector and the Auto Router picks a model per message. Replaced the retired *Easy* and *Advanced* modes in migration `0058`. See *Model picker* (06).
 
@@ -78,7 +78,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **Hybrid mode** — Engine mode where caps come from the engine, inference goes through LiteLLM. Transitional. See *Engine pairing* (16).
 
-**hms_** — Prefix for agents tokens. Historical (Hermes naming). Kept for stable internal API. See *Agents tokens* (13).
+**hms_** — Prefix for agents tokens. Historical (Hermes naming). Kept for stable internal API. See *API access* (13).
 
 ## I
 
@@ -112,7 +112,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **MCP server** — A remote MCP endpoint Companion connects to as a client. See *MCP servers* (12).
 
-**MCP brain** — The flip side: Companion as a server, external agents as clients. See *Agents tokens* (13).
+**MCP brain** — The flip side: Companion as a server, external agents as clients. See *API access* (13).
 
 **Memory snapshot** — Frozen wiki state per conversation. Refreshable via "Remember now". See *Memory* (10).
 

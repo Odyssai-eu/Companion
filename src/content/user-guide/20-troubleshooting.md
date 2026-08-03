@@ -110,10 +110,10 @@ Likely the wiki has too few constraints. Fill in `profile/preferences.md` + `pro
 **A conversation polluted the wiki**
 Set `memoryEnabled = false` on conversations that shouldn't compile. Already-compiled diffs are harder to undo — fix the affected articles manually and lock with `edited_by_user=true`.
 
-## MCP / Agents tokens
+## MCP / API access
 
 **`hms_…` token shows "401" from my IDE agent**
-Token revoked / expired, or wrong URL. Verify the token is in the active list at *Settings → Extensions → Agents tokens*. Verify the URL is exactly `<your-companion>/api/mcp` with no trailing slash or path.
+Token revoked / expired, or wrong URL. Verify the token is in the active list at *Settings → Extensions → API access*. Verify the URL is exactly `<your-companion>/api/mcp` with no trailing slash or path.
 
 **MCP request times out at 45s**
 Long reasoner runs need the non-blocking pattern. Use `companion_send_message` (returns immediately) + `companion_get_inference_status` polling instead of expecting the message tool to block.

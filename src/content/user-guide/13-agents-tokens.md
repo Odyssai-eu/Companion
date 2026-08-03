@@ -1,9 +1,9 @@
-# Agents tokens (Companion as MCP brain)
+# API access (Companion as MCP brain)
 
 Same MCP protocol, flipped direction.
 
 - *Settings → Extensions → MCP servers* makes Companion a **client** of remote servers (Notion, Linear, …).
-- *Settings → Extensions → Agents tokens* makes Companion **an MCP server** that external agents (Claude Desktop, Cline, Continue.dev, Cowork) call **back into** for memory + skills + conversations.
+- *Settings → Extensions → API access* makes Companion **an MCP server** that external agents (Claude Desktop, Cline, Continue.dev, Cowork) call **back into** for memory + skills + conversations.
 
 **The pitch**: the IDE stays the IDE (file edits, shell, terminal). Companion stays the brain (memory, skills, cross-session continuation, multi-model orchestration). Different layers, MCP between them.
 
@@ -48,7 +48,7 @@ The Settings page is the source of truth for the live catalogue (versions evolve
 
 ## Minting a token
 
-1. *Settings → Extensions → Agents tokens → New token*.
+1. *Settings → Extensions → API access → New token*.
 2. **Label** (free text — "Cline on MacBook", "Continue.dev on workstation", …).
 3. **TTL** — 24h / 30d / 90d / no-expiry. Tip: short-TTL per-machine is safer than one long-TTL master token.
 4. **Source** — `cowork` (default) or `hermes` (legacy alias, same behaviour).
@@ -113,7 +113,7 @@ claude mcp add companion https://<your-companion-host>/api/mcp \
 
 Hermes is interesting because Companion already drives Hermes via the `/hermes` slash command (Companion → Hermes, see [Slash commands & agents](slash-commands)). Wiring Companion's MCP into Hermes closes the loop the other way (Hermes → Companion). Now Hermes can recall your Companion memory, read past conversations, list saved skills, and send messages back into Companion from inside an agent turn.
 
-Mint a token in **Settings → Agents tokens** (see [Minting a token](#minting-a-token)) — note the `hms_…` string, it's only shown once.
+Mint a token in **Settings → API access** (see [Minting a token](#minting-a-token)) — note the `hms_…` string, it's only shown once.
 
 Then on the machine where Hermes runs (today: your workstation):
 

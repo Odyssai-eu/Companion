@@ -16,6 +16,7 @@ import AppearancePage from "./pages/settings/AppearancePage";
 // ComingSoonPage no longer routed for Security — section retired
 // 2026-05-19 per a UX refactor.
 import ExternalAgentsPage from "./pages/settings/ExternalAgentsPage";
+import AgentsPage from "./pages/settings/AgentsPage";
 import InferencePage from "./pages/settings/InferencePage";
 import McpServersPage from "./pages/settings/McpServersPage";
 import SkillsPage from "./pages/settings/SkillsPage";
@@ -102,7 +103,9 @@ export default function App() {
         <Route path="accessibility" element={<AccessibilityPage />} />
         <Route path="shortcuts" element={<ShortcutsPage />} />
         <Route path="add-ons" element={<AddonsPage />} />
-        <Route path="external-agents" element={<ExternalAgentsPage />} />
+        <Route path="api-access" element={<ExternalAgentsPage />} />
+        <Route path="external-agents" element={<Navigate to="/settings/api-access" replace />} />
+        <Route path="agents" element={<AgentsPage />} />
         <Route path="mcp-servers" element={<McpServersPage />} />
         <Route path="skills" element={<SkillsPage />} />
         <Route path="admin" element={<AdminPage />} />

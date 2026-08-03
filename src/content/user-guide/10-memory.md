@@ -206,6 +206,6 @@ A: Create a team in *Settings → Admin → Teams*, assign a project to that tea
 ## Related
 
 - *Projects* (09) — project-scoped memory toggles
-- *Agents tokens* (13) — how external agents query / write memory via MCP
+- *API access* (13) — how external agents query / write memory via MCP
 - *Privacy & data* (18) — what's compiled, what stays raw
 - *Glossary* (21) — terms used (Karpathy, RAG, snapshot, …)

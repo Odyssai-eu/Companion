@@ -330,6 +330,36 @@ export type ApiSkill = {
   updatedAt: string;
 };
 
+export type ApiAgent = {
+  id: string;
+  userId: string | null;
+  name: string;
+  displayName: string;
+  description: string;
+  mode: "primary" | "subagent";
+  systemPrompt: string;
+  model: string | null;
+  toolsAllow: string[];
+  maxSteps: number;
+  source: "builtin" | "instance" | "user";
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ApiAgentInput = {
+  name: string;
+  displayName: string;
+  description?: string;
+  mode?: "primary" | "subagent";
+  systemPrompt: string;
+  model?: string | null;
+  toolsAllow?: string[];
+  maxSteps?: number;
+  enabled?: boolean;
+  instance?: boolean;
+};
+
 export type ApiSkillSummary = {
   id: string;
   name: string;
@@ -814,6 +844,27 @@ export const api = {
     return (await res.json()) as { skill: ApiSkill };
   },
   exportSkillUrl: (id: string) => `/api/skills/${id}/export`,
+
+  // v2.0 agents registry — Settings → Agents.
+  listAgents: () => request<{ agents: ApiAgent[] }>("/api/agents"),
+  createAgent: (body: ApiAgentInput) =>
+    request<{ agent: ApiAgent }>("/api/agents", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateAgent: (id: string, body: Partial<ApiAgentInput>) =>
+    request<{ agent: ApiAgent }>(`/api/agents/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteAgent: (id: string) =>
+    request<void>(`/api/agents/${id}`, { method: "DELETE" }),
+  importAgentMd: (content: string) =>
+    request<{ agent: ApiAgent }>("/api/agents/import/md", {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    }),
+  exportAgentUrl: (id: string) => `/api/agents/${id}/export.md`,
 
   // MCP servers — Companion as a client of remote MCP endpoints
   listMcpServers: () =>

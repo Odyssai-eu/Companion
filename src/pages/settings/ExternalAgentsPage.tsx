@@ -111,7 +111,7 @@ export default function ExternalAgentsPage() {
     <div className="flex flex-col gap-8 p-8">
       <header className="flex flex-col gap-2">
         <h1 className="font-display text-[28px] font-light text-navy">
-          Agents tokens
+          API access
         </h1>
         <p className="max-w-[640px] text-[13px] leading-relaxed text-gray-600">
           Generate a token to let an external MCP client — Claude Cowork

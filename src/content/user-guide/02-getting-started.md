@@ -66,13 +66,13 @@ Once chat works, the rest is opt-in:
 - **Settings → Extensions → Add-ons** — LiteLLM (legacy inference rail), Auto Router, Obsidian vault sync, Web Search (Tavily), Voice Live, **Hermes Agent** (`/hermes`), **Pi** (`/pi`), **ComfyUI Imager** (`/comfyui`). See *Add-ons* (13b) for the full guide.
 - **Settings → Extensions → MCP servers** — Notion, GitHub, Tavily, Linear, Obsidian, Filesystem presets. Or roll your own URL.
 - **Settings → Extensions → Skills** — agentskills.io packages the model can load on demand.
-- **Settings → Extensions → Agents tokens** — `hms_…` tokens for external IDE agents to call back into Companion's memory + skills + conversations.
+- **Settings → Extensions → API access** — `hms_…` tokens for external IDE agents to call back into Companion's memory + skills + conversations.
 
 You don't need any of these to chat — they're the layers that turn the client into a brain.
 
 ## 6. Optional: hook your IDE into Companion's brain
 
-If you code, the *Agents tokens* topic (13) walks through making Cline / Continue.dev / Claude Desktop call Companion as an MCP server for memory + skills + cross-session continuation. The IDE stays the IDE; Companion stays the brain.
+If you code, the *API access* topic (13) walks through making Cline / Continue.dev / Claude Desktop call Companion as an MCP server for memory + skills + cross-session continuation. The IDE stays the IDE; Companion stays the brain.
 
 ## What's persisted, what's local
 

@@ -117,16 +117,16 @@ Type `/help <question>` in any chat. Returns a synthesised answer with source ch
 
 ## MCP / agents tokens
 
-**What's the difference between MCP servers and Agents tokens?**
+**What's the difference between MCP servers and API access?**
 Opposite directions:
 - **MCP servers** = Companion is a client of remote MCP servers (Notion, Linear, GitHub, …). The agent in Companion gets their tools.
-- **Agents tokens** = External agents (Cline, Continue.dev, Claude Desktop, Cowork) are clients of Companion's MCP brain endpoint. They use your conversations + memory + skills.
+- **API access** = External agents (Cline, Continue.dev, Claude Desktop, Cowork) are clients of Companion's MCP brain endpoint. They use your conversations + memory + skills.
 
 **Can I revoke an agent token?**
-Yes. Per-row revoke in *Settings → Extensions → Agents tokens*. Instant.
+Yes. Per-row revoke in *Settings → Extensions → API access*. Instant.
 
 **Why does my IDE agent get a 45s timeout?**
-Long reasoner runs. Use the non-blocking `companion_send_message` + `companion_get_inference_status` pattern instead of expecting the message tool to block. See *Agents tokens* (13).
+Long reasoner runs. Use the non-blocking `companion_send_message` + `companion_get_inference_status` pattern instead of expecting the message tool to block. See *API access* (13).
 
 ## Skills
 

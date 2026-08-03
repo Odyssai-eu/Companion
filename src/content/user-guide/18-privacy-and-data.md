@@ -19,7 +19,7 @@ What stays local, what travels, what's encrypted, what's deleted on delete.
 | Project memory | Postgres (`project_memory_files`) | At rest | Per-project scoped |
 | Skills | Postgres (`agent_skills`) | At rest | Per-user, includes body + files |
 | MCP server bearer tokens | Postgres, encrypted col | AES-256 at column level | Decrypted server-side at request time |
-| Agents tokens (`hms_…`) | Postgres, **bcrypt-hashed** | Hashed (one-way) | Can't be retrieved; mint a new one if lost |
+| API access (`hms_…`) | Postgres, **bcrypt-hashed** | Hashed (one-way) | Can't be retrieved; mint a new one if lost |
 | Engine bearer token | Postgres, encrypted col | AES-256 at column level | |
 | LiteLLM API key | Postgres, encrypted col | AES-256 at column level | |
 | Inference presets | Postgres | At rest | Per-user |
@@ -89,7 +89,7 @@ When you wire an MCP server (Notion, Linear, …):
 
 If you ask the agent "summarise my Notion page X", the request to Notion is `mcp_notion_fetch(id="X")` — the prompt context is internal to Companion.
 
-## What external agents (via your Agents tokens) see
+## What external agents (via your API access) see
 
 Agents with `hms_…` tokens can read everything in your account that the token's user has access to. Specifically via the MCP brain endpoint:
 
@@ -156,6 +156,6 @@ If you want to know what's stored: this page lists it all. The DB schema is in `
 ## Related
 
 - *Account & devices* (03) — sign in / sessions / cookies
-- *Agents tokens* (13) — token security model
+- *API access* (13) — token security model
 - *Memory* (10) — compile gating
 - *Voice & talk* (08) — local vs cloud audio

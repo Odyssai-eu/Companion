@@ -85,5 +85,5 @@ Not battle-tested for archival use — for that, export the `.md`.
 ## Related
 
 - *Chat basics* (05) — per-message Save action
-- *Agents tokens* (13) — MCP export
+- *API access* (13) — MCP export
 - *Privacy & data* (18) — what's in an export
