@@ -36,6 +36,7 @@ import adminMemoryHealthRoute from "./routes/admin-memory-health";
 import adminSettingsRoute from "./routes/admin-settings";
 import adminUsersRoute from "./routes/admin-users";
 import auditRoute from "./routes/admin-audit";
+import adminAgentTracesRoute from "./routes/admin-agent-traces";
 import nemoSyncRoute from "./routes/nemo-sync";
 import { localAgentRoute } from "./routes/local-agent";
 import { teamsRoute } from "./routes/teams";
@@ -192,6 +193,7 @@ app.get("/api/mcp-oauth/callback", handleOauthCallback);
 app.route("/api/admin/users", adminUsersRoute);
 app.route("/api/admin/guest-tokens", adminGuestTokensRoute);
 app.route("/api/admin/audit", auditRoute);
+app.route("/api/admin/agent-traces", adminAgentTracesRoute);
 app.route("/api/admin/settings", adminSettingsRoute);
 app.route("/api/admin/instance-settings", adminInstanceSettingsRoute);
 // 0060 — the shared add-ons and MCP servers every account inherits. One

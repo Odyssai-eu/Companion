@@ -17,6 +17,7 @@ import AppearancePage from "./pages/settings/AppearancePage";
 // 2026-05-19 per a UX refactor.
 import ExternalAgentsPage from "./pages/settings/ExternalAgentsPage";
 import AgentsPage from "./pages/settings/AgentsPage";
+import TracesPage from "./pages/settings/TracesPage";
 import InferencePage from "./pages/settings/InferencePage";
 import McpServersPage from "./pages/settings/McpServersPage";
 import SkillsPage from "./pages/settings/SkillsPage";
@@ -106,6 +107,7 @@ export default function App() {
         <Route path="api-access" element={<ExternalAgentsPage />} />
         <Route path="external-agents" element={<Navigate to="/settings/api-access" replace />} />
         <Route path="agents" element={<AgentsPage />} />
+        <Route path="traces" element={<TracesPage />} />
         <Route path="mcp-servers" element={<McpServersPage />} />
         <Route path="skills" element={<SkillsPage />} />
         <Route path="admin" element={<AdminPage />} />

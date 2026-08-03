@@ -54,7 +54,11 @@ export default function SettingsNav() {
         s.title === "Preferences"
           ? {
               ...s,
-              items: [...s.items, { to: "/settings/admin", label: "Admin" }],
+              items: [
+                ...s.items,
+                { to: "/settings/admin", label: "Admin" },
+                { to: "/settings/traces", label: "Traces" },
+              ],
             }
           : s,
       )
