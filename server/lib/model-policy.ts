@@ -69,5 +69,11 @@ export function maxTokensCap(model: string): number | null {
   const m = model.toLowerCase();
   if (m.startsWith("anthropic/") || m.includes("claude")) return 64_000;
   if (m.startsWith("openai/") || m.startsWith("gpt-")) return 16_384;
+  // CoeOS relays to hosted providers whose context tops out around 262k
+  // TOTAL (input+output). A conv carrying a huge max_tokens (observed:
+  // 264768) 400s the whole turn ("maximum context length is 262144").
+  // 60k output is safely under every provider CoeOS routes to while
+  // leaving room for large inputs.
+  if (m === "coeos") return 60_000;
   return null;
 }
