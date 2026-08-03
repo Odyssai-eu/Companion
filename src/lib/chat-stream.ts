@@ -176,7 +176,13 @@ export async function streamChat(
           level?: string;
           message?: string;
           choices?: {
-            delta?: { content?: string | null; reasoning_content?: string | null };
+            delta?: {
+              content?: string | null;
+              /** mlx-lm / OdyssAI-X + DeepSeek style. */
+              reasoning_content?: string | null;
+              /** OpenRouter / CoeOS-relayed provider style. */
+              reasoning?: string | null;
+            };
           }[];
           usage?: {
             prompt_tokens?: number;
@@ -271,8 +277,12 @@ export async function streamChat(
         const delta = chunk.choices?.[0]?.delta;
         if (!delta) continue;
 
-        if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
-          const text = unescapeUpstreamLiterals(delta.reasoning_content);
+        const reasoningPiece =
+          (typeof delta.reasoning_content === "string" && delta.reasoning_content) ||
+          (typeof delta.reasoning === "string" && delta.reasoning) ||
+          "";
+        if (reasoningPiece) {
+          const text = unescapeUpstreamLiterals(reasoningPiece);
           tokenCount += estimateTokens(text);
           chunkCount++;
           opts.onDelta({ type: "reasoning", text });
