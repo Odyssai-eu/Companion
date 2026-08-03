@@ -286,6 +286,13 @@ export async function runChatStream(ctx: ChatStreamCtx): Promise<void> {
       // workaround. Skill tools alone stream fine — they're meta-curation,
       // the model doesn't emit them mid-response.
       if (!agentToolsEnabled) return false;
+      // CoeOS (v2.1): relays to hosted providers with native streaming
+      // tool_calls — 18 eval runs, zero leak (docs/v2/EVAL-P0.md).
+      // Without this carve-out, "CoeOS" has no caps and fell into the
+      // conservative default below → EVERY auto turn with tools was
+      // delivered non-stream as one silent block (no text, no reasoning,
+      // then everything at once — reported 2026-08-03).
+      if (modelLower === "coeos") return false;
       if (modelCaps) {
         const backend = modelCaps.backend;
         const pool = modelCaps.pool;
