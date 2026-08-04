@@ -450,7 +450,32 @@ function useV3Runtime(
     await fire(conversationId, history);
   }, [conversationId, messages, fire]);
 
-  return { messages, sending, error, sendMessage, cancel, regenerate, resendOnLocalModel, chatV3: true as const };
+  // Edit a prior USER message: truncate the thread at it, then re-fire the
+  // (edited) history on the v3 rail.
+  const editAndResend = useCallback(
+    async (messageId: string, newText: string) => {
+      if (!conversationId) return;
+      const idx = messages.findIndex((m) => m.id === messageId);
+      if (idx < 0 || messages[idx].role !== "user") return;
+      if (!messages[idx].id.startsWith("local-")) {
+        await api.truncateConversationFrom(conversationId, messageId).catch(() => {});
+      }
+      const priorHistory = messages
+        .slice(0, idx)
+        .filter((m) => m.role !== "system" && m.messageType !== "task")
+        .map((m) => ({ role: m.role, content: m.content }));
+      const edited = { role: "user" as const, content: newText.trim() };
+      setMessages((prev) => [
+        ...prev.slice(0, idx),
+        { ...prev[idx], content: newText.trim() },
+      ]);
+      await api.appendMessage(conversationId, { role: "user", content: newText.trim() });
+      await fire(conversationId, [...priorHistory, edited]);
+    },
+    [conversationId, messages, fire],
+  );
+
+  return { messages, sending, error, sendMessage, cancel, regenerate, editAndResend, resendOnLocalModel, chatV3: true as const };
 }
 
 export function useChatV3(opts: UseChatOptions = {}) {
@@ -467,6 +492,7 @@ export function useChatV3(opts: UseChatOptions = {}) {
     sendMessage: v3.sendMessage,
     cancel: v3.cancel,
     regenerate: v3.regenerate,
+    editAndResend: v3.editAndResend,
     resendOnLocalModel: v3.resendOnLocalModel,
     chatV3: true,
   };

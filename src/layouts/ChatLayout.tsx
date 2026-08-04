@@ -13,7 +13,6 @@ import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
 import { STYLE_PRESETS } from "~/hooks/useChat";
 import { useChatV3 } from "~/hooks/useChatV3";
 import type { ApiGlobalModel, ApiInferenceMode } from "~/lib/api";
-import { StreamManager } from "~/lib/stream-manager";
 import { estimateMessageListTokens } from "~/lib/tokens";
 
 /**
@@ -54,15 +53,10 @@ export default function ChatLayout() {
   const voiceMode = useVoiceMode();
   const isMobile = useIsMobile();
 
-  // Union of client-side StreamManager active ids + server-side
-  // `/conversations/active` poll. Drives the per-row pulsing dot in the
-  // sidebar so the user can see at a glance which threads are mid-stream
-  // — including streams running in another tab on the same account.
-  const [clientActive, setClientActive] = useState<string[]>([]);
+  // Per-row pulsing dot in the sidebar: which threads have a live turn
+  // (turn_state='active'), including turns running in another tab on the
+  // same account. Polled from /conversations/active (v3 turn_state-backed).
   const [serverActive, setServerActive] = useState<string[]>([]);
-  useEffect(() => {
-    return StreamManager.onGlobal((ids) => setClientActive(ids));
-  }, []);
   useEffect(() => {
     let alive = true;
     async function tick() {
@@ -80,10 +74,7 @@ export default function ChatLayout() {
       clearInterval(i);
     };
   }, []);
-  const streamingIds = useMemo(
-    () => new Set([...clientActive, ...serverActive]),
-    [clientActive, serverActive],
-  );
+  const streamingIds = useMemo(() => new Set(serverActive), [serverActive]);
 
   // ExoScopy parity: collapse the drawer when the user picks a conversation,
   // and reset on viewport-crossing so desktop never inherits a stuck-open

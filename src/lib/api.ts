@@ -1031,24 +1031,8 @@ export const api = {
       body: JSON.stringify({ repoPath: repoPath ?? null }),
     }),
 
-  /** Live in-flight inference buffer. Returns `{ active: false }` when
-   *  there's nothing running. When active, `content` / `reasoning` /
-   *  `done` / `error` reflect the server-side state. */
-  getInference: (id: string) =>
-    request<
-      | { active: false; done?: undefined }
-      | {
-          active: boolean;
-          done: boolean;
-          content: string;
-          reasoning: string;
-          error: string | null;
-        }
-    >(`/api/conversations/${id}/inference`),
-  clearInference: (id: string) =>
-    request<{ ok: boolean }>(`/api/conversations/${id}/inference/clear`, {
-      method: "POST",
-    }),
+  /** Conv ids with a live turn (turn_state='active') — drives the sidebar
+   *  pulsing dots, including turns running in another tab. */
   listActiveInferences: () =>
     request<{ active: string[] }>("/api/conversations/active"),
 

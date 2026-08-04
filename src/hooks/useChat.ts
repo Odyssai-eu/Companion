@@ -9,58 +9,13 @@ import {
   type ApiProject,
   AUTO_ROUTER_MODEL_ID,
 } from "~/lib/api";
-import { type ChatMessage } from "~/lib/chat-stream";
 import {
-  buildUserMessage,
   type Attachment,
   type ParserConfig,
 } from "~/lib/file-attach";
 import { getMemoryDefaultNewConv } from "~/lib/memory-prefs";
 import { estimateCost as lookupCost } from "~/lib/model-pricing";
-import {
-  StreamManager,
-  type StreamEntry,
-  type GuardWarning,
-  type GuardBlock,
-} from "~/lib/stream-manager";
-
-/** Stable id for the in-flight assistant placeholder. The subscribe
- *  effect targets this id to patch content/reasoning/toolCalls as the
- *  stream progresses. Once the stream finishes and the conv is reloaded
- *  from DB, this placeholder is replaced by the real persisted message
- *  (with its UUID + stats). One stream per conversation → one placeholder
- *  per conversation → safe to share a constant. */
-const LIVE_ID = "__live__";
-
-/** UUID v4 fallback for environments where crypto.randomUUID() throws
- *  (Safari refuses it on insecure http:// origins, which is the default
- *  for a LAN install of Companion). Uses crypto.getRandomValues which
- *  is available everywhere; degrades to Math.random as a last resort. */
-function _fallbackUuid(): string {
-  try {
-    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-      const b = new Uint8Array(16);
-      crypto.getRandomValues(b);
-      b[6] = (b[6] & 0x0f) | 0x40;
-      b[8] = (b[8] & 0x3f) | 0x80;
-      const h = (n: number) => n.toString(16).padStart(2, "0");
-      return (
-        Array.from(b.slice(0, 4)).map(h).join("") + "-" +
-        Array.from(b.slice(4, 6)).map(h).join("") + "-" +
-        Array.from(b.slice(6, 8)).map(h).join("") + "-" +
-        Array.from(b.slice(8, 10)).map(h).join("") + "-" +
-        Array.from(b.slice(10)).map(h).join("")
-      );
-    }
-  } catch {
-    /* fall through to Math.random */
-  }
-  // Last-resort, low-quality, but never throws.
-  const rand = () => Math.floor(Math.random() * 256).toString(16).padStart(2, "0");
-  return Array.from({ length: 16 }, rand).join("").replace(
-    /(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5",
-  );
-}
+import type { GuardWarning, GuardBlock } from "~/lib/chat-types";
 
 export type InferenceParams = {
   temperature: number;
@@ -440,9 +395,6 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
 
   const loadedIdRef = useRef<string | null>(null);
-  const sendMessageRef = useRef<
-    ((text: string, attachments?: Attachment[]) => Promise<void>) | null
-  >(null);
 
   // Fetch the LiteLLM model list + the user's default model on mount. If the
   // user hasn't picked a model, default to inferenceSettings.defaultModel,
@@ -541,11 +493,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       setPendingMemoryEnabled(null);
       setPendingAgentMode(null);
       loadedIdRef.current = null;
-      // `sending` is shared across the whole hook instance (ChatLayout
-      // never remounts on navigation) but StreamManager tracks each
-      // conversation's stream independently — landing on "new chat"
-      // must never inherit a stale `true` left over from a still-running
-      // conversation, or sendMessage/regenerate/edit silently no-op.
+      // `sending` is owned by the v3 runtime now; reset the shell copy on
+      // landing at "new chat" so nothing stale leaks through the compose.
       setSending(false);
       return;
     }
@@ -566,11 +515,10 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       setError(null);
     }
     loadedIdRef.current = conversationId;
-    let serverPollAbort: (() => void) | null = null;
 
     api
       .getConversation(conversationId)
-      .then(({ conversation, messages: msgs, inference }) => {
+      .then(({ conversation, messages: msgs }) => {
         setConversation(conversation);
         // Restore the conv's saved model (if any). When absent, the
         // existing `model` state (= localStorage default) stays. The
@@ -602,208 +550,21 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           setProject(null);
         }
 
-        const clientStream = StreamManager.get(conversationId);
+        // v3 owns the live message surface (useChatV3's SSE replays the
+        // thread and streams the running turn). This hook only adopts the
+        // DB snapshot for the shell; base.messages is overridden downstream.
         const dbMessages = msgs.map(toUIMessage);
-
-        if (clientStream && !clientStream.done) {
-          // CASE 1 — client-side stream still running (we never left, or
-          // came back during the pump). The subscribe effect below will
-          // keep patching. Mount the live placeholder fed by the current
-          // buffer so the user sees the in-flight content immediately.
-          setMessages([
-            ...dbMessages,
-            buildLivePlaceholder(clientStream, conversation.model ?? null),
-          ]);
-          setSending(true);
-        } else if (clientStream && clientStream.done) {
-          // CASE 2 — client-side stream finished while we were away. DB
-          // has the persisted message (Phase 2 server-side persist). Drop
-          // the in-memory entry.
-          setMessages(dbMessages);
-          StreamManager.cleanup(conversationId);
-          setSending(false);
-        } else if (inference && inference.active) {
-          // CASE 3 — no client stream, but the server is still pumping
-          // (typically: same conv opened from another tab/device, or this
-          // tab refreshed mid-stream). Render the server buffer + poll
-          // /:id/inference until done, then reload from DB.
-          setMessages([
-            ...dbMessages,
-            buildLivePlaceholderFromServer(
-              inference,
-              conversation.model ?? null,
-            ),
-          ]);
-          setSending(true);
-          serverPollAbort = pollServerInferenceUntilDone(
-            conversationId,
-            (latest) => {
-              if (loadedIdRef.current !== conversationId) return;
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === LIVE_ID
-                    ? {
-                        ...m,
-                        content: latest.content,
-                        reasoning: latest.reasoning || undefined,
-                      }
-                    : m,
-                ),
-              );
-            },
-            async () => {
-              if (loadedIdRef.current !== conversationId) return;
-              try {
-                const fresh = await api.getConversation(conversationId);
-                setMessages(fresh.messages.map(toUIMessage));
-                setConversation(fresh.conversation);
-              } catch {
-                // ignore — UI will catch up on next conv reopen
-              }
-              setSending(false);
-              api
-                .clearInference(conversationId)
-                .catch(() => undefined);
-            },
-          );
-        } else {
-          // CASE 0 — no stream anywhere. Adopt DB state, but defensively:
-          // if local has strictly MORE messages than the server returned,
-          // keep local. This handles the race where /help on a fresh conv
-          // does setConversation + navigate + setMessages(optimistic)
-          // before the server has persisted anything — the conv-load
-          // effect re-fires with the new convId, fetches an empty msg
-          // list, and would clobber the optimistic /help user message +
-          // streaming placeholder. Mirrors the agent-transcript defence
-          // we put in place 2026-05-21.
-          setMessages((prev) =>
-            prev.length > dbMessages.length ? prev : dbMessages,
-          );
-          setSending(false);
-        }
+        setMessages((prev) =>
+          prev.length > dbMessages.length ? prev : dbMessages,
+        );
+        setSending(false);
       })
       .catch((e) => setError(e.message));
 
-    return () => {
-      serverPollAbort?.();
-    };
     // sending intentionally excluded — we only want this effect on conv
-    // change. The subscribe effect tracks the live stream separately.
+    // change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
-
-  // Subscribe to the active StreamManager entry for this conversation.
-  // Patches the LIVE_ID placeholder with content / reasoning / tool calls
-  // as the pump emits them. On done, reload from DB to pick up the real
-  // persisted assistant message (with its UUID, server-stamped stats)
-  // and drop the in-memory entry.
-  useEffect(() => {
-    if (!conversationId) return;
-    const cid = conversationId;
-    // Track which stream we've already torn down (by startedAt). A plain
-    // boolean would stick across sends in the same conversation (effect
-    // doesn't re-mount when conversationId is unchanged), so the 2nd done
-    // would never fire setSending(false). Each send creates a new entry
-    // with a fresh startedAt — that's our identity key.
-    let lastHandledStart: number | null = null;
-    const unsub = StreamManager.subscribe(cid, (entry) => {
-      // Non-fatal server warning (Auto Router fell back to its configured
-      // model). Reuses the error banner because that's the one surface the
-      // user can't miss — but it's raised as soon as it arrives, not at
-      // `done`, and it never suppresses the streaming answer.
-      if (entry.notice) setError(entry.notice);
-      setMessages((prev) => {
-        const hasLive = prev.some((m) => m.id === LIVE_ID);
-        const liveMsg: UIMessage = {
-          id: LIVE_ID,
-          role: "assistant",
-          content: entry.content,
-          reasoning: entry.reasoning || undefined,
-          toolCalls:
-            entry.toolCalls.length > 0 ? entry.toolCalls : undefined,
-          guard: entry.guard ?? undefined,
-          blocked: entry.blocked ?? undefined,
-          streaming: !entry.done,
-          model: model ?? undefined,
-        };
-        if (hasLive) {
-          return prev.map((m) => (m.id === LIVE_ID ? liveMsg : m));
-        }
-        // Race: server stream still being subscribed to but our placeholder
-        // got dropped by a DB reload that arrived after the cleanup. Re-mount.
-        return [...prev, liveMsg];
-      });
-      if (entry.done && entry.startedAt !== lastHandledStart) {
-        lastHandledStart = entry.startedAt;
-        if (entry.error) setError(entry.error);
-        // Capture the stream identity we're tearing down. Between this
-        // setTimeout being armed and firing, the user may have sent the
-        // next turn — which replaces the entry under the same convId
-        // with a fresh startedAt. If we naively reload from DB at that
-        // point we'd overwrite the new turn's LIVE_ID placeholder with
-        // a DB snapshot that doesn't yet contain the new assistant
-        // message — content disappears mid-stream from the user's POV.
-        // So: before doing anything destructive, confirm we're still
-        // tearing down the same stream.
-        const teardownStart = entry.startedAt;
-        // Tiny delay so any final notify lands before we tear down.
-        setTimeout(async () => {
-          const current = StreamManager.get(cid);
-          if (current && current.startedAt !== teardownStart) {
-            // A new stream has taken over — skip the teardown so the
-            // new stream's live placeholder + sending state survive.
-            return;
-          }
-          // The server persists the assistant turn AFTER the stream closes; on
-          // a slow path (http-proxy / mlx-vlm) that lands later than this
-          // teardown, so a blind DB reload would show the conversation WITHOUT
-          // the just-streamed reply → the text vanishes until the next reopen
-          // (the disappearing-text bug, worse on mlx-vlm Diff-Gemma, 2026-06-14;
-          // the old fixed 300ms delay was too short for these paths). Poll the
-          // DB until the assistant turn is persisted, keeping the live
-          // placeholder visible meanwhile, and only then swap in the snapshot.
-          const streamedLen = StreamManager.get(cid)?.content.length ?? 0;
-          let fresh: Awaited<ReturnType<typeof api.getConversation>> | null = null;
-          let confirmed = false;
-          for (let attempt = 0; attempt < 8; attempt++) {
-            const now = StreamManager.get(cid);
-            if (now && now.startedAt !== teardownStart) return; // new turn took over
-            try {
-              fresh = await api.getConversation(cid);
-            } catch {
-              fresh = null;
-            }
-            if (fresh) {
-              const last = fresh.messages[fresh.messages.length - 1];
-              const persisted =
-                !!last &&
-                last.role === "assistant" &&
-                (typeof last.content === "string"
-                  ? last.content.length > 0
-                  : last.content != null);
-              if (persisted || streamedLen === 0) {
-                confirmed = true;
-                break;
-              }
-            }
-            await new Promise((r) => setTimeout(r, 250));
-          }
-          // Only swap to the DB snapshot once it actually contains the reply.
-          // If the persist somehow never landed (rare), keep the streamed
-          // placeholder — it's already in `messages` state and the next reopen
-          // (CASE 2) reconciles it. The text is never lost.
-          if (confirmed && fresh && loadedIdRef.current === cid) {
-            setMessages(fresh.messages.map(toUIMessage));
-            setConversation(fresh.conversation);
-          }
-          StreamManager.cleanup(cid);
-          api.clearInference(cid).catch(() => undefined);
-          setSending(false);
-        }, 300);
-      }
-    });
-    return unsub;
-  }, [conversationId, model]);
 
   // Prewarm the upstream KV cache when the user opens a conversation or
   // switches models. We fire a 1-token completion at the upstream with the
@@ -842,483 +603,27 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     { vision: true, tools: false };
 
 
-  /**
-   * /help <question> — RAG against the user-guide wiki.
-   *
-   * Server-side strips conv context: only the wiki + the question are
-   * sent to the LLM. So the answer can't drift into whatever was being
-   * discussed in this chat. The user message gets inserted as a normal
-   * chat turn; the assistant reply is also a normal message but with
-   * `stats.helpFrom = [slug, …]` for the UI to render a "Help · from:
-   * …" chip.
-   */
-  const helpAsk = useCallback(
-    async (convId: string, question: string) => {
-      setSending(true);
-      setError(null);
-      const userMsgId = `local-help-q-${Date.now()}`;
-      const assistantMsgId = `local-help-a-${Date.now()}`;
-      let acc = "";
-      let sources: Array<{ slug: string; title: string; score: number }> = [];
 
-      // Optimistic insert: the user question + a placeholder assistant
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: userMsgId,
-          role: "user",
-          content: `/help ${question}`,
-          createdAt: new Date().toISOString(),
-          streaming: false,
-        },
-        {
-          id: assistantMsgId,
-          role: "assistant",
-          content: "",
-          createdAt: new Date().toISOString(),
-          streaming: true,
-        },
-      ]);
-
-      try {
-        const res = await fetch("/api/help/ask", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, conversationId: convId }),
-        });
-        if (!res.ok || !res.body) {
-          const err = await res.json().catch(() => ({
-            detail: res.statusText || `help error ${res.status}`,
-          }));
-          setError(
-            (err as { detail?: string; error?: string }).detail ??
-              (err as { error?: string }).error ??
-              `help error ${res.status}`,
-          );
-          setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId));
-          return;
-        }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const blocks = buffer.split("\n\n");
-          buffer = blocks.pop() ?? "";
-          for (const block of blocks) {
-            let event = "message";
-            let data = "";
-            for (const line of block.split("\n")) {
-              if (line.startsWith("event:")) event = line.slice(6).trim();
-              else if (line.startsWith("data:")) data += line.slice(5).trim();
-            }
-            if (!data) continue;
-            if (data === "[DONE]") continue;
-            try {
-              if (event === "sources") {
-                const parsed = JSON.parse(data);
-                sources = parsed.articles ?? [];
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantMsgId
-                      ? {
-                          ...m,
-                          stats: {
-                            ...(m.stats ?? {}),
-                            isHelp: true,
-                            helpFrom: sources.map((s) => s.slug),
-                            helpTitles: sources.map((s) => s.title),
-                          },
-                        }
-                      : m,
-                  ),
-                );
-              } else if (event === "done") {
-                // closed below in finally
-              } else if (event === "error") {
-                const parsed = JSON.parse(data);
-                setError(parsed.message ?? "help stream error");
-              } else {
-                // chat-completion delta (no explicit event tag)
-                const parsed = JSON.parse(data);
-                const delta = parsed.choices?.[0]?.delta?.content ?? "";
-                if (delta) {
-                  acc += delta;
-                  setMessages((prev) =>
-                    prev.map((m) =>
-                      m.id === assistantMsgId ? { ...m, content: acc } : m,
-                    ),
-                  );
-                }
-              }
-            } catch {
-              /* non-JSON ignored */
-            }
-          }
-        }
-      } catch (e) {
-        setError((e as Error).message);
-      } finally {
-        setSending(false);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId ? { ...m, streaming: false } : m,
-          ),
-        );
-      }
-    },
+  // The v1 send/stream path was removed with the v1 rail (2026-08-04).
+  // These are inert placeholders: useChatV3 overrides messages + sending
+  // and every action below with the v3 implementations. They exist only so
+  // the base shell surface stays type-stable for the compose in useChatV3.
+  const sendMessage = useCallback(
+    async (_text: string, _attachments: Attachment[] = []) => {},
     [],
   );
-
-  const sendMessage = useCallback(
-    async (text: string, attachments: Attachment[] = []) => {
-      if (sending) return;
-      const trimmed = text.trim();
-      if (!trimmed && attachments.length === 0) return;
-
-      // ── Slash commands ────────────────────────────────────────────────
-      const slashMatch =
-        trimmed.match(/^\/([a-z][\w-]*)\s+([\s\S]+)$/i) ??
-        trimmed.match(/^\/([a-z][\w-]*)\s*$/i);
-
-      if (slashMatch) {
-        const cmd = slashMatch[1].toLowerCase();
-        const rest = (slashMatch[2] ?? "").trim();
-
-        // `/exit` clears a stale bridge-era activeAgent flag on old
-        // conversations (the Hermes/Pi runtimes are gone; the flag only
-        // survives as legacy data).
-        if (cmd === "exit" || cmd.endsWith("_off")) {
-          const convId = conversationId ?? conversation?.id;
-          if (convId && conversation?.activeAgent) {
-            try {
-              await api.setConversationActiveAgent(convId, null);
-              setConversation((prev) =>
-                prev ? { ...prev, activeAgent: null } : prev,
-              );
-            } catch (e) {
-              setError((e as Error).message);
-            }
-          }
-          return;
-        }
-
-        if (cmd === "help") {
-          if (!rest) {
-            setError(
-              "Type a question after /help — e.g. /help how do I configure semantic routing? Full docs at https://odyssai.eu/docs/.",
-            );
-            return;
-          }
-          // Need a conv so the Q&A persists. Create one if needed.
-          let convId = conversationId ?? conversation?.id ?? null;
-          if (!convId) {
-            try {
-              const created = await api.createConversation({
-                title: `/help ${rest}`.slice(0, 80),
-                ...(model ? { model } : {}),
-              });
-              convId = created.conversation.id;
-              setConversation(created.conversation);
-              navigate(`/c/${convId}`, { replace: true });
-            } catch (e) {
-              setError((e as Error).message);
-              return;
-            }
-          }
-          await helpAsk(convId, rest);
-          return;
-        }
-
-        // `/hermes` and `/pi` removed 2026-08-03 (v2.0 γb2) — delegation
-        // is native now (Nemo's task tool). The commands fall through to
-        // normal chat like any unknown slash.
-
-        if (cmd === "comfyui") {
-          // Slash command with or without a prompt. The chat composer
-          // (ChatLayout) opens the ComfyuiPromptModal — generation is
-          // interactive (template / size / steps / cfg / seed / batch),
-          // not a one-shot URL hit. We just stash the seed prompt and
-          // create a conv if needed; the modal does the rest.
-          let convId = conversationId ?? conversation?.id ?? null;
-          if (!convId) {
-            try {
-              const created = await api.createConversation({
-                title: `/comfyui ${rest}`.slice(0, 80),
-                ...(model ? { model } : {}),
-              });
-              convId = created.conversation.id;
-              setConversation(created.conversation);
-              navigate(`/c/${convId}`, { replace: true });
-            } catch (e) {
-              setError((e as Error).message);
-              return;
-            }
-          }
-          setComfyuiPrompt({ prompt: rest });
-          return;
-        }
-        // Unknown slash — fall through to normal chat.
-      }
-
-      // Persistent bridge agent-mode routing removed with Hermes/Pi
-      // (v2.0 γb2). A stale activeAgent value on an old conversation is
-      // simply ignored — messages route to normal chat.
-
-      if (!model) {
-        setError(
-          "No model selected. Pick one from the model picker in the composer.",
-        );
-        return;
-      }
-
-      const built = buildUserMessage(trimmed, attachments);
-      setError(null);
-
-      // Ensure we have a conversation to write into
-      let convId = conversationId ?? conversation?.id ?? null;
-      const titleSeed =
-        trimmed || attachments.map((a) => a.name).join(", ") || "New";
-      if (!convId) {
-        try {
-          const created = await api.createConversation({
-            title: titleSeed.slice(0, 80),
-            // Persist the currently-picked model on the new conv so future
-            // visits restore it (the picker is per-conversation now).
-            ...(model ? { model } : {}),
-            // Memory default for a new conversation:
-            //  - an explicit TopBar flip (pendingMemoryEnabled) always wins;
-            //  - otherwise, for a PERSONAL chat, seed from the per-device
-            //    Settings → Profile toggle (local to this workstation);
-            //  - inside a project, omit it — the project settings govern.
-            ...(pendingMemoryEnabled !== null
-              ? { memoryEnabled: pendingMemoryEnabled }
-              : project
-                ? {}
-                : { memoryEnabled: getMemoryDefaultNewConv() }),
-            // #28 — same for the agent-mode (tools) toggle flipped on the
-            // blank chat before the first message. Default ON (CodeOS
-            // parity, 2026-08-03): a fresh chat starts with tools unless
-            // the user explicitly turned them off before sending.
-            agentMode: pendingAgentMode ?? true,
-          });
-          convId = created.conversation.id;
-          setConversation(created.conversation);
-          loadedIdRef.current = convId;
-          // Bind the picker's model state to this newly-created conv id,
-          // so the next picker change PATCHes the right row.
-          conversationIdForModelRef.current = convId;
-          // Reset pending state — it's now persisted on the conversation.
-          setPendingMemoryEnabled(null);
-          setPendingAgentMode(null);
-        } catch (e) {
-          setError((e as Error).message);
-          return;
-        }
-      }
-
-      const nowIso = new Date().toISOString();
-      const userMsg: UIMessage = {
-        // crypto.randomUUID() throws in Safari on non-secure contexts
-        // (http:// origins) — observed 2026-05-25 on a plain-HTTP LAN
-        // deploy: every Enter in the chat
-        // box created the conversation server-side but the user
-        // message and downstream stream never fired because this line
-        // threw silently, breaking sendMessage. Fall back to
-        // getRandomValues which is available everywhere.
-        id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? (() => {
-              try { return crypto.randomUUID(); }
-              catch { return _fallbackUuid(); }
-            })()
-          : _fallbackUuid(),
-        role: "user",
-        content: built.persistText,
-        createdAt: nowIso,
-      };
-
-      // Optimistic UI: user message + LIVE_ID placeholder. The placeholder
-      // is patched by the subscribe useEffect (below) as the StreamManager
-      // emits content / reasoning / tool_calls. Once the stream finishes,
-      // the conv is reloaded from DB which has the persisted message and
-      // overwrites this placeholder.
-      const livePlaceholder: UIMessage = {
-        id: LIVE_ID,
-        role: "assistant",
-        content: "",
-        streaming: true,
-        model,
-      };
-      setMessages((prev) => [...prev, userMsg, livePlaceholder]);
-      setSending(true);
-
-      if (!conversationId) {
-        navigate(`/c/${convId}`, { replace: true });
-      }
-
-      // Persist user message immediately so a later /:id reload sees it
-      // even if this tab dies before the stream finishes.
-      api
-        .appendMessage(convId, {
-          role: "user",
-          content: built.persistText,
-          createdAt: nowIso,
-        })
-        .catch((e) => console.warn("persist user failed", e));
-
-      // Pass per-message createdAt so the backend can compute Δ tags
-      // for historical messages too. The latest user message uses NOW.
-      const convoForModel: ChatMessage[] = [
-        ...messages.map((m) => ({
-          role: m.role,
-          content: m.content,
-          createdAt: m.createdAt,
-        })),
-        { role: "user", content: built.content, createdAt: nowIso },
-      ];
-
-      const effectiveInference = inferenceToPayload(inference);
-      if (project?.systemPrompt && project.systemPrompt.trim()) {
-        effectiveInference.system_prompt = project.systemPrompt;
-      }
-
-      // Fire the stream and return immediately. The pump runs inside
-      // StreamManager (singleton, survives this component's unmount). The
-      // subscribe useEffect catches every delta + the final done event,
-      // and the server-side inference-state module persists the assistant
-      // message to DB when the stream completes (chat.ts finally block).
-      StreamManager.startStream({
-        conversationId: convId,
-        messages: convoForModel,
-        model,
-        inference: effectiveInference,
-      });
-    },
-    [
-      conversation?.id,
-      conversationId,
-      inference,
-      messages,
-      model,
-      navigate,
-      project,
-      sending,
-      pendingMemoryEnabled,
-      pendingAgentMode,
-    ],
-  );
-
-  sendMessageRef.current = sendMessage;
-
-  const cancel = useCallback(() => {
-    const cid = conversationId ?? conversation?.id;
-    if (cid) {
-      StreamManager.stop(cid);
-      // Also clear the server-side buffer so /inference returns
-      // { active: false } on the next poll. The chat.ts cleanup timeout
-      // (60s) would do it eventually but explicit clear is snappier.
-      api.clearInference(cid).catch(() => undefined);
-    }
-  }, [conversationId, conversation?.id]);
-
-  const regenerate = useCallback(
-    async (assistantId: string) => {
-      const idx = messages.findIndex((m) => m.id === assistantId);
-      if (idx <= 0 || sending) return;
-      let userIdx = idx - 1;
-      while (userIdx >= 0 && messages[userIdx].role !== "user") userIdx--;
-      if (userIdx < 0) return;
-      const userText = messages[userIdx].content;
-      const trimmed = messages.slice(0, userIdx);
-      setMessages(trimmed);
-      const convId = conversationId ?? conversation?.id ?? null;
-      if (convId) {
-        try {
-          await api.truncateConversationFrom(convId, assistantId);
-        } catch {
-          // best effort
-        }
-      }
-      await sendMessageRef.current?.(userText, []);
-    },
-    [messages, sending, conversationId, conversation?.id],
-  );
-
+  const cancel = useCallback(() => {}, []);
+  const regenerate = useCallback(async (_assistantId: string) => {}, []);
   const editAndResend = useCallback(
-    async (messageId: string, newText: string) => {
-      const idx = messages.findIndex((m) => m.id === messageId);
-      if (idx < 0 || sending) return;
-      if (messages[idx].role !== "user") return;
-      const trimmed = messages.slice(0, idx);
-      setMessages(trimmed);
-      const convId = conversationId ?? conversation?.id ?? null;
-      if (convId) {
-        try {
-          await api.truncateConversationFrom(convId, messageId);
-        } catch {
-          // best effort
-        }
-      }
-      await sendMessageRef.current?.(newText, []);
-    },
-    [messages, sending, conversationId, conversation?.id],
+    async (_messageId: string, _newText: string) => {},
+    [],
   );
-
-  // Confidential Guard — after a blocked CoeOS turn, the user picks a local
-  // model from the filtered picker; we switch to it and re-stream the SAME
-  // (already-persisted) user message. We do NOT re-append the user turn:
-  // sendMessage persisted it before the block, so a second append would
-  // duplicate it. This just replaces the blocked placeholder with a live one.
-  const resendOnLocalModel = useCallback(
-    (localModelId: string) => {
-      if (sending) return;
-      const convId = conversationId ?? conversation?.id ?? null;
-      if (!convId) return;
-      setModelAndPersist(localModelId);
-      const kept = messages.filter((m) => m.id !== LIVE_ID);
-      const convo: ChatMessage[] = kept.map((m) => ({
-        role: m.role,
-        content: m.content,
-        createdAt: m.createdAt,
-      }));
-      setMessages([
-        ...kept,
-        {
-          id: LIVE_ID,
-          role: "assistant",
-          content: "",
-          streaming: true,
-          model: localModelId,
-        },
-      ]);
-      setSending(true);
-      const effectiveInference = inferenceToPayload(inference);
-      if (project?.systemPrompt && project.systemPrompt.trim()) {
-        effectiveInference.system_prompt = project.systemPrompt;
-      }
-      StreamManager.startStream({
-        conversationId: convId,
-        messages: convo,
-        model: localModelId,
-        inference: effectiveInference,
-      });
-    },
-    [
-      sending,
-      conversationId,
-      conversation?.id,
-      messages,
-      inference,
-      project,
-      setModelAndPersist,
-    ],
-  );
+  const resendOnLocalModel = useCallback((_localModelId: string) => {}, []);
 
   const startNew = useCallback(() => {
     navigate("/");
   }, [navigate]);
+
 
   const toggleMemoryEnabled = useCallback(async () => {
     // Pre-conversation: no row to PATCH yet, just flip the pending flag.
@@ -1447,114 +752,6 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     comfyuiPrompt,
     setComfyuiPrompt,
     pushComfyuiResult,
-  };
-}
-
-/**
- * Build a UIMessage placeholder fed by the current client-side stream
- * entry. Used on conv reopen (CASE 1) so the user immediately sees the
- * in-flight content before the subscribe effect kicks in for the next
- * delta.
- */
-function buildLivePlaceholder(
-  entry: StreamEntry,
-  fallbackModel: string | null,
-): UIMessage {
-  return {
-    id: LIVE_ID,
-    role: "assistant",
-    content: entry.content,
-    reasoning: entry.reasoning || undefined,
-    toolCalls: entry.toolCalls.length > 0 ? entry.toolCalls : undefined,
-    guard: entry.guard ?? undefined,
-    blocked: entry.blocked ?? undefined,
-    streaming: !entry.done,
-    model: fallbackModel ?? undefined,
-  };
-}
-
-/**
- * Build a UIMessage placeholder fed by the server-side inference state
- * (CASE 3 — we have no client stream but the server is pumping). The
- * polling loop below patches `content` as new bytes arrive.
- */
-function buildLivePlaceholderFromServer(
-  inf: {
-    active: boolean;
-    done: boolean;
-    content: string;
-    reasoning: string;
-    error: string | null;
-  },
-  fallbackModel: string | null,
-): UIMessage {
-  return {
-    id: LIVE_ID,
-    role: "assistant",
-    content: inf.content,
-    reasoning: inf.reasoning || undefined,
-    streaming: !inf.done,
-    model: fallbackModel ?? undefined,
-  };
-}
-
-/**
- * Poll /:id/inference every second until `active === false`. Calls
- * `onProgress` for each refresh with content, and `onDone` once when
- * the server reports done so the caller can reload from DB. Cancellable.
- *
- * 5-min cap covers even slow Hermes loops; beyond that, the user almost
- * certainly closed the tab and we stop wasting cycles.
- */
-function pollServerInferenceUntilDone(
-  conversationId: string,
-  onProgress: (latest: {
-    content: string;
-    reasoning: string;
-  }) => void,
-  onDone: () => void,
-): () => void {
-  const INTERVAL_MS = 1_000;
-  const TIMEOUT_MS = 5 * 60_000;
-  let stopped = false;
-  let firedDone = false;
-  const startedAt = Date.now();
-
-  async function tick() {
-    if (stopped) return;
-    try {
-      const r = await api.getInference(conversationId);
-      if (stopped) return;
-      if (r.active === false) {
-        if (!firedDone) {
-          firedDone = true;
-          onDone();
-        }
-        stopped = true;
-        return;
-      }
-      onProgress({ content: r.content, reasoning: r.reasoning });
-      if (r.done) {
-        if (!firedDone) {
-          firedDone = true;
-          onDone();
-        }
-        stopped = true;
-        return;
-      }
-    } catch {
-      // ignore — transient
-    }
-    if (Date.now() - startedAt >= TIMEOUT_MS) {
-      stopped = true;
-      return;
-    }
-    setTimeout(tick, INTERVAL_MS);
-  }
-  setTimeout(tick, INTERVAL_MS);
-
-  return () => {
-    stopped = true;
   };
 }
 
