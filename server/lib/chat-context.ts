@@ -8,7 +8,17 @@ import { db } from "../db/index";
 import { conversations, projects } from "../db/schema";
 import { getMemoryContext, nemoQuery } from "./memory";
 import { getProjectMemoryContext } from "./project-memory";
-import type { ChatBody } from "../routes/chat";
+
+/** Shape resolveConvContext reads off the request body. Formerly exported
+ *  by the v1 chat route (removed 2026-08-04); inlined here since this is
+ *  now the only consumer and the v3 processor calls in with the same
+ *  fields. */
+export type ChatBody = {
+  conversationId?: string;
+  messages?: Array<{ role: string; content: string | unknown }>;
+  model?: string;
+  system_prompt?: string;
+};
 
 // Smart-skip (#36, item 3): for clearly-trivial turns (greetings, short acks)
 // we skip the WHOLE memory fetch+injection — no nemoQuery, no wiki/vault dump,

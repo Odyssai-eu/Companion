@@ -242,6 +242,7 @@ async function deleteMessagesFrom(
 async function startChatCompletion(opts: {
   authHeader: string;
   origin: string;
+  userId: string;
   conversationId: string;
   userMessage: string;
   model: string;
@@ -257,38 +258,55 @@ async function startChatCompletion(opts: {
   reasoning_effort?: string;
   system_prompt?: string;
 }): Promise<{ ok: true; startedAt: string } | { ok: false; error: string }> {
-  const url = `${opts.origin}/api/chat/completions`;
+  // v3 rail: (1) persist the user message via the real route — this also
+  // auto-titles a fresh conversation — then (2) fire the turn on /api/v3
+  // with the full history. The turn runs fire-and-forget; poll
+  // companion_get_inference_status (→ /inference, turn_state-aware) to
+  // await completion, then companion_get_conversation to read the reply.
+  try {
+    const append = await fetch(
+      `${opts.origin}/api/conversations/${opts.conversationId}/messages`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: opts.authHeader },
+        body: JSON.stringify({ role: "user", content: opts.userMessage }),
+      },
+    );
+    if (!append.ok) {
+      return { ok: false, error: `append ${append.status}: ${await append.text().catch(() => "")}` };
+    }
+  } catch (e) {
+    return { ok: false, error: `network error: ${(e as Error).message}` };
+  }
+
+  // Full history (DB-direct — no extra HTTP round-trip). Tasks excluded.
+  const conv = await getUserConversation(opts.userId, opts.conversationId);
+  const history = (conv?.messages ?? [])
+    .filter((m) => m.role !== "system" && m.messageType !== "task")
+    .map((m) => ({ role: m.role, content: m.content }));
+
   const body = {
     conversationId: opts.conversationId,
-    messages: [
-      {
-        role: "user" as const,
-        content: opts.userMessage,
-        createdAt: new Date().toISOString(),
-      },
-    ],
     model: opts.model,
-    temperature: opts.temperature,
-    max_tokens: opts.max_tokens,
-    top_p: opts.top_p,
-    top_k: opts.top_k,
-    min_p: opts.min_p,
-    repetition_penalty: opts.repetition_penalty,
-    seed: opts.seed,
-    stop: opts.stop,
-    thinking: opts.thinking,
-    reasoning_effort: opts.reasoning_effort,
-    system_prompt: opts.system_prompt,
+    messages: history,
+    params: {
+      temperature: opts.temperature,
+      max_tokens: opts.max_tokens,
+      top_p: opts.top_p,
+      top_k: opts.top_k,
+      min_p: opts.min_p,
+      repetition_penalty: opts.repetition_penalty,
+      seed: opts.seed,
+      thinking: opts.thinking,
+      reasoning_effort: opts.reasoning_effort,
+      system_prompt: opts.system_prompt,
+    },
   };
   let r: Response;
   try {
-    r = await fetch(url, {
+    r = await fetch(`${opts.origin}/api/v3/chat`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        Authorization: opts.authHeader,
-      },
+      headers: { "Content-Type": "application/json", Authorization: opts.authHeader },
       body: JSON.stringify(body),
     });
   } catch (e) {
@@ -297,15 +315,6 @@ async function startChatCompletion(opts: {
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
     return { ok: false, error: `${r.status} ${r.statusText}: ${txt}` };
-  }
-  // Headers received: the server accepted the request, opened the SSE
-  // pipe, and the inference-state buffer for this conversation has been
-  // started (startInference() is called before the first byte hits the
-  // wire). Cancel our reader so we don't hold the connection.
-  try {
-    await r.body?.cancel();
-  } catch {
-    // ignore — best effort detach
   }
   return { ok: true, startedAt: new Date().toISOString() };
 }
@@ -487,6 +496,7 @@ function buildServer(opts: {
       const result = await startChatCompletion({
         authHeader: opts.authHeader,
         origin: opts.origin,
+        userId: opts.userId,
         conversationId: args.conversationId,
         userMessage: args.content,
         model: args.model,

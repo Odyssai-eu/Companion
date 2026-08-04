@@ -20,10 +20,6 @@ type Props = {
    *  Hermes conversations where memory wiki injection is suppressed
    *  server-side (Hermes runs its own retrieval skills). */
   hideMemoryControls?: boolean;
-  /** v3 rail beta (PLAN.md V3-c). When defined, a pill shows the current
-   *  rail and toggles it (reloads to remount on the other rail). */
-  chatV3?: boolean;
-  onToggleV3?: () => void;
 };
 
 export default function TopBar({
@@ -38,8 +34,6 @@ export default function TopBar({
   agentMode = false,
   onToggleAgentMode,
   hideMemoryControls = false,
-  chatV3,
-  onToggleV3,
 }: Props) {
   const voiceMode = useVoiceMode();
   const isMobile = useIsMobile();
@@ -64,7 +58,6 @@ export default function TopBar({
           tabs={["Creative", "Normal", "Code"]}
         />
         <div className="flex items-center gap-1.5">
-          {onToggleV3 && <V3Pill on={!!chatV3} onToggle={onToggleV3} />}
           {!hideMemoryControls && (
             <>
               <AgentModeToggleButton
@@ -130,7 +123,6 @@ export default function TopBar({
           </button>
         </div>
         <div className="flex items-center gap-3">
-          {onToggleV3 && <V3Pill on={!!chatV3} onToggle={onToggleV3} />}
           {!hideMemoryControls && (
             <>
               <AgentModeToggleButton
@@ -167,26 +159,6 @@ export default function TopBar({
         </div>
       </div>
     </header>
-  );
-}
-
-/** v3 rail beta pill — cyan when on. Clicking toggles the flag and
- *  reloads so the layout remounts on the chosen rail. */
-function V3Pill({ on, onToggle }: { on: boolean; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      title={on ? "v3 rail ON — parts core (beta). Click for v1." : "v1 rail. Click for v3 (beta)."}
-      aria-pressed={on}
-      className={`flex h-8 items-center rounded-full border px-2.5 font-mono text-[11px] tracking-[0.04em] transition-colors ${
-        on
-          ? "border-cyan bg-cyan text-white"
-          : "border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-ink"
-      }`}
-    >
-      v3
-    </button>
   );
 }
 

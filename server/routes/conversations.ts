@@ -6,11 +6,7 @@ import { db } from "../db/index";
 import { conversations, messages, projects, runEvents, users } from "../db/schema";
 import { subscribeRunEvents } from "../lib/run-events";
 import { getTurnState, getV3InferenceStatus } from "../lib/v3/processor";
-import {
-  clearInference,
-  getInferenceStatus,
-  listActiveForUser,
-} from "../lib/inference-state";
+import { turnStates } from "../db/schema";
 import {
   CONNECTION_COLUMNS,
   effectiveProviderMode,
@@ -212,7 +208,14 @@ conversationsRoute.post(
  */
 conversationsRoute.get("/active", async (c) => {
   const userId = c.get("userId");
-  return c.json({ active: listActiveForUser(userId) });
+  // v3: an active turn lives in turn_states. Return the conv ids the
+  // calling user owns that have a live turn (the sidebar poll).
+  const rows = await db
+    .select({ id: turnStates.conversationId })
+    .from(turnStates)
+    .innerJoin(conversations, eq(conversations.id, turnStates.conversationId))
+    .where(and(eq(turnStates.status, "active"), eq(conversations.userId, userId)));
+  return c.json({ active: rows.map((r) => r.id) });
 });
 
 conversationsRoute.get("/:id", async (c) => {
@@ -232,9 +235,9 @@ conversationsRoute.get("/:id", async (c) => {
     .where(eq(messages.conversationId, id))
     .orderBy(asc(messages.createdAt));
   // Inference state is opportunistic — the client uses it to render the
-  // in-flight assistant content when reopening a conv whose stream is
-  // still running server-side. Missing or finished → { active: false }.
-  const inference = getInferenceStatus(id, userId);
+  // in-flight assistant content when reopening a conv whose turn is still
+  // running server-side. v3 keeps it in turn_state; missing → inactive.
+  const inference = (await getV3InferenceStatus(id)) ?? { active: false };
   return c.json({ conversation, messages: msgs, inference });
 });
 
@@ -320,15 +323,9 @@ conversationsRoute.get("/:id/inference", async (c) => {
   if (!row || row.userId !== userId) {
     return c.json({ active: false }, 404);
   }
-  const v1 = getInferenceStatus(id, userId);
-  // v3 rail has no in-memory buffer — its live state lives in turn_state +
-  // the assistant row's parts. Fall back to it so this endpoint (and the
-  // MCP get_inference_status that polls it) reports a v3 turn too.
-  if (!v1.active && v1.done === undefined) {
-    const v3 = await getV3InferenceStatus(id);
-    if (v3) return c.json(v3);
-  }
-  return c.json(v1);
+  // v3 rail: live state lives in turn_state + the assistant row's parts
+  // (no in-memory buffer). The MCP get_inference_status polls this.
+  return c.json((await getV3InferenceStatus(id)) ?? { active: false });
 });
 
 /**
@@ -347,7 +344,8 @@ conversationsRoute.post("/:id/inference/clear", async (c) => {
   if (!row || row.userId !== userId) {
     return c.json({ ok: false }, 404);
   }
-  clearInference(id, userId);
+  // v3 has no ephemeral buffer to clear — turn_state is the durable record
+  // and settles itself. Kept as a harmless no-op for client compatibility.
   return c.json({ ok: true });
 });
 
@@ -734,11 +732,9 @@ conversationsRoute.post(
     // prefill behind each other because the pool serializes. Dropping
     // the redundant prewarm clears the queue and the real chat lands
     // immediately.
-    const inflight = getInferenceStatus(id, userId);
-    // A v3 turn has no v1 buffer — check turn_state too so we don't prewarm
-    // a prefix while the parts core is mid-turn on the same conversation.
-    const v3Turn = inflight.active ? null : await getTurnState(id);
-    if (inflight.active || v3Turn?.status === "active") {
+    // Don't prewarm a prefix while a v3 turn is mid-flight on this conv.
+    const v3Turn = await getTurnState(id);
+    if (v3Turn?.status === "active") {
       console.log(
         `[prewarm] conv=${id.slice(0, 8)} skipped — inference in flight`,
       );

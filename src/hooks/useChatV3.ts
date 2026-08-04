@@ -31,31 +31,6 @@ import {
   type UseChatOptions,
 } from "./useChat";
 
-/** localStorage flag + `?v3=1|0` URL override. Per-device.
- *  Default ON since 2026-08-04 (V3-e): v3 is the rail unless a device
- *  explicitly opted out ("0"). v1 stays alive behind the pill until the
- *  old rail is removed. Toggle OFF writes "0" (not remove) so the opt-out
- *  survives the default-on flip. */
-const V3_LS_KEY = "companion:chatV3";
-export function readV3Flag(): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    const p = new URLSearchParams(window.location.search).get("v3");
-    if (p === "1") localStorage.setItem(V3_LS_KEY, "1");
-    if (p === "0") localStorage.setItem(V3_LS_KEY, "0");
-  } catch {
-    /* ignore */
-  }
-  return localStorage.getItem(V3_LS_KEY) !== "0";
-}
-export function setV3Flag(on: boolean): void {
-  try {
-    localStorage.setItem(V3_LS_KEY, on ? "1" : "0");
-  } catch {
-    /* ignore */
-  }
-}
-
 // ── part → UIMessage projection ────────────────────────────────────────
 
 type Part = { type: string } & Record<string, unknown>;
@@ -480,11 +455,10 @@ function useV3Runtime(
 
 export function useChatV3(opts: UseChatOptions = {}) {
   const base = useChat(opts);
-  // Flag is read once per mount — a toggle triggers a route change /
-  // reload, which remounts and re-reads.
-  const [enabled] = useState(readV3Flag);
-  const v3 = useV3Runtime(opts.conversationId, base, enabled);
-  if (!enabled) return base;
+  // v3 is the only rail (the v1 rail was removed 2026-08-04). useChat
+  // provides the shell (model picker, inference params, toggles, comfyui);
+  // the runtime replaces the live surface (messages, streaming, actions).
+  const v3 = useV3Runtime(opts.conversationId, base, true);
   return {
     ...base,
     messages: v3.messages,

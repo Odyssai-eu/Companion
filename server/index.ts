@@ -41,7 +41,6 @@ import nemoSyncRoute from "./routes/nemo-sync";
 import { localAgentRoute } from "./routes/local-agent";
 import { teamsRoute } from "./routes/teams";
 import authRoute from "./routes/auth";
-import chatRoute from "./routes/chat";
 import chatV3Route from "./routes/chat-v3";
 import conversationsRoute from "./routes/conversations";
 import filesRoute from "./routes/files";
@@ -93,15 +92,9 @@ app.route("/api/setup", setupRoute);
 // userId BEFORE requireUser runs, so the companion-mcp MCP server (Hermes
 // Agent on .50, Cowork dispatch) can hit these routes without a cookie.
 app.use("/api/conversations/*", hermesBearerLoader, requireUser);
-// Chat, models, and inference accept guest tokens (Bearer / ?g= / cookie)
-// in addition to regular sessions. License still applies — guests count
-// against the inviting admin's license.
-app.use(
-  "/api/chat/*",
-  hermesBearerLoader,
-  guestSessionLoader,
-  requireUserOrGuest,
-);
+// Chat (v3), models, and inference accept guest tokens (Bearer / ?g= /
+// cookie) in addition to regular sessions. License still applies — guests
+// count against the inviting admin's license.
 app.use(
   "/api/v3/*",
   hermesBearerLoader,
@@ -160,7 +153,6 @@ app.use("/api/agent-tokens", requireUser);
 app.use("/api/agent-tokens/*", requireUser);
 
 app.route("/api/conversations", conversationsRoute);
-app.route("/api/chat", chatRoute);
 app.route("/api/v3", chatV3Route);
 app.route("/api/projects", projectsRoute);
 // Project memory + decisions routes share the /api/projects/:id prefix.

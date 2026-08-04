@@ -11,7 +11,7 @@ import Messages from "~/components/chat/Messages";
 import Sidebar from "~/components/chat/Sidebar";
 import TopBar, { type ChatStyle } from "~/components/chat/TopBar";
 import { STYLE_PRESETS } from "~/hooks/useChat";
-import { readV3Flag, setV3Flag, useChatV3 } from "~/hooks/useChatV3";
+import { useChatV3 } from "~/hooks/useChatV3";
 import type { ApiGlobalModel, ApiInferenceMode } from "~/lib/api";
 import { StreamManager } from "~/lib/stream-manager";
 import { estimateMessageListTokens } from "~/lib/tokens";
@@ -45,11 +45,6 @@ import { WavRecorder } from "~/lib/wav-recorder";
 export default function ChatLayout() {
   const { id } = useParams<{ id?: string }>();
   const chat = useChatV3({ conversationId: id });
-  const v3On = readV3Flag();
-  const toggleV3 = () => {
-    setV3Flag(!v3On);
-    window.location.reload();
-  };
   // v2.0 — live task narration (SSE run-events keyed on this conv).
   const taskLive = useRunEvents(id ?? null);
   const [style, setStyle] = useState<ChatStyle>("Normal");
@@ -251,8 +246,6 @@ export default function ChatLayout() {
           onToggleMemory={chat.toggleMemoryEnabled}
           agentMode={chat.agentMode}
           onToggleAgentMode={chat.toggleAgentMode}
-          chatV3={v3On}
-          onToggleV3={toggleV3}
         />
         {panelOpen && !isMobile && (
           <InferencePanel
