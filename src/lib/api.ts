@@ -1773,60 +1773,7 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
 
-  // Auto Router add-on (semantic routing via embeddings)
-  routerInfo: () =>
-    request<{
-      addonId: string | null;
-      enabled: boolean;
-      configured: boolean;
-      embeddingsUrl: string;
-      embeddingsUrlDefault: string;
-      embeddingsModel: string;
-      policy: { chat: string; deep: string; code: string };
-      policyDefault: { chat: string; deep: string; code: string };
-      /** Model that answers when routing itself can't run (service down,
-       *  add-on not configured). "" = none → the chat fails loud instead. */
-      fallbackModel: string;
-      anchorsBuiltAt: string | null;
-    }>("/api/addons/router/info"),
-  routerSetConfig: (body: {
-    enabled?: boolean;
-    embeddingsUrl?: string;
-    embeddingsModel?: string | null;
-    policy?: { chat: string; deep: string; code: string };
-    /** "" / null clears the fallback (back to fail-loud). */
-    fallbackModel?: string | null;
-    rebuildAnchors?: boolean;
-  }) =>
-    request<{
-      ok: true;
-      enabled: boolean;
-      configured: boolean;
-      embeddingsUrl: string;
-      embeddingsModel: string;
-      policy: { chat: string; deep: string; code: string };
-      fallbackModel: string;
-      anchorsBuiltAt: string | null;
-    }>("/api/addons/router/config", {
-      method: "PUT",
-      body: JSON.stringify(body),
-    }),
-  routerRebuild: () =>
-    request<{ ok: true; anchorsBuiltAt: string }>(
-      "/api/addons/router/rebuild",
-      { method: "POST" },
-    ),
-  routerTest: (input: string) =>
-    request<{
-      label: "chat" | "deep" | "code";
-      model: string;
-      score: number;
-      scores: { chat: number; deep: number; code: number };
-      ms: number;
-    }>("/api/addons/router/test", {
-      method: "POST",
-      body: JSON.stringify({ input }),
-    }),
+  // Auto Router add-on removed 2026-08-04 — CoeOS is the router now.
 
   // Voice add-on (local OpenAI-compatible TTS + ASR)
   voiceLiveInfo: () =>

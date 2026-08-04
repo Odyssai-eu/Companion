@@ -328,13 +328,13 @@ export default function InferencePage() {
             [
               {
                 v: "auto" as const,
-                title: "Auto — the router chooses the model",
-                desc: "No model selector in the chat. The Auto Router picks the best model for every message. Configure it (and its fallback model) in Add-ons → Auto Router.",
+                title: "Auto — CoeOS chooses the model",
+                desc: "No model selector in the chat. CoeOS (the router engine) picks the best model for every message. The Default model below is the fallback if CoeOS or a target model is down.",
               },
               {
                 v: "expert" as const,
                 title: "Expert — full list available",
-                desc: "User picks any model in the provider's catalog, per message. Power-user mode. The Auto Router is still available as the “Auto” entry at the top of the picker.",
+                desc: "User picks any model in the provider's catalog, per message. Power-user mode. Auto (CoeOS) is still available as the “Auto” entry at the top of the picker.",
               },
             ]
           ).map((opt) => (
@@ -364,20 +364,20 @@ export default function InferencePage() {
 
         {inferenceMode === "auto" && (
           <p className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-[12px] text-gray-600">
-            Auto mode delegates everything to the <strong>Auto Router</strong>{" "}
-            add-on: one model per intent bucket (chat / deep / code), plus a{" "}
-            <strong>fallback model</strong> that answers if routing itself
-            fails. All of it lives in <em>Settings → Add-ons → Auto Router</em>.
-            If the router isn't set up, the chat says so and uses the fallback
-            — it never picks a model behind your back.
+            Auto mode routes every message through <strong>CoeOS</strong>, which
+            composes a benchmark-proven model per skill (chat / deep analysis /
+            code). If CoeOS or a target model is unreachable, the turn falls back
+            to the <strong>Default model</strong> below — it never picks a model
+            behind your back.
           </p>
         )}
       </Section>
 
       <Section title="Default model">
         <p className="text-[13px] text-gray-600">
-          The model that pre-fills the picker on a fresh chat in Expert mode.
-          Ignored in Auto mode — the router chooses there.
+          Pre-fills the picker on a fresh chat in Expert mode, and is the{" "}
+          <strong>fallback</strong> in Auto mode when CoeOS or a target model is
+          down. Prefer a stable local model or a reliable fast cloud provider.
         </p>
         {/* Bound to the OVERRIDE, so "" genuinely means "inherit" rather
             than "pin the instance value onto my row". */}

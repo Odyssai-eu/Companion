@@ -8,9 +8,9 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 **API access** — `hms_…` bearer tokens that external coding agents (Cline, Continue.dev, Claude Desktop, Cowork) use to call Companion's MCP brain endpoint. See *API access* (13).
 
-**Auto mode** — Inference mode where the chat shows no model selector and the Auto Router picks a model per message. Replaced the retired *Easy* and *Advanced* modes in migration `0058`. See *Model picker* (06).
+**Auto mode** — Inference mode where the chat shows no model selector and **CoeOS** (the router engine) picks a model per message. Replaced the retired *Easy* and *Advanced* modes in migration `0058`. See *Model picker* (06).
 
-**Auto Router** — Opt-in add-on that classifies each message (chat / deep / code) by embedding similarity and dispatches to the model mapped to that bucket. Powers Auto mode; also selectable as `Auto` in the Expert-mode picker. See *Semantic routing* (065).
+**CoeOS** — The router engine that powers Auto mode: routes each message to a benchmark-proven model per skill (chat / deep / code). Also selectable as `Auto` in the Expert-mode picker. Replaced the embeddings-based *Auto Router* add-on (removed v2.1). Fallback on outage: the Default model (*Settings → Inference*).
 
 **Alias** — A short name for a model published by the engine (e.g. `<your-cluster-name>`, `or:claude-haiku`). Resolved to a concrete model path at engine side.
 
@@ -60,7 +60,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## F
 
-**Fallback model** — The Auto Router setting naming the model that answers when routing itself can't run (embedding service down, router unconfigured). The routing error is still shown to the user; only the answer's source changes. Empty = fail loud, no answer. See *Semantic routing* (065).
+**Fallback model** — The **Default model** (*Settings → Inference*) doubles as the fallback: in Auto mode, when CoeOS or a target model is down, the turn is answered by this model instead of failing. Prefer a stable local model or a reliable fast cloud provider.
 
 **Fenced code block** — Markdown code block delimited by triple-backticks. Companion adds Copy / Save / Save all (.zip) helpers under each one. See *Exports & imports* (17).
 
@@ -82,7 +82,7 @@ Terms used in Companion and the surrounding stack, with cross-references.
 
 ## I
 
-**Inference mode** — `auto` or `expert` (`users.inference_mode`). Auto = no picker, the Auto Router chooses per message. Expert = full catalog picker. See *Model picker* (06).
+**Inference mode** — `auto` or `expert` (`users.inference_mode`). Auto = no picker, CoeOS chooses per message. Expert = full catalog picker. See *Model picker* (06).
 
 **Inference preset** — Saved bundle of sampling params. Per-user. See *Inference settings* (14).
 

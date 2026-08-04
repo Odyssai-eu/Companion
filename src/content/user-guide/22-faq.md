@@ -60,7 +60,7 @@ Depends on the task. A typical deployment publishes aliases along these axes:
 - **Probe** — a 1-2B model for autocomplete and tiny lookups (sub-second TTFT).
 - **Cloud fallback** — OpenRouter / Anthropic / OpenAI passthrough aliases (e.g. `or:claude-haiku`).
 
-The exact names depend on your deployment — check the model picker. The Auto Router (see *Semantic routing*) can pick for you per-message.
+The exact names depend on your deployment — check the model picker. **Auto** mode (CoeOS) can pick for you per-message.
 
 **Can I change model mid-conversation?**
 Yes. The picker is per-turn. The conversation can span multiple models. Past replies stay attached to their original model.

@@ -7,7 +7,6 @@ Add-ons are optional integrations that extend what Companion can do. Configure t
 | Add-on | What it enables | Slash command |
 |---|---|---|
 | **LiteLLM** | Legacy inference rail (cloud routing) | — |
-| **Auto Router** | Semantic routing — picks the right model per message | — |
 | **Obsidian** | Vault sync for the memory wiki | — |
 | **Web Search (Tavily)** | Live web search tool for the agent | — |
 | **Voice Live** | Full-duplex voice via Gemini Live | — |
@@ -27,17 +26,9 @@ See *Engine pairing* (16) for gateway vs hybrid vs legacy.
 
 ---
 
-## Auto Router
+## Auto routing (CoeOS)
 
-When enabled, the **Auto Router** inspects each incoming message and picks the best model before forwarding. It's what powers the **Auto** inference mode, and it's also available as the `Auto` entry at the top of the picker in Expert mode.
-
-Configure in the add-on panel:
-
-- **Embedding service URL** — any OpenAI-compatible `/v1/embeddings` endpoint.
-- **Model per bucket** — chat / deep / code.
-- **Fallback model** — answers when routing itself can't run. Companion still shows you the routing error; the reply just comes from this model instead of failing. Leave it empty to keep the strict "error, no answer" behaviour.
-
-See *Semantic routing* (065) for the full walkthrough.
+Auto routing is **not an add-on** — it's the **CoeOS** engine. In **Auto** inference mode (and via the `Auto` entry at the top of the Expert-mode picker), every message goes to CoeOS, which composes a benchmark-proven model per skill (chat / deep analysis / code). If CoeOS or a target model is down, the turn falls back to your **Default model** (*Settings → Inference*). The old embeddings-based *Auto Router* add-on was removed in v2.1 — CoeOS replaced it.
 
 ---
 

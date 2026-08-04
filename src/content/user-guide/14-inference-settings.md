@@ -111,12 +111,12 @@ The picker pulls capabilities from the Odyssai `x_odyssai` contract when present
 *Settings → Inference* (full page, not the cogwheel). What lives there:
 
 - **Default model** — pre-fills new conversations in Expert mode. Ignored in Auto mode.
-- **Inference mode** — **auto** or **expert**. Auto hides the chat's model selector and lets the Auto Router choose per message; Expert shows the full catalog. (The former *easy* and *advanced* modes were retired in migration `0058` — both became *auto*.)
+- **Inference mode** — **auto** or **expert**. Auto hides the chat's model selector and lets **CoeOS** (the router engine) choose per message; Expert shows the full catalog. (The former *easy* and *advanced* modes were retired in migration `0058` — both became *auto*.)
 - **Hidden models** — eye-toggle hide list.
 - **Show metrics** — per-message stats row toggle.
 - **Debug verbose** — server-side log toggle (logs upstream request bodies). Off by default — produces a lot of stdout.
 
-The Auto Router's own settings (embedding service URL, one model per intent bucket, and the **fallback model** used when routing fails) live in *Settings → Add-ons → Auto Router*, not here. See *Semantic routing* (065).
+Auto mode is powered by **CoeOS** (the router engine), not an add-on. The **Default model** above doubles as the **fallback** when CoeOS or a target model is down — pick a stable local model or a reliable fast cloud provider. The old embeddings-based *Auto Router* add-on was removed in v2.1.
 
 ## Related
 

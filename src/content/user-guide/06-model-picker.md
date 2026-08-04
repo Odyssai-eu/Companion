@@ -12,11 +12,9 @@ Two layouts, picked in *Settings → Inference*:
 
 ### Auto mode
 
-No picker in the chat at all. Every message goes to the **Auto Router**, which classifies it (chat / deep / code) and dispatches to the model you mapped to that bucket. You never choose — that's the point.
+No picker in the chat at all. Every message goes to **CoeOS** (the router engine), which composes a benchmark-proven model per skill (chat / deep analysis / code). You never choose — that's the point.
 
-If routing itself can't run (embedding service down, router not configured, add-on switched off), Companion **shows you the error** and answers with the router's **fallback model**. It never substitutes a model silently. With no fallback configured, the turn fails outright instead.
-
-Everything Auto mode depends on lives in *Settings → Add-ons → Auto Router*: the embedding service URL, the three bucket models, and the fallback. See *Semantic routing* (065).
+If CoeOS or a target model is unreachable, Companion falls back to your **Default model** (*Settings → Inference*) — it never substitutes a model silently.
 
 For: users who don't want to think about model selection. Customer-facing deployments.
 
@@ -26,7 +24,7 @@ Full catalog. Every alias listed, capability chips next to each, hide/show eye t
 
 For: power users tuning per-turn.
 
-> **Retired modes.** *Easy* and *Advanced* existed until migration `0058`. Auto replaces both. Accounts sitting on either were migrated to Auto automatically; an easy-mode fallback model was carried over into the Auto Router's fallback setting.
+> **Retired modes.** *Easy* and *Advanced* existed until migration `0058`. Auto replaces both. Accounts sitting on either were migrated to Auto automatically.
 
 ## Capability chips
 
@@ -102,19 +100,9 @@ To force unload (free the cluster RAM): admin dashboard on the engine itself (no
 
 If your picker is empty: the engine probe is failing. See *Troubleshooting* (20).
 
-## Bucket models (Auto mode config)
+## Auto routing (CoeOS)
 
-Settings → **Add-ons → Auto Router** → one dropdown per intent bucket:
-
-- `chat` — small talk, identity, casual creative.
-- `deep` — analysis, comparison, long-form reasoning.
-- `code` — write, refactor, debug, test.
-
-Plus a **fallback model** used when routing can't run at all.
-
-Each dropdown offers whatever your engine publishes, with no curation — including router-style virtual models such as **CoeOS**, which appear the moment your engine advertises them. The only entry excluded is `Auto` itself, since binding a bucket to Auto would loop the router into itself.
-
-Stored in the add-on's config, not on the user row. See *Semantic routing* (065).
+Auto mode routes every message through **CoeOS** — a virtual model your engine advertises (owned_by `odyssai-coeos`). CoeOS composes a benchmark-proven model per skill (chat / deep analysis / code) internally; there's nothing per-bucket to configure on Companion's side. The only Companion setting that matters is the **Default model** below, which is the fallback when CoeOS or a target model is down.
 
 ## Default model
 

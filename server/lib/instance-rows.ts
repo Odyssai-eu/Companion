@@ -109,19 +109,10 @@ export const ADDON_CATALOG: readonly AddonCatalogEntry[] = [
     version: "0.2.0",
   },
   {
-    name: "Auto Router",
-    kind: "plugin",
-    description:
-      "Pick the right model automatically based on what you're asking. " +
-      "Routes conversation, deep analysis, and code to the model that " +
-      "handles each best. Requires an OpenAI-compatible embeddings " +
-      "endpoint — point it at any service that exposes one.",
-    version: "0.1.0",
-  },
-  {
-    // Hermes Agent + Pi Agent removed 2026-08-03 (v2.0 γb1) — replaced
-    // by the native agent runtime (task tool + ops subagent). See
-    // docs/v2/audit-hermes-pi.md.
+    // Auto Router (semantic-router add-on) removed 2026-08-04 — CoeOS is
+    // the router now (auto mode → the CoeOS engine), so the embeddings-based
+    // add-on is obsolete. Hermes Agent + Pi Agent removed 2026-08-03
+    // (v2.0 γb1) — native agent runtime (task tool + ops subagent).
     name: "ComfyUI Imager",
     kind: "plugin",
     description:
@@ -204,11 +195,6 @@ const PAIRED_CONFIG_KEYS: Record<string, Readonly<Record<string, string>>> = {
   // a user pointing contextual detection at their own LLM must not keep
   // the instance's model name. Same argument as Voice's ttsModel.
   "Confidential Guard": { contextualLlmModel: "contextualLlmUrl" },
-  "Auto Router": {
-    embeddingsModel: "embeddingsUrl",
-    anchorCentroids: "embeddingsUrl",
-    anchorsBuiltAt: "embeddingsUrl",
-  },
   // The speaker catalogue and the model list belong to the audio server,
   // so a user pointing at their own one inherits neither.
   Voice: { ttsModel: "ttsEndpoint", voice: "ttsEndpoint", asrEndpoint: "ttsEndpoint" },

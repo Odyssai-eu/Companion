@@ -40,7 +40,7 @@ The model picker is the leftmost element in the chat top bar. Click to open a pa
 
 Two picker layouts depending on your *Inference mode* setting:
 
-- **Auto** — no picker at all. The Auto Router chooses the model for every message. If routing can't run, Companion tells you and answers with the router's fallback model.
+- **Auto** — no picker at all. **CoeOS** (the router engine) chooses the model for every message. If CoeOS or a target model is down, Companion falls back to your Default model (*Settings → Inference*).
 - **Expert** — full catalog with eye toggles for hide/show. Default. "Auto" is still available as the first entry in the picker.
 
 See *Model picker* (06) for the full breakdown.
@@ -63,7 +63,7 @@ The chat header shows model picker, agent-mode toggle, memory toggle, voice icon
 
 Once chat works, the rest is opt-in:
 
-- **Settings → Extensions → Add-ons** — LiteLLM (legacy inference rail), Auto Router, Obsidian vault sync, Web Search (Tavily), Voice Live, **ComfyUI Imager** (`/comfyui`). See *Add-ons* (13b) for the full guide.
+- **Settings → Extensions → Add-ons** — LiteLLM (legacy inference rail), Obsidian vault sync, Web Search (Tavily), Voice Live, **ComfyUI Imager** (`/comfyui`). See *Add-ons* (13b) for the full guide.
 - **Settings → Extensions → Agents** — the delegation roster (Némo + explore/writer/ops). Ask naturally; Némo dispatches via the task tool.
 - **Settings → Extensions → MCP servers** — Notion, GitHub, Tavily, Linear, Obsidian, Filesystem presets. Or roll your own URL.
 - **Settings → Extensions → Skills** — agentskills.io packages the model can load on demand.

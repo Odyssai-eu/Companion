@@ -425,9 +425,8 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
     Promise.all([
       api.listAllModels(),
       api.inferenceSettings(),
-      api.routerInfo().catch(() => null),
     ])
-      .then(([{ models }, settings, router]) => {
+      .then(([{ models }, settings]) => {
         if (cancelled) return;
         setGlobalModels(models);
         setInferenceMode(settings.inferenceMode);
@@ -437,15 +436,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
         // Choose a default model that respects the active mode.
         if (settings.inferenceMode === "auto") {
-          // Auto mode: the chat always sends the routing sentinel and the
-          // Auto Router decides per message. There is no picker, so any
-          // locally remembered choice is irrelevant.
-          //
-          // We send the sentinel even when the router isn't ready: the
-          // server owns that failure now (it surfaces the reason AND
-          // answers on the router's own fallback model). Second-guessing it
-          // here would just hide a misconfiguration behind a silent
-          // substitution — exactly what the fallback design avoids.
+          // Auto mode: the chat always sends the routing sentinel and CoeOS
+          // (the router engine) decides per message. There is no picker, so
+          // any locally remembered choice is irrelevant.
           //
           // Deliberately NOT setModelAndPersist: state + localStorage only.
           // Writing the sentinel into `conversations.model` would erase
@@ -456,13 +449,6 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
           setModel(AUTO_ROUTER_MODEL_ID);
           if (typeof window !== "undefined") {
             window.localStorage.setItem(MODEL_LS_KEY, AUTO_ROUTER_MODEL_ID);
-          }
-          if (router && !(router.enabled && router.configured)) {
-            // Not an error yet — the first send will surface the real one,
-            // with the server's reason. Just a console breadcrumb.
-            console.warn(
-              "[chat] inference mode is 'auto' but the Auto Router add-on is not ready",
-            );
           }
         } else if (!model) {
           // Expert: pre-fill the picker, leave an existing choice alone.
