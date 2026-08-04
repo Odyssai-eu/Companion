@@ -357,6 +357,123 @@ function useV3Runtime(
     [base.inference, base.model],
   );
 
+  // /help — RAG over the user-guide wiki via its own SSE endpoint
+  // (/api/help/ask, untouched by the v1 kill). Streams the answer into an
+  // optimistic assistant message with a "Help · from:" source chip.
+  const helpAsk = useCallback(
+    async (convId: string, question: string) => {
+      setSending(true);
+      setError(null);
+      const qId = `local-help-q-${Date.now()}`;
+      const aId = `local-help-a-${Date.now()}`;
+      let acc = "";
+      setMessages((prev) => [
+        ...prev,
+        { id: qId, role: "user", content: `/help ${question}`, createdAt: new Date().toISOString() },
+        { id: aId, role: "assistant", content: "", streaming: true, createdAt: new Date().toISOString() },
+      ]);
+      try {
+        const res = await fetch("/api/help/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ question, conversationId: convId }),
+        });
+        if (!res.ok || !res.body) {
+          setError(`help error ${res.status}`);
+          setMessages((prev) => prev.filter((m) => m.id !== aId));
+          return;
+        }
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const blocks = buf.split("\n\n");
+          buf = blocks.pop() ?? "";
+          for (const block of blocks) {
+            let event = "message";
+            let data = "";
+            for (const line of block.split("\n")) {
+              if (line.startsWith("event:")) event = line.slice(6).trim();
+              else if (line.startsWith("data:")) data += line.slice(5).trim();
+            }
+            if (!data || data === "[DONE]") continue;
+            try {
+              if (event === "sources") {
+                const parsed = JSON.parse(data) as {
+                  articles?: Array<{ slug: string; title: string }>;
+                };
+                const arts = parsed.articles ?? [];
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === aId
+                      ? {
+                          ...m,
+                          stats: {
+                            ...(m.stats ?? {}),
+                            isHelp: true,
+                            helpFrom: arts.map((s) => s.slug),
+                            helpTitles: arts.map((s) => s.title),
+                          },
+                        }
+                      : m,
+                  ),
+                );
+              } else if (event === "error") {
+                setError((JSON.parse(data) as { message?: string }).message ?? "help error");
+              } else if (event === "message") {
+                const delta =
+                  (JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> })
+                    .choices?.[0]?.delta?.content ?? "";
+                if (delta) {
+                  acc += delta;
+                  setMessages((prev) =>
+                    prev.map((m) => (m.id === aId ? { ...m, content: acc } : m)),
+                  );
+                }
+              }
+            } catch {
+              /* non-JSON ignored */
+            }
+          }
+        }
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setSending(false);
+        setMessages((prev) =>
+          prev.map((m) => (m.id === aId ? { ...m, streaming: false } : m)),
+        );
+      }
+    },
+    [],
+  );
+
+  // Ensure a conversation exists for a slash command that needs one to
+  // persist into; creates + navigates when on a blank chat.
+  const ensureConv = useCallback(
+    async (titleSeed: string): Promise<string | null> => {
+      if (conversationId) return conversationId;
+      try {
+        const { conversation } = await api.createConversation({
+          title: titleSeed.slice(0, 80),
+          model: base.model || undefined,
+          memoryEnabled: base.memoryEnabled,
+          agentMode: base.agentMode,
+        });
+        navigate(`/c/${conversation.id}`);
+        return conversation.id;
+      } catch (e) {
+        setError((e as Error).message);
+        return null;
+      }
+    },
+    [conversationId, base.model, base.memoryEnabled, base.agentMode, navigate],
+  );
+
   const sendMessage = useCallback(
     // attachments accepted for signature parity with v1; v3 beta is
     // text-only for now (vision/docs land in V3-d).
@@ -364,6 +481,39 @@ function useV3Runtime(
       void _attachments;
       const clean = text.trim();
       if (!clean || sending) return;
+
+      // ── Slash commands ────────────────────────────────────────────────
+      const slash =
+        clean.match(/^\/([a-z][\w-]*)\s+([\s\S]+)$/i) ??
+        clean.match(/^\/([a-z][\w-]*)\s*$/i);
+      if (slash) {
+        const cmd = slash[1].toLowerCase();
+        const rest = (slash[2] ?? "").trim();
+        if (cmd === "exit" || cmd.endsWith("_off")) {
+          const cid = conversationId ?? base.conversation?.id;
+          if (cid && base.conversation?.activeAgent) {
+            await api.setConversationActiveAgent(cid, null).catch(() => {});
+            base.reload?.();
+          }
+          return;
+        }
+        if (cmd === "help") {
+          if (!rest) {
+            setError("Type a question after /help — e.g. /help how do I add an engine?");
+            return;
+          }
+          const cid = await ensureConv(`/help ${rest}`);
+          if (cid) await helpAsk(cid, rest);
+          return;
+        }
+        if (cmd === "comfyui") {
+          const cid = await ensureConv(`/comfyui ${rest}`);
+          if (cid) base.setComfyuiPrompt?.({ prompt: rest });
+          return;
+        }
+        // Unknown slash — fall through to normal chat.
+      }
+
       // New conversation: create it, land on its route (the SSE opens on
       // remount), persist the user turn, then fire.
       if (!conversationId) {
@@ -393,9 +543,14 @@ function useV3Runtime(
       base.model,
       base.memoryEnabled,
       base.agentMode,
+      base.conversation,
+      base.reload,
+      base.setComfyuiPrompt,
       navigate,
       fire,
       historyFor,
+      helpAsk,
+      ensureConv,
     ],
   );
 
