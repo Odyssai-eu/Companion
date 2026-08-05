@@ -324,18 +324,26 @@ function useV3Runtime(
   // Build the OpenAI-shaped history the processor expects (contract-same
   // as v1: the client sends the full thread; the server persists nothing
   // of the user turn — we append it ourselves).
+  // Per-message createdAt is load-bearing for the upstream prefix cache:
+  // buildTag stamps each user turn with its createdAt (falling back to
+  // "now" when absent). Dropping it re-timestamps the whole history every
+  // turn → the prompt prefix changes → cache miss. Carry the DB/optimistic
+  // createdAt through so the prefix stays byte-stable across turns.
   const historyFor = useCallback(
-    (extra?: { role: "user"; content: string }) => {
+    (extra?: { role: "user"; content: string; createdAt?: string }) => {
       const src = extra ? [...messages, { ...extra, id: "pending" }] : messages;
       return src
         .filter((m) => m.role !== "system" && m.messageType !== "task")
-        .map((m) => ({ role: m.role, content: m.content }));
+        .map((m) => ({ role: m.role, content: m.content, createdAt: m.createdAt }));
     },
     [messages],
   );
 
   const fire = useCallback(
-    async (convId: string, history: { role: string; content: string }[]) => {
+    async (
+      convId: string,
+      history: { role: string; content: string; createdAt?: string }[],
+    ) => {
       setError(null);
       setSending(true);
       const params = inferenceToPayload(base.inference ?? DEFAULT_INFERENCE);
@@ -514,6 +522,11 @@ function useV3Runtime(
         // Unknown slash — fall through to normal chat.
       }
 
+      // One createdAt for the user turn — persisted AND sent in the history,
+      // so its prompt time-tag is identical on this send and every later
+      // replay (keeps the prefix cache warm).
+      const now = new Date().toISOString();
+
       // New conversation: create it, land on its route (the SSE opens on
       // remount), persist the user turn, then fire.
       if (!conversationId) {
@@ -522,20 +535,20 @@ function useV3Runtime(
           memoryEnabled: base.memoryEnabled,
           agentMode: base.agentMode,
         });
-        await api.appendMessage(conversation.id, { role: "user", content: clean });
+        await api.appendMessage(conversation.id, { role: "user", content: clean, createdAt: now });
         navigate(`/c/${conversation.id}`);
-        await fire(conversation.id, [{ role: "user", content: clean }]);
+        await fire(conversation.id, [{ role: "user", content: clean, createdAt: now }]);
         return;
       }
       const userMsg: UIMessage = {
         id: `local-${Date.now()}`,
         role: "user",
         content: clean,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
       };
       setMessages((prev) => [...prev, userMsg]);
-      await api.appendMessage(conversationId, { role: "user", content: clean });
-      await fire(conversationId, historyFor({ role: "user", content: clean }));
+      await api.appendMessage(conversationId, { role: "user", content: clean, createdAt: now });
+      await fire(conversationId, historyFor({ role: "user", content: clean, createdAt: now }));
     },
     [
       conversationId,
@@ -562,7 +575,7 @@ function useV3Runtime(
       setMessages((prev) => prev.filter((m) => !m.blocked));
       const history = messages
         .filter((m) => !m.blocked && m.role !== "system" && m.messageType !== "task")
-        .map((m) => ({ role: m.role, content: m.content }));
+        .map((m) => ({ role: m.role, content: m.content, createdAt: m.createdAt }));
       setError(null);
       setSending(true);
       const params = inferenceToPayload(base.inference ?? DEFAULT_INFERENCE);
@@ -601,7 +614,7 @@ function useV3Runtime(
     const history = messages
       .filter((m) => m.role === "user" || (m.role === "assistant" && m !== lastAssistant))
       .filter((m) => m.messageType !== "task")
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({ role: m.role, content: m.content, createdAt: m.createdAt }));
     await fire(conversationId, history);
   }, [conversationId, messages, fire]);
 
@@ -618,7 +631,7 @@ function useV3Runtime(
       const priorHistory = messages
         .slice(0, idx)
         .filter((m) => m.role !== "system" && m.messageType !== "task")
-        .map((m) => ({ role: m.role, content: m.content }));
+        .map((m) => ({ role: m.role, content: m.content, createdAt: m.createdAt }));
       const edited = { role: "user" as const, content: newText.trim() };
       setMessages((prev) => [
         ...prev.slice(0, idx),

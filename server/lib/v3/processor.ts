@@ -494,7 +494,13 @@ export async function runTurnV3(req: TurnRequest): Promise<TurnOutcome> {
     });
 
     let ttftMs: number | null = null;
-    let usage: { inputTokens?: number; outputTokens?: number } = {};
+    let usage: {
+      inputTokens?: number;
+      outputTokens?: number;
+      // Prefix-cache read tokens (OpenAI prompt_tokens_details.cached_tokens /
+      // Anthropic cache_read_input_tokens), normalized by the AI SDK.
+      inputTokenDetails?: { cacheReadTokens?: number };
+    } = {};
     let stopped = false;
 
     for await (const part of result.fullStream) {
@@ -554,6 +560,7 @@ export async function runTurnV3(req: TurnRequest): Promise<TurnOutcome> {
     const durationMs = Date.now() - t0;
     const promptTokens = usage.inputTokens ?? 0;
     const completionTokens = usage.outputTokens ?? 0;
+    const cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? 0;
     const stats: Record<string, unknown> = {
       model:
         model === COEOS_ID && (capture.routed?.concrete || capture.responseModel)
@@ -563,6 +570,7 @@ export async function runTurnV3(req: TurnRequest): Promise<TurnOutcome> {
       promptTokens,
       completionTokens,
       tokens: promptTokens + completionTokens,
+      ...(cachedTokens > 0 ? { cachedTokens } : {}),
       durationMs,
       speed:
         completionTokens > 0 && durationMs > 0
