@@ -13,7 +13,7 @@ import {
   type Attachment,
   type ParserConfig,
 } from "~/lib/file-attach";
-import { getMemoryDefaultNewConv } from "~/lib/memory-prefs";
+import { getAgentDefaultNewConv, getMemoryDefaultNewConv } from "~/lib/memory-prefs";
 import { estimateCost as lookupCost } from "~/lib/model-pricing";
 import type { GuardWarning, GuardBlock } from "~/lib/chat-types";
 
@@ -638,9 +638,9 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
 
   const toggleAgentMode = useCallback(async () => {
     // Pre-conversation: no row to PATCH yet — flip the pending flag (agent
-    // mode defaults to false). Persisted at conv creation in sendMessage. (#28)
+    // mode defaults ON per device). Persisted at conv creation. (#28)
     if (!conversation) {
-      setPendingAgentMode((prev) => !(prev ?? false));
+      setPendingAgentMode((prev) => !(prev ?? getAgentDefaultNewConv()));
       return;
     }
     const next = !(conversation.agentMode ?? false);
@@ -727,11 +727,11 @@ export function useChat({ conversationId }: UseChatOptions = {}) {
       pendingMemoryEnabled ??
       (project ? false : getMemoryDefaultNewConv()),
     /** Effective agent-mode (tools) toggle: persisted conv value when the
-     *  conv exists, else the pre-conversation pending override, else TRUE
-     *  (default ON — CodeOS parity, 2026-08-03).
+     *  conv exists, else the pre-conversation pending override, else the
+     *  per-device default (ON — Settings → Profile).
      *  Lets the TopBar tools button reflect a pre-first-message flip. (#28) */
     agentMode:
-      conversation?.agentMode ?? pendingAgentMode ?? true,
+      conversation?.agentMode ?? pendingAgentMode ?? getAgentDefaultNewConv(),
     /** ComfyUI Imager enriched-prompt modal trigger. When this is set, the
      *  chat composer opens a modal with the form. Generation lands back in
      *  `messages` via `pushComfyuiResult`. */

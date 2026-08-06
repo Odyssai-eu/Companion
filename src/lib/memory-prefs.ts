@@ -23,3 +23,17 @@ export function setMemoryDefaultNewConv(enabled: boolean): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(KEY, enabled ? "true" : "false");
 }
+
+// Same per-device pattern for agent mode (tools). Default = TRUE
+// (CodeOS parity, 2026-08-05) — only an explicit OFF disables it.
+const AGENT_KEY = "companion:agentDefaultNewConv";
+
+export function getAgentDefaultNewConv(): boolean {
+  if (typeof window === "undefined") return true;
+  return window.localStorage.getItem(AGENT_KEY) !== "false";
+}
+
+export function setAgentDefaultNewConv(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(AGENT_KEY, enabled ? "true" : "false");
+}

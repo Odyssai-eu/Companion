@@ -257,9 +257,11 @@ function MemoryToggleButton({
   compact?: boolean;
 }) {
   const size = compact ? "h-11 w-11" : "h-8 w-8";
+  // ON is the normal state (understated grey); OFF is the exception now that
+  // memory defaults ON — flagged red so it's obvious at a glance.
   const ringColor = enabled
-    ? "border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600"
-    : "border-gray-200 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-600";
+    ? "border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-ink"
+    : "border-red-300 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700";
   const title = !disabled
     ? enabled
       ? "Memory ON — wiki is injected into this conversation's prompt. Click to disable."
@@ -299,13 +301,15 @@ function AgentModeToggleButton({
   compact?: boolean;
 }) {
   const size = compact ? "h-11 w-11" : "h-8 w-8";
+  // ON is the normal state (understated grey); OFF is the exception now that
+  // agents default ON — flagged red so it's obvious at a glance.
   const ringColor = enabled
-    ? "border-amber-500 bg-white text-amber-600 hover:bg-amber-50"
-    : "border-gray-200 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-600";
+    ? "border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-ink"
+    : "border-red-300 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700";
   const title = !disabled
     ? enabled
-      ? "Agent mode ON — fs / rag / web / MCP tools are exposed to the model. Heavier prompt, non-streaming on jaccl. Click to disable."
-      : "Agent mode OFF — no tools injected, prompt stays small, engine streams freely. Click to enable."
+      ? "Agent mode ON — fs / rag / web / MCP tools are exposed to the model. Click to disable."
+      : "Agent mode OFF — no tools injected. Click to enable."
     : "Start a conversation to toggle agent mode";
   return (
     <button

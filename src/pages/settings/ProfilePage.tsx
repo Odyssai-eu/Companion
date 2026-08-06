@@ -9,6 +9,8 @@ import {
 import {
   getMemoryDefaultNewConv,
   setMemoryDefaultNewConv,
+  getAgentDefaultNewConv,
+  setAgentDefaultNewConv,
 } from "~/lib/memory-prefs";
 
 export default function ProfilePage() {
@@ -105,26 +107,33 @@ export default function ProfilePage() {
 // memory is managed by the project settings and this toggle is ignored.
 
 function MemoryDefaultSection() {
-  const [enabled, setEnabled] = useState<boolean>(() =>
+  const [memoryOn, setMemoryOn] = useState<boolean>(() =>
     getMemoryDefaultNewConv(),
   );
+  const [agentOn, setAgentOn] = useState<boolean>(() =>
+    getAgentDefaultNewConv(),
+  );
 
-  function toggle(next: boolean) {
-    setEnabled(next);
+  function toggleMemory(next: boolean) {
+    setMemoryOn(next);
     setMemoryDefaultNewConv(next);
+  }
+  function toggleAgent(next: boolean) {
+    setAgentOn(next);
+    setAgentDefaultNewConv(next);
   }
 
   return (
     <section className="flex flex-col gap-4">
       <h2 className="font-display text-[20px] font-light text-navy">
-        Memory on new conversations
+        Memory &amp; agents on new conversations
       </h2>
-      <div className="rounded-xl border border-gray-200 bg-white px-5 py-4">
+      <div className="flex flex-col gap-4 rounded-xl border border-gray-200 bg-white px-5 py-4">
         <label className="flex cursor-pointer items-start gap-3">
           <input
             type="checkbox"
-            checked={enabled}
-            onChange={(e) => toggle(e.target.checked)}
+            checked={memoryOn}
+            onChange={(e) => toggleMemory(e.target.checked)}
             className="mt-1"
           />
           <span className="flex flex-col gap-1">
@@ -132,12 +141,32 @@ function MemoryDefaultSection() {
               Enable memory on a new conversation
             </span>
             <span className="text-[12px] leading-[18px] text-gray-500">
-              Applies to new personal chats. In a project, memory is managed by
-              the project settings. This preference is local to this
-              workstation — your other devices keep their own choice.
+              The wiki is injected into the prompt. Applies to new personal
+              chats. In a project, memory is managed by the project settings.
             </span>
           </span>
         </label>
+        <label className="flex cursor-pointer items-start gap-3 border-t border-gray-100 pt-4">
+          <input
+            type="checkbox"
+            checked={agentOn}
+            onChange={(e) => toggleAgent(e.target.checked)}
+            className="mt-1"
+          />
+          <span className="flex flex-col gap-1">
+            <span className="text-[14px] font-medium text-ink">
+              Enable agents on a new conversation
+            </span>
+            <span className="text-[12px] leading-[18px] text-gray-500">
+              Exposes the tools (fs, memory search, web, MCP) and delegation to
+              the model. On by default.
+            </span>
+          </span>
+        </label>
+        <span className="text-[12px] leading-[18px] text-gray-400">
+          Both preferences are local to this workstation — your other devices
+          keep their own choice.
+        </span>
       </div>
     </section>
   );
