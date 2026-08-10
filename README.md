@@ -1,5 +1,11 @@
 # Companion
 
+> **⚠ Frozen (2026-08-10).** Companion is feature-frozen: security hotfixes
+> only. Its successor is **Némo**, the CoeOS desktop client
+> (`Odyssai-eu/coeos-nemo` — decision N0.6, tracking in issue coeos-nemo#44).
+> The running instance stays up until Némo reaches full parity; the cutover
+> happens only when Némo is 100% operational.
+
 **The universal client for local AI inference.** Companion is a web app that pairs with any OpenAI- or Anthropic-compatible engine — local clusters, hosted proxies, cloud providers — and adds the things a serious assistant needs: persistent memory, named projects, an editable skills library, MCP server hosting, semantic routing, embedded agents.
 
 Part of [**OdyssAI**](https://odyssai.eu) — the open-source local AI ecosystem. Companion is the **client** layer (this repo). Its sibling engine is [**Odysseus**](https://github.com/Odyssai-eu/Odysseus).
