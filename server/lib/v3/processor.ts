@@ -28,6 +28,7 @@ import {
   users,
 } from "../../db/schema";
 import { makeProvider, type ExtraBody, type RoutedCapture } from "./provider";
+import { parseDocumentParts } from "./doc-parser";
 import {
   CONNECTION_COLUMNS,
   effectiveProviderMode,
@@ -310,9 +311,15 @@ export async function runTurnV3(req: TurnRequest): Promise<TurnOutcome> {
     const mode = effectiveProviderMode(conn);
     let target = providerTarget(conn, mode);
 
+    // Attachments: swap raw `document` content-parts (xls/doc/pptx/csv…) for
+    // their Docling-parsed markdown BEFORE guard + prompt assembly, so the
+    // guard scans the extracted text and the model reads inline text. Images
+    // (image_url) and text pass through untouched. No-op when there are none.
+    const reqMessages = await parseDocumentParts(req.messages, userId);
+
     const body = {
       conversationId,
-      messages: req.messages,
+      messages: reqMessages,
       model: req.model,
       system_prompt: req.params?.system_prompt,
     };
@@ -341,7 +348,7 @@ export async function runTurnV3(req: TurnRequest): Promise<TurnOutcome> {
     let guardStats: Record<string, unknown> = {};
     const guardCfg = await loadGuardConfigForUser(userId);
     if (guardCfg) {
-      const gtext = lastUserText(req.messages as never);
+      const gtext = lastUserText(reqMessages as never);
       if (gtext.trim()) {
         const verdict = await classifyText(gtext.slice(0, 8000), guardCfg);
         if (verdict?.sensitive) {
@@ -442,7 +449,7 @@ export async function runTurnV3(req: TurnRequest): Promise<TurnOutcome> {
       globalMemory: null,
       skillsIndex,
     });
-    const tagged = tagUserMessages(req.messages as never, {
+    const tagged = tagUserMessages(reqMessages as never, {
       enabled: ctx.convMemoryEnabled,
       timezone: conn.timezone || "UTC",
       nowFallback: new Date(),

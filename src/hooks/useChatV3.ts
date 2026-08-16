@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { api } from "~/lib/api";
+import { buildUserMessage, type Attachment } from "~/lib/file-attach";
 import {
   DEFAULT_INFERENCE,
   inferenceToPayload,
@@ -342,7 +343,9 @@ function useV3Runtime(
   const fire = useCallback(
     async (
       convId: string,
-      history: { role: string; content: string; createdAt?: string }[],
+      // content is a string for plain turns, or a multimodal parts array
+      // (text / image_url / document) when the turn carries attachments.
+      history: { role: string; content: string | unknown[]; createdAt?: string }[],
     ) => {
       setError(null);
       setSending(true);
@@ -483,17 +486,16 @@ function useV3Runtime(
   );
 
   const sendMessage = useCallback(
-    // attachments accepted for signature parity with v1; v3 beta is
-    // text-only for now (vision/docs land in V3-d).
-    async (text: string, _attachments: unknown[] = []) => {
-      void _attachments;
+    async (text: string, attachments: Attachment[] = []) => {
       const clean = text.trim();
-      if (!clean || sending) return;
+      if ((!clean && attachments.length === 0) || sending) return;
 
-      // ── Slash commands ────────────────────────────────────────────────
+      // ── Slash commands (text-only; skipped when files are attached) ────
       const slash =
-        clean.match(/^\/([a-z][\w-]*)\s+([\s\S]+)$/i) ??
-        clean.match(/^\/([a-z][\w-]*)\s*$/i);
+        attachments.length === 0
+          ? clean.match(/^\/([a-z][\w-]*)\s+([\s\S]+)$/i) ??
+            clean.match(/^\/([a-z][\w-]*)\s*$/i)
+          : null;
       if (slash) {
         const cmd = slash[1].toLowerCase();
         const rest = (slash[2] ?? "").trim();
@@ -522,6 +524,11 @@ function useV3Runtime(
         // Unknown slash — fall through to normal chat.
       }
 
+      // Attachments → the multimodal `content` (text + image_url + raw
+      // `document` parts the server parses via Docling); `persistText` is the
+      // display/DB text. Plain text ⇒ content === persistText === clean.
+      const { content, persistText } = buildUserMessage(clean, attachments);
+
       // One createdAt for the user turn — persisted AND sent in the history,
       // so its prompt time-tag is identical on this send and every later
       // replay (keeps the prefix cache warm).
@@ -535,20 +542,21 @@ function useV3Runtime(
           memoryEnabled: base.memoryEnabled,
           agentMode: base.agentMode,
         });
-        await api.appendMessage(conversation.id, { role: "user", content: clean, createdAt: now });
+        await api.appendMessage(conversation.id, { role: "user", content: persistText, createdAt: now });
         navigate(`/c/${conversation.id}`);
-        await fire(conversation.id, [{ role: "user", content: clean, createdAt: now }]);
+        await fire(conversation.id, [{ role: "user", content, createdAt: now }]);
         return;
       }
       const userMsg: UIMessage = {
         id: `local-${Date.now()}`,
         role: "user",
-        content: clean,
+        content: persistText,
         createdAt: now,
       };
       setMessages((prev) => [...prev, userMsg]);
-      await api.appendMessage(conversationId, { role: "user", content: clean, createdAt: now });
-      await fire(conversationId, historyFor({ role: "user", content: clean, createdAt: now }));
+      await api.appendMessage(conversationId, { role: "user", content: persistText, createdAt: now });
+      // Prior turns (text, from replay) + the new multimodal message.
+      await fire(conversationId, [...historyFor(), { role: "user", content, createdAt: now }]);
     },
     [
       conversationId,
