@@ -291,12 +291,18 @@ async function _companyQueryOne(
     if (!res.ok) return "";
     const data = (await res.json()) as { response?: string };
     const text = (data.response ?? "").trim();
-    // An EMPTY tier answers with an apology string tagged [no-context]
-    // (even with only_need_context) — that's "nothing", not context.
-    // Without this, every prompt would carry a "## Company memory" block
-    // containing "Sorry, I'm not able to…" (seen 2026-06-12 when the
-    // company tier was drained of its misplaced corpus).
-    if (!text || text.includes("[no-context]")) return "";
+    // A query that matches nothing answers with an apology, not context —
+    // treat it as empty so it never lands in the "## Company memory" block.
+    // Two shapes seen across LightRAG builds: the [no-context] tag, and the
+    // plain "No relevant context found for the query." (HKUDS default, no
+    // tag — 2026-08-17, pointing the tier at Sentinel :9621).
+    if (
+      !text ||
+      text.includes("[no-context]") ||
+      /no relevant context found/i.test(text)
+    ) {
+      return "";
+    }
     return text;
   } catch {
     return "";
