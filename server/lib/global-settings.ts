@@ -61,6 +61,7 @@ export type InstanceSettings = {
    */
   timezone: string;
   companyRagUrl: string;
+  companyRagKey: string;
 };
 
 /**
@@ -170,6 +171,7 @@ const SINGLETON_COLUMNS = {
   defaultModel: globalSettings.defaultModel,
   timezone: globalSettings.timezone,
   companyRagUrl: globalSettings.companyRagUrl,
+  companyRagKey: globalSettings.companyRagKey,
 } as const;
 
 /** Read-through load of the whole singleton, seeding the row if absent. */
@@ -201,6 +203,7 @@ async function load(): Promise<InstanceSettings> {
     // singleton so damaged the row itself is missing.
     timezone: pick(row?.timezone) ?? "UTC",
     companyRagUrl: trimUrl(row?.companyRagUrl ?? ""),
+    companyRagKey: row?.companyRagKey ?? "",
   };
 }
 
@@ -363,6 +366,11 @@ export function providerTarget(
 /** The company LightRAG URL (standard API, shared company graph). "" = off. */
 export async function getCompanyRagUrl(): Promise<string> {
   return (await getInstanceSettings()).companyRagUrl;
+}
+
+/** Optional API key for the company LightRAG (X-API-Key). "" = none. */
+export async function getCompanyRagKey(): Promise<string> {
+  return (await getInstanceSettings()).companyRagKey;
 }
 
 export async function setCompanyRagUrl(url: string): Promise<void> {

@@ -18,7 +18,7 @@
 import { and, eq, like } from "drizzle-orm";
 import { db } from "../db/index";
 import { memoryArticles, users } from "../db/schema";
-import { getCompanyRagUrl } from "./global-settings";
+import { getCompanyRagKey, getCompanyRagUrl } from "./global-settings";
 import { getUserMemoryContext } from "./user-memory";
 
 // `??` only catches null/undefined — `MEMORY_SERVICE_URL=""` (the compose
@@ -271,11 +271,16 @@ const COMPANY_TIMEOUT_MS = Number(process.env.COMPANY_RAG_TIMEOUT_MS ?? "4000");
 async function _companyQueryOne(
   companyUrl: string,
   question: string,
+  apiKey: string,
 ): Promise<string> {
   try {
     const res = await fetch(`${companyUrl}/query`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        // LightRAG servers that enforce an API key expect X-API-Key.
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
+      },
       body: JSON.stringify({
         query: question,
         mode: "hybrid",
@@ -347,6 +352,7 @@ export async function nemoQuery(
   if (!question.trim()) return "";
 
   const companyUrl = await getCompanyRagUrl();
+  const companyKey = await getCompanyRagKey();
   const rag = NEMO_RAG;
 
   // All tiers in parallel, each labelled. Personal/team/project hit the
@@ -379,7 +385,7 @@ export async function nemoQuery(
   }
   if (companyUrl) {
     tasks.push(
-      _companyQueryOne(companyUrl, question).then((text) => ({
+      _companyQueryOne(companyUrl, question, companyKey).then((text) => ({
         label: "## Company memory",
         text,
       })),

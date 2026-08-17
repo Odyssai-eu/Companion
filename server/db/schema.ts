@@ -1349,6 +1349,10 @@ export const globalSettings = pgTable("global_settings", {
   // service). Org-wide, hence here rather than the per-user RAG add-on.
   // Editable in Admin → Memory backend; empty disables the tier.
   companyRagUrl: text("company_rag_url").notNull().default(""),
+  // Optional API key for a LightRAG server that enforces one (sent as the
+  // `X-API-Key` header on /query). Empty = no key. Added 2026-08-17 to point
+  // the company tier at a key-protected corpus (Sentinel :9621).
+  companyRagKey: text("company_rag_key").notNull().default(""),
 
   // ── Instance connection settings (0059) ────────────────────────────────
   // The gateway / proxy / default-model config every user INHERITS. These
